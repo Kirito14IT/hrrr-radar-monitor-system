@@ -64,20 +64,23 @@
         <div class="section-title">
           <div>
             <div class="care-kicker">Hardware Photos</div>
-            <h2>开发板照片占位符</h2>
+            <h2>开发板实拍图</h2>
           </div>
         </div>
-        <div class="photo-placeholders">
-          <div class="photo-placeholder">
-            <span>PHOTO A</span>
-            <strong>毫米波雷达开发板实拍图</strong>
-            <p>建议放置：雷达板正面照片，能看到天线阵列、供电/通信接口和固定安装角度。</p>
-          </div>
-          <div class="photo-placeholder">
-            <span>PHOTO B</span>
-            <strong>呼噜检测开发板实拍图</strong>
-            <p>建议放置：麦克风/音频采集板实拍图，能看到采音位置、外壳或床旁安装方式。</p>
-          </div>
+        <div class="photo-showcase">
+          <figure
+            v-for="photo in hardwarePhotos"
+            :key="photo.title"
+            class="hardware-photo"
+            :class="photo.className"
+          >
+            <img :src="photo.src" :alt="photo.alt" loading="lazy" decoding="async" />
+            <figcaption class="photo-caption">
+              <span>{{ photo.tag }}</span>
+              <strong>{{ photo.title }}</strong>
+              <p>{{ photo.desc }}</p>
+            </figcaption>
+          </figure>
         </div>
       </article>
     </section>
@@ -150,6 +153,25 @@ const flowSteps = [
     index: 'Step 4',
     title: '看护决策',
     desc: 'Web App 将风险解释为可操作建议，例如检查床旁状态、确认板卡在线或观察呼吸波动。'
+  }
+]
+
+const hardwarePhotos = [
+  {
+    tag: 'PHOTO A',
+    title: '毫米波雷达开发板',
+    desc: '用于非接触采集心率、呼吸率、目标距离与离床状态，是系统生命体征侧输入。',
+    src: '/pic/hardware/hardware-radar-board.jpg',
+    alt: '毫米波雷达开发板实拍图，包含雷达天线、接口和 RT-Thread 开发板标识',
+    className: 'radar-board'
+  },
+  {
+    tag: 'PHOTO B',
+    title: '呼噜检测开发板',
+    desc: '用于采集夜间呼噜扰动与音频事件，和雷达数据共同进入后端融合分析。',
+    src: '/pic/hardware/snore-detect-board.jpg',
+    alt: '呼噜检测 E84 Edgi Talk 开发板实拍图，屏幕显示 Snore detect 状态',
+    className: 'snore-board'
   }
 ]
 
@@ -297,7 +319,7 @@ function go(path) {
 .snapshot-card span,
 .flow-step span,
 .module-item > span,
-.photo-placeholder span {
+.photo-caption span {
   color: var(--care-primary-strong);
   font-size: 12px;
   font-weight: 900;
@@ -312,8 +334,7 @@ function go(path) {
 
 .snapshot-card p,
 .flow-step p,
-.module-item p,
-.photo-placeholder p {
+.module-item p {
   margin: 0;
   color: var(--care-muted);
   line-height: 1.65;
@@ -341,7 +362,7 @@ function go(path) {
 }
 
 .flow-steps,
-.photo-placeholders,
+.photo-showcase,
 .module-list {
   display: grid;
   gap: 12px;
@@ -362,22 +383,82 @@ function go(path) {
   margin-bottom: 5px;
 }
 
-.photo-placeholder {
-  min-height: 170px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  padding: 18px;
-  border-radius: 22px;
-  background:
-    linear-gradient(135deg, rgba(7, 24, 39, 0.06), rgba(56, 189, 248, 0.1)),
-    repeating-linear-gradient(45deg, rgba(15, 143, 133, 0.12) 0 8px, rgba(255,255,255,.4) 8px 16px);
-  border: 1px dashed rgba(15, 143, 133, 0.38);
+.hardware-photo {
+  position: relative;
+  min-height: clamp(210px, 17vw, 260px);
+  margin: 0;
+  overflow: hidden;
+  border-radius: 24px;
+  background: #071827;
+  border: 1px solid rgba(15, 143, 133, 0.18);
+  box-shadow: var(--care-shadow-soft);
+  isolation: isolate;
 }
 
-.photo-placeholder strong {
-  margin: 8px 0;
-  font-size: 18px;
+.hardware-photo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  transform: scale(1.01);
+  transition: transform 0.24s ease;
+}
+
+.hardware-photo:hover img {
+  transform: scale(1.045);
+}
+
+.hardware-photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(180deg, rgba(7, 24, 39, 0.05) 0%, rgba(7, 24, 39, 0.12) 36%, rgba(7, 24, 39, 0.84) 100%),
+    radial-gradient(circle at 16% 18%, rgba(56, 189, 248, 0.18), transparent 38%);
+}
+
+.radar-board img {
+  object-position: 50% 54%;
+}
+
+.snore-board img {
+  object-position: 50% 48%;
+}
+
+.photo-caption {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2;
+  display: grid;
+  gap: 7px;
+  color: #f8fdff;
+}
+
+.photo-caption span {
+  width: fit-content;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: #dffcff;
+  background: rgba(7, 24, 39, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(8px);
+}
+
+.photo-caption strong {
+  font-size: 20px;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
+}
+
+.photo-caption p {
+  max-width: 620px;
+  margin: 0;
+  color: rgba(232, 251, 255, 0.82);
+  line-height: 1.55;
 }
 
 .module-list {
