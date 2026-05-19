@@ -6,6 +6,7 @@ import login from "../views/login.vue";
 import breath_pic from "../views/breath_pic.vue"; // <--- 引入新页面
 import sleep_dashboard from "../views/sleep_dashboard.vue";
 import alert_center from "../views/alert_center.vue";
+import project_intro from "../views/project_intro.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -16,7 +17,14 @@ const router = createRouter({
     {
       path:'/manage',
       component: manage,
+      redirect: '/manage/project_intro',
       children:[
+        {
+          path: 'project_intro',
+          name: 'project_intro',
+          meta: { title: '项目首页' },
+          component: project_intro,
+        },
         {
           path: 'data',
           name: 'data',

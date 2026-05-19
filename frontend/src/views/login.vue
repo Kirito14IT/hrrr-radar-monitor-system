@@ -112,7 +112,7 @@ const handleLogin = async () => {
       userStore.setUserInfo(user)
 
       alert(`登录成功！欢迎回来，${user.userName}`)
-      router.replace('/manage/heart_pic') // 跳转后，Auth 页面自然不再显示
+      router.replace('/manage/project_intro') // 跳转后，Auth 页面自然不再显示
     } else {
       alert(res.message || '登录失败')
     }

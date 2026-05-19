@@ -1,4 +1,5 @@
 # 雷达生命体征监测系统：无开发板持续模拟联调版
+![alt text](项目框架图.png)
 
 这个项目现在可以在**没有毫米波雷达开发板、没有呼噜检测开发板**的情况下跑通完整演示。
 
@@ -34,26 +35,30 @@
 
 ---
 
-## 2. Conda 环境
+## 2. 环境准备
 
-在 PowerShell 中进入项目根目录：
+先克隆并进入项目根目录。下面只使用相对路径，实际目录取决于你把仓库克隆到哪里：
 
 ```powershell
-cd C:\path\to\radar-monitor-system
+git clone https://github.com/Kirito14IT/hrrr-radar-monitor-system.git
+cd hrrr-radar-monitor-system
 ```
 
-激活你的 conda 环境：
+如果你已经在 VS Code / PowerShell 中打开了本项目根目录，可以跳过上面的 `cd`，后续命令默认都在项目根目录执行。
+
+激活你的 Conda 环境：
 
 ```powershell
-& C:\path\to\Anaconda3\shell\condabin\conda-hook.ps1
 conda activate radar
 ```
 
-看到前面出现 `(radar)` 就说明成功：
+看到提示符前面出现 `(radar)` 就说明成功，路径可能因电脑不同而不同：
 
 ```text
-(radar) PS C:\path\to\radar-monitor-system>
+(radar) PS ...\hrrr-radar-monitor-system>
 ```
+
+如果 PowerShell 提示找不到 `conda`，先执行 `conda init powershell`，关闭并重新打开 PowerShell 后再运行 `conda activate radar`。不要在 README 或脚本里写死某台电脑上的 Anaconda 安装路径。
 
 如果后端缺依赖：
 
@@ -76,8 +81,7 @@ cd ..
 ### 终端 1：启动模拟后端
 
 ```powershell
-cd C:\path\to\radar-monitor-system
-& C:\path\to\Anaconda3\shell\condabin\conda-hook.ps1
+# 在项目根目录执行
 conda activate radar
 python backend\mock_hardware_api.py
 ```
@@ -101,7 +105,8 @@ python backend\mock_hardware_api.py
 ### 终端 2：启动前端
 
 ```powershell
-cd C:\path\to\radar-monitor-system\frontend
+# 从项目根目录进入前端目录
+cd frontend
 npm run dev
 ```
 
@@ -120,8 +125,7 @@ http://localhost:5173/
 ### 终端 3：启动毫米波雷达模拟板
 
 ```powershell
-cd C:\path\to\radar-monitor-system
-& C:\path\to\Anaconda3\shell\condabin\conda-hook.ps1
+# 在项目根目录执行
 conda activate radar
 python backend\mock_device_sender.py --radar-board
 ```
@@ -147,8 +151,7 @@ python backend\mock_device_sender.py --radar-board --send-udp
 ### 终端 4：启动呼噜检测模拟板
 
 ```powershell
-cd C:\path\to\radar-monitor-system
-& C:\path\to\Anaconda3\shell\condabin\conda-hook.ps1
+# 在项目根目录执行
 conda activate radar
 python backend\mock_device_sender.py --snore-board
 ```
@@ -217,7 +220,7 @@ copy backend\.env.example backend\.env
 打开：
 
 ```text
-C:\path\to\radar-monitor-system\backend\.env
+backend\.env
 ```
 
 填写你的 key：
@@ -333,4 +336,3 @@ http://localhost:5173/
 $env:VITE_API_BASE_URL="http://你的新IP:8081"
 npm run dev
 ```
-
