@@ -1,172 +1,543 @@
 <template>
-  <div class="history-page">
-    <div v-if="!userID" class="empty-tip">
-      请先登录以查看数据
+  <div class="history-workspace care-page-shell">
+    <section class="history-hero care-glass-card">
+      <div>
+        <div class="care-kicker">Historical Vitals Intelligence</div>
+        <h1>历史数据与 AI 洞察</h1>
+        <p>
+          汇总雷达历史心率与呼吸率，保留跨页面 AI 分析过程，并将本地规则/DeepSeek 报告沉淀为可回看的健康摘要。
+        </p>
+      </div>
+      <div class="hero-status" :class="analysisStatusClass">
+        <span>{{ analysisStatusText }}</span>
+        <strong>{{ store.aiLoading ? '生成中' : reportStateLabel }}</strong>
+      </div>
+    </section>
+
+    <div v-if="!userID" class="login-empty care-glass-card">
+      <h2>请先登录以查看数据</h2>
+      <p>登录后可查询历史生命体征，并启动 AI / 本地健康分析。</p>
     </div>
 
-    <div v-else>
-      <el-card class="toolbar">
-        <el-date-picker
-          v-model="data.date"
-          type="date"
-          placeholder="请选择要查询的日期"
-          value-format="YYYY/MM/DD"
-        />
-        <el-button type="warning" @click="load">查询</el-button>
-        <el-button type="primary" :loading="data.aiLoading" @click="AiAnalysis">AI分析</el-button>
-        <el-button type="success" @click="reset">重置</el-button>
-      </el-card>
-
-      <el-card>
-        <el-table :data="data.tableData" class="history-table" stripe>
-          <el-table-column label="数据编号" prop="dataID" />
-          <el-table-column label="用户编号" prop="userID" />
-          <el-table-column label="年" prop="year" />
-          <el-table-column label="月" prop="month" />
-          <el-table-column label="日" prop="day" />
-          <el-table-column label="心率" prop="bpm_rader" />
-          <el-table-column label="呼吸率" prop="bpm_finger" />
-        </el-table>
-
-        <div class="pagination-row">
-          <el-pagination
-            @size-change="load"
-            @current-change="load"
-            v-model:current-page="data.pageNum"
-            v-model:page-size="data.pageSize"
-            :page-sizes="[5, 10, 15, 20]"
-            background
-            layout="total, sizes, prev, pager, next, jumper"
-            :total="data.total"
+    <template v-else>
+      <section class="toolbar-card care-glass-card">
+        <div class="field-block">
+          <label for="history-date">日期筛选</label>
+          <el-date-picker
+            id="history-date"
+            v-model="store.date"
+            type="date"
+            placeholder="请选择要查询的日期"
+            value-format="YYYY/MM/DD"
+            clearable
           />
         </div>
-      </el-card>
-
-      <el-card class="ai-card">
-        <div class="ai-header">
-          <span>AI / 本地健康分析</span>
-          <span v-if="data.aiProvider" class="ai-provider" :class="{ fallback: data.aiFallback }">
-            {{ data.aiProviderLabel }}
-          </span>
+        <div class="toolbar-actions">
+          <el-button type="primary" :loading="store.loading" @click="load">
+            查询数据
+          </el-button>
+          <el-button type="success" :loading="store.aiLoading" @click="runAiAnalysis">
+            AI 分析
+          </el-button>
+          <el-button @click="reset">重置</el-button>
         </div>
-        <pre class="ai-report">{{ data.AiData || '点击“AI分析”后，这里会显示 DeepSeek 或本地规则生成的报告。' }}</pre>
-      </el-card>
-    </div>
+        <p v-if="store.error" class="inline-error">{{ store.error }}</p>
+      </section>
+
+      <section class="metric-grid">
+        <article v-for="card in metricCards" :key="card.key" class="metric-card care-glass-card">
+          <span>{{ card.title }}</span>
+          <strong>{{ card.value }}</strong>
+          <small>{{ card.detail }}</small>
+        </article>
+      </section>
+
+      <section class="content-grid">
+        <article class="table-card care-glass-card">
+          <div class="section-heading">
+            <div>
+              <h2>历史生命体征记录</h2>
+              <p>心率与呼吸率已标记偏低、正常、偏高，便于快速定位异常样本。</p>
+            </div>
+            <el-tag effect="plain" type="info">共 {{ store.total }} 条</el-tag>
+          </div>
+
+          <el-table
+            v-loading="store.loading"
+            :data="store.tableData"
+            class="history-table"
+            stripe
+            empty-text="暂无历史数据，请先运行模拟板并在实时页积累数据。"
+          >
+            <el-table-column label="数据编号" prop="dataID" min-width="100" />
+            <el-table-column label="用户编号" prop="userID" min-width="100" />
+            <el-table-column label="日期" min-width="140">
+              <template #default="{ row }">
+                {{ row.year }}-{{ pad(row.month) }}-{{ pad(row.day) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="心率" min-width="150">
+              <template #default="{ row }">
+                <span class="vital-cell">
+                  <strong>{{ formatNumber(row.bpm_rader) }}</strong>
+                  <el-tag size="small" :type="heartTag(row.bpm_rader).type">
+                    {{ heartTag(row.bpm_rader).label }}
+                  </el-tag>
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="呼吸率" min-width="150">
+              <template #default="{ row }">
+                <span class="vital-cell">
+                  <strong>{{ formatNumber(row.bpm_finger) }}</strong>
+                  <el-tag size="small" :type="breathTag(row.bpm_finger).type">
+                    {{ breathTag(row.bpm_finger).label }}
+                  </el-tag>
+                </span>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div class="pagination-row">
+            <el-pagination
+              v-model:current-page="store.pageNum"
+              v-model:page-size="store.pageSize"
+              :page-sizes="[5, 10, 15, 20]"
+              background
+              layout="total, sizes, prev, pager, next, jumper"
+              :total="store.total"
+              @size-change="handleSizeChange"
+              @current-change="load"
+            />
+          </div>
+        </article>
+
+        <aside class="ai-panel care-glass-card">
+          <div class="section-heading compact">
+            <div>
+              <h2>AI / 本地健康分析</h2>
+              <p>离开页面后分析仍会继续，返回本页可看到过程或结果。</p>
+            </div>
+          </div>
+
+          <div class="provider-row">
+            <span v-if="store.aiProvider" class="provider-badge" :class="{ fallback: store.aiFallback }">
+              {{ store.aiProviderLabel }}
+            </span>
+            <span v-if="store.lastAnalyzedAt" class="time-badge">
+              {{ formatDateTime(store.lastAnalyzedAt) }}
+            </span>
+          </div>
+
+          <div v-if="store.aiLoading" class="analysis-loading">
+            <el-skeleton :rows="7" animated />
+            <p>正在生成分析报告。此过程已经移入 Pinia store，路由切换不会中断页面状态。</p>
+          </div>
+          <div v-else-if="store.AiData" class="report-box">
+            <pre>{{ store.AiData }}</pre>
+          </div>
+          <div v-else class="analysis-empty">
+            <h3>尚未生成报告</h3>
+            <p>先查询历史记录，再点击“AI 分析”。未配置 DeepSeek key 时后端会自动返回本地规则分析。</p>
+            <el-button type="primary" :disabled="store.tableData.length === 0" @click="runAiAnalysis">
+              生成报告
+            </el-button>
+          </div>
+
+          <div v-if="store.aiError" class="retry-row">
+            <span>{{ store.aiError }}</span>
+            <el-button size="small" type="warning" @click="runAiAnalysis">重试</el-button>
+          </div>
+        </aside>
+      </section>
+    </template>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useUserStore } from '@/stores/userStore'
-import request from '@/utils/request'
+import { useHistoryAnalysisStore } from '@/stores/historyAnalysisStore'
 
 const userStore = useUserStore()
-const userID = ref(userStore.userInfo?.userID || null)
+const store = useHistoryAnalysisStore()
 
-const data = reactive({
-  date: '',
-  tableData: [],
-  pageNum: 1,
-  pageSize: 10,
-  total: 0,
-  AiData: '',
-  aiLoading: false,
-  aiProvider: '',
-  aiProviderLabel: '',
-  aiFallback: false
+const userID = computed(() => userStore.userInfo?.userID || userStore.userInfo?.user_id || null)
+
+const numericValues = (key) => store.tableData
+  .map(row => Number(row[key]))
+  .filter(value => Number.isFinite(value))
+
+const average = (values) => {
+  if (values.length === 0) return null
+  return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+const heartValues = computed(() => numericValues('bpm_rader'))
+const breathValues = computed(() => numericValues('bpm_finger'))
+const avgHeart = computed(() => average(heartValues.value))
+const avgBreath = computed(() => average(breathValues.value))
+
+const abnormalCount = computed(() => store.tableData.filter(row => {
+  const heart = Number(row.bpm_rader)
+  const breath = Number(row.bpm_finger)
+  return (Number.isFinite(heart) && (heart < 55 || heart > 100)) ||
+    (Number.isFinite(breath) && (breath < 10 || breath > 24))
+}).length)
+
+const metricCards = computed(() => [
+  {
+    key: 'rows',
+    title: '当前页样本',
+    value: `${store.tableData.length}`,
+    detail: `数据库总计 ${store.total} 条记录`
+  },
+  {
+    key: 'heart',
+    title: '平均心率',
+    value: avgHeart.value === null ? '--' : `${avgHeart.value.toFixed(1)} BPM`,
+    detail: heartValues.value.length ? '正常参考：55-100 BPM' : '等待有效心率样本'
+  },
+  {
+    key: 'breath',
+    title: '平均呼吸率',
+    value: avgBreath.value === null ? '--' : `${avgBreath.value.toFixed(1)} RPM`,
+    detail: breathValues.value.length ? '正常参考：10-24 RPM' : '等待有效呼吸样本'
+  },
+  {
+    key: 'abnormal',
+    title: '异常提示',
+    value: `${abnormalCount.value}`,
+    detail: abnormalCount.value ? '建议结合 AI 报告复核' : '当前页未见明显异常'
+  }
+])
+
+const reportStateLabel = computed(() => {
+  const map = {
+    idle: '未分析',
+    running: '生成中',
+    done: '已完成',
+    fallback: '本地兜底',
+    failed: '请求失败',
+    empty: '暂无数据'
+  }
+  return map[store.lastAnalysisStatus] || '未分析'
 })
 
-const load = async () => {
-  if (!userID.value) {
-    alert('请先登录')
-    return
-  }
+const analysisStatusText = computed(() => store.aiLoading ? '跨页面任务保持中' : '最近分析状态')
+const analysisStatusClass = computed(() => ({
+  running: store.aiLoading,
+  fallback: store.aiFallback,
+  failed: store.lastAnalysisStatus === 'failed'
+}))
 
-  try {
-    const response = await request.get('/heartdata/selectPage', {
-      params: {
-        pageNum: data.pageNum,
-        pageSize: data.pageSize,
-        date: data.date,
-        userID: userID.value
-      }
-    })
-
-    if (response.code === 200) {
-      data.tableData = response.data.list
-      data.total = response.data.total
-    } else {
-      console.error('查询失败:', response.msg)
-    }
-  } catch (error) {
-    console.error('请求失败:', error)
-  }
+function pad(value) {
+  return String(value ?? '--').padStart(2, '0')
 }
 
-const AiAnalysis = async () => {
-  if (data.tableData.length === 0) {
-    data.AiData = '暂无数据，无法进行 AI 分析。请先启动雷达模拟板并积累历史数据。'
-    data.aiProvider = 'local'
-    data.aiProviderLabel = '暂无数据'
-    data.aiFallback = true
-    return
-  }
-
-  data.aiLoading = true
-  data.AiData = '正在生成分析报告，请稍候...'
-  data.aiProvider = ''
-  data.aiProviderLabel = ''
-  data.aiFallback = false
-
-  try {
-    const response = await request.post('/ai/analyze-vitals', {
-      rows: data.tableData,
-      date: data.date,
-      userID: userID.value
-    })
-
-    data.AiData = response.report || 'AI 未返回有效内容。'
-    data.aiProvider = response.provider || 'local'
-    data.aiFallback = !!response.fallback
-    data.aiProviderLabel = response.provider === 'deepseek'
-      ? `DeepSeek：${response.model || 'deepseek-v4-flash'}`
-      : (response.warning || '本地规则兜底')
-  } catch (error) {
-    console.error('AI 分析失败:', error)
-    data.AiData = 'AI 分析接口暂时不可用。请确认模拟后端正在运行；未配置 DeepSeek key 时，后端会自动使用本地规则兜底。'
-    data.aiProvider = 'local'
-    data.aiProviderLabel = '请求失败'
-    data.aiFallback = true
-  } finally {
-    data.aiLoading = false
-  }
+function formatNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number.toFixed(1) : '--'
 }
 
-const reset = () => {
-  data.date = ''
-  data.pageNum = 1
-  data.pageSize = 10
-  data.tableData = []
-  data.total = 0
-  data.AiData = ''
-  data.aiProvider = ''
-  data.aiProviderLabel = ''
-  data.aiFallback = false
+function vitalTag(value, low, high) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return { label: '无效', type: 'info' }
+  if (number < low) return { label: '偏低', type: 'warning' }
+  if (number > high) return { label: '偏高', type: 'danger' }
+  return { label: '正常', type: 'success' }
 }
 
-onMounted(load)
+function heartTag(value) {
+  return vitalTag(value, 55, 100)
+}
+
+function breathTag(value) {
+  return vitalTag(value, 10, 24)
+}
+
+function formatDateTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+async function load() {
+  await store.loadHistory(userID.value)
+}
+
+async function runAiAnalysis() {
+  await store.runAiAnalysis(userID.value)
+}
+
+function handleSizeChange() {
+  store.pageNum = 1
+  load()
+}
+
+function reset() {
+  store.resetHistory()
+}
+
+onMounted(() => {
+  if (userID.value) load()
+})
 </script>
 
 <style scoped>
-.history-page { width: 100%; }
-.empty-tip { text-align: center; padding: 20px; color: red; }
-.toolbar { margin-bottom: 12px; }
-.toolbar :deep(.el-card__body) { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-.history-table { width: 100%; }
-.pagination-row { margin-top: 10px; }
-.ai-card { margin-top: 12px; }
-.ai-header { display: flex; align-items: center; gap: 10px; font-weight: 700; margin-bottom: 10px; }
-.ai-provider { font-size: 12px; color: #237804; background: #e6f7ed; border: 1px solid #b7eb8f; border-radius: 999px; padding: 3px 9px; font-weight: 400; }
-.ai-provider.fallback { color: #ad6800; background: #fff7e6; border-color: #ffd591; }
-.ai-report { white-space: pre-wrap; line-height: 1.7; color: #333; font-family: inherit; margin: 0; }
+.history-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.history-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 26px;
+}
+
+.history-hero h1 {
+  margin: 8px 0 10px;
+  font-size: 34px;
+  letter-spacing: -0.03em;
+}
+
+.history-hero p,
+.section-heading p,
+.analysis-empty p,
+.analysis-loading p {
+  margin: 0;
+  color: var(--care-muted);
+  line-height: 1.7;
+}
+
+.hero-status {
+  min-width: 168px;
+  border-radius: 18px;
+  padding: 14px 16px;
+  color: var(--care-primary-strong);
+  background: rgba(22, 183, 169, 0.1);
+  border: 1px solid rgba(22, 183, 169, 0.22);
+}
+
+.hero-status span,
+.metric-card span {
+  display: block;
+  color: var(--care-muted);
+  font-size: 13px;
+}
+
+.hero-status strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 22px;
+}
+
+.hero-status.running {
+  color: #0369a1;
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.hero-status.fallback {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.hero-status.failed {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.login-empty {
+  padding: 32px;
+  text-align: center;
+}
+
+.toolbar-card {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  padding: 18px;
+  flex-wrap: wrap;
+}
+
+.field-block {
+  display: grid;
+  gap: 8px;
+}
+
+.field-block label {
+  color: var(--care-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.inline-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--care-danger);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 14px;
+}
+
+.metric-card {
+  padding: 18px;
+}
+
+.metric-card strong {
+  display: block;
+  margin: 10px 0 6px;
+  font-size: 28px;
+}
+
+.metric-card small {
+  color: var(--care-muted);
+}
+
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(560px, 1.35fr) minmax(340px, 0.65fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.table-card,
+.ai-panel {
+  padding: 20px;
+}
+
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.section-heading.compact {
+  margin-bottom: 12px;
+}
+
+.section-heading h2 {
+  margin: 0 0 6px;
+  font-size: 22px;
+}
+
+.history-table {
+  width: 100%;
+}
+
+.vital-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.provider-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.provider-badge,
+.time-badge {
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--care-primary-strong);
+  background: rgba(22, 183, 169, 0.1);
+  border: 1px solid rgba(22, 183, 169, 0.22);
+}
+
+.provider-badge.fallback {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.time-badge {
+  color: var(--care-muted);
+  background: rgba(100, 116, 139, 0.08);
+  border-color: rgba(100, 116, 139, 0.16);
+}
+
+.analysis-loading,
+.analysis-empty,
+.report-box {
+  border-radius: 18px;
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(15, 143, 133, 0.12);
+}
+
+.analysis-empty h3 {
+  margin: 0 0 8px;
+}
+
+.analysis-empty .el-button {
+  margin-top: 14px;
+}
+
+.report-box pre {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #183447;
+  line-height: 1.75;
+  font-family: inherit;
+}
+
+.retry-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--care-danger);
+}
+
+@media (max-width: 1180px) {
+  .metric-grid,
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .history-hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 720px) {
+  .history-workspace {
+    padding: 16px;
+  }
+
+  .toolbar-card,
+  .toolbar-actions,
+  .pagination-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 </style>
