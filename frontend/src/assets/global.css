@@ -1,0 +1,73 @@
+:root {
+  --care-bg: #edf7f6;
+  --care-bg-deep: #071827;
+  --care-surface: rgba(255, 255, 255, 0.88);
+  --care-surface-strong: #ffffff;
+  --care-surface-dark: rgba(9, 24, 45, 0.82);
+  --care-primary: #16b7a9;
+  --care-primary-strong: #0f8f85;
+  --care-accent: #38bdf8;
+  --care-success: #16a34a;
+  --care-warning: #f59e0b;
+  --care-danger: #ef4444;
+  --care-text: #102333;
+  --care-muted: #64748b;
+  --care-border: rgba(15, 143, 133, 0.16);
+  --care-radius-lg: 24px;
+  --care-radius-md: 16px;
+  --care-shadow: 0 18px 55px rgba(15, 59, 72, 0.12);
+  --care-shadow-soft: 0 10px 30px rgba(15, 59, 72, 0.09);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--care-text);
+  background: var(--care-bg);
+}
+
+button,
+.el-button,
+.el-menu-item,
+.el-pagination button {
+  min-height: 44px;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+.el-button:focus-visible,
+.el-menu-item:focus-visible {
+  outline: 3px solid rgba(56, 189, 248, 0.45);
+  outline-offset: 2px;
+}
+
+.care-page-shell {
+  min-height: calc(100vh - 84px);
+  margin: -20px;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 5% 5%, rgba(22, 183, 169, 0.18), transparent 34%),
+    radial-gradient(circle at 94% 10%, rgba(56, 189, 248, 0.16), transparent 30%),
+    linear-gradient(135deg, #f5fbfa 0%, #edf7f6 48%, #e8f5ff 100%);
+}
+
+.care-glass-card {
+  border: 1px solid var(--care-border);
+  border-radius: var(--care-radius-lg);
+  background: var(--care-surface);
+  box-shadow: var(--care-shadow);
+  backdrop-filter: blur(16px);
+}
+
+.care-kicker {
+  color: var(--care-primary-strong);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
