@@ -18,6 +18,10 @@
           text-color="#dbeafe"
           active-text-color="#ffffff"
         >
+          <el-menu-item index="/manage/project_intro">
+            <img src="@/assets/leftmenu/知识库.svg" alt="" class="menu-icon" />
+            <span>项目首页</span>
+          </el-menu-item>
           <el-menu-item index="/manage/heart_pic">
             <img src="@/assets/leftmenu/widgetview.svg" alt="" class="menu-icon" />
             <span>生命体征监测</span>
@@ -40,8 +44,8 @@
       <div class="sidebar-footer">
         <span class="status-dot"></span>
         <div>
-          <strong>模拟联调模式</strong>
-          <small>Radar + Snore boards</small>
+          <strong>双板融合看护</strong>
+          <small>Radar + Acoustic sensors</small>
         </div>
       </div>
     </aside>
