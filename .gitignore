@@ -1,54 +1,136 @@
+# ---------------------------------------------------------------------------
 # OS / editor
+# ---------------------------------------------------------------------------
 .DS_Store
 Thumbs.db
+Desktop.ini
 *.swp
 *.swo
 *.tmp
 *.temp
 *.bak
+.vscode/
+.idea/
 
+# ---------------------------------------------------------------------------
+# Secrets / local environment
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+*.crt
+
+# ---------------------------------------------------------------------------
+# Logs / local runtime files
+# ---------------------------------------------------------------------------
+*.log
+logs/
+*.pid
+*.seed
+
+# ---------------------------------------------------------------------------
 # Python
+# ---------------------------------------------------------------------------
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Backend local data / generated artifacts
+# ---------------------------------------------------------------------------
 *.db
 *.sqlite
 *.sqlite3
+backend/radar_monitor.db
+backend/radar_front_sql_embed/
+backend/mock_audio_uploads/
+backend/trained_models/
+backend/**/*.wav
+backend/**/*.pcm
+backend/**/*.raw
 
-# Node / frontend build
+# Large training / model data should be stored outside Git or in Git LFS.
+*.npy
+*.npz
+*.mat
+
+# ---------------------------------------------------------------------------
+# Frontend / Node
+# ---------------------------------------------------------------------------
+node_modules/
 frontend/node_modules/
 frontend/dist/
-frontend/.idea/
+frontend/.vite/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Backend local / generated
-backend/__pycache__/
-backend/.idea/
-backend/radar_monitor.db
-backend/radar_front_sql_embed/
-backend/trained_models/
+# ---------------------------------------------------------------------------
+# Embedded firmware generated artifacts
+# ---------------------------------------------------------------------------
+build/
+Build/
+Debug/
+Release/
+out/
+Output/
+.cache/
+.settings/
+tools/
+.sconsign.dblite
+.config.old
+*.elf
+*.map
+*.bin
+*.hex
+*.uf2
+*.o
+*.obj
+*.a
+*.d
+*.lst
+*.su
+*.gcno
+*.gcda
+*.ninja_log
+*.ninja_deps
+library-manager.log
 
-# RRT / embedded generated artifacts
-Edgi_Talk_M55_XiaoZhi/.settings/
-Edgi_Talk_M55_XiaoZhi/__pycache__/
+# ---------------------------------------------------------------------------
+# Project-specific generated folders
+# ---------------------------------------------------------------------------
 Edgi_Talk_M55_XiaoZhi/build/
 Edgi_Talk_M55_XiaoZhi/Debug/
 Edgi_Talk_M55_XiaoZhi/tools/
-Edgi_Talk_M55_XiaoZhi/.sconsign.dblite
 Edgi_Talk_M55_XiaoZhi/rt-thread.elf
 Edgi_Talk_M55_XiaoZhi/rtthread.map
-Edgi_Talk_M55_XiaoZhi/.config.old
+Edgi_Talk_M55_XiaoZhi/figures/
+Edgi_Talk_M55_XiaoZhi/rt-thread/documentation/
 Edgi_Talk_M55_XiaoZhi/libraries/**/docs/
 Edgi_Talk_M55_XiaoZhi/libs/**/docs/
 Edgi_Talk_M55_XiaoZhi/packages/**/docs/
-
-# radar_wifi generated / IDE
-radar_wifi/.idea/
-radar_wifi/.settings/
 radar_wifi/build/
-radar_wifi/.ninja_log
-radar_wifi/library-manager.log
+radar_wifi/.cache/
+
+# Vendor archives and generated documentation bundles.
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz

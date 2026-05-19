@@ -1,0 +1,144 @@
+# 小智示例工程
+
+**中文** | [**English**](./README.md)
+
+## 简介
+
+本示例工程基于 **Edgi-Talk 平台**，演示 **小智语音交互设备的基本功能**，运行在 **RT-Thread 实时操作系统** 上。
+通过本工程，用户可以快速验证设备 **WiFi 连接**、**按键唤醒** 与 **语音交互** 功能，为后续应用开发提供基础参考。
+
+## 软件说明
+
+* 工程基于 **Edgi-Talk** 平台开发。
+* 示例功能包括：
+
+  * WiFi 连接与状态显示
+  * 按键唤醒与语音交互
+  * 设备状态管理（待机、监听、休眠等）
+
+## 使用方法
+
+### 准备 WiFi 资源（首次必做）
+
+WHD 在启动时需要从 FAL 读取三个外部资源文件：`firmware`（二进制固件）、`clm_blob`（射频法规表）以及 `nvram.txt`（模组校准参数）。这些文件独立于应用固件，重新烧录应用不会自动更新它们，因此首次使用或更换固件包时必须手动写入。Edgi-Talk 默认提供的资源文件位于工程根目录的 `resources/` 文件夹中。
+
+- 在 menuconfig 中保持 `WHD_RESOURCES_IN_EXTERNAL_STORAGE_FAL` 选项开启，并在 FAL 分区表中保留默认的 `whd_firmware`、`whd_clm`、`whd_nvram` 分区（默认分别占用 512 KB + 32 KB + 32 KB 的片上 Flash）。
+- 打开串口终端，复位进入 `msh` 命令行，依次执行以下命令：
+
+```
+whd_res_download whd_firmware
+whd_res_download whd_clm
+whd_res_download whd_nvram
+```
+
+命令会切换到 YMODEM 传输模式，请使用支持 YMODEM 上传的终端软件（如 Xshell）选择根目录 `resources/` 下对应芯片的文件并发送。
+
+- 每次收到 `Download ... success` 提示后再进行下一项
+- 三者写入完成后重启开发板即可让 WiFi 读取新的资源；若后续更新固件包，同样需要重新执行 `whd_res_download`。
+
+![wifi](figures/wifi.gif)
+
+### 1. 初次使用（AP 配网）
+
+1. 开发板启动会进入 **AP 模式**。
+   在手机 / 电脑中连接设备的热点（密码见屏幕显示）：
+
+   ![alt text](figures/4.png)
+
+2. 连接成功后，在浏览器中输入 **192.168.169.1** 打开后台界面进行配网：
+
+3. 点击 **Scan** 扫描附近的 Wi-Fi 热点：
+
+   ![alt text](figures/6.png)
+
+4. Wi-Fi 连接成功后，将显示如下界面：
+
+   ![alt text](figures/7.png)
+
+5. 当设备屏幕显示 **“待命中”** 时，表示可以正常进行语音对话：
+
+   ![alt text](figures/8.png)
+
+> **提示**：按一下开发板上的 **第一个用户按键** 进入语音输入，等待 1–2 秒后，小智会自动回复。
+
+## 小智表情含义说明
+
+### 1. 联网中（请稍候）
+
+![alt text](figures/9.png)
+
+### 2. 监听中（需要按按键开始对话）
+
+![alt text](figures/10.png)
+
+### 3. 聆听中（正在处理对话内容）
+
+![alt text](figures/11.png)
+
+### 4. 对话中（小智正在回复你）
+
+![alt text](figures/12.png)
+
+### 5. 休眠状态（低功耗）
+
+![alt text](figures/13.png)
+
+> 从休眠恢复：按一下按键 → 等待进入“待命中” → 可继续对话。  图片大小缩小一点
+
+### 运行效果
+
+* 烧录完成后，设备上电即可运行示例工程。
+* **按一下**顶部按键对话，可进入 **聆听中** 状态进行语音交互。
+  ![alt text](figures/3.png)
+
+## 注意事项
+
+* 第一次需要进入 [小智官网](https://xiaozhi.me/) 进行后台绑定
+  ![alt text](figures/2.png)
+  按下用户按键屏幕显示验证码
+* 请确保 WiFi 名称与密码正确，并使用 **2.4GHz 频段**。
+* 设备需在可访问互联网的环境下使用。
+* 如需修改工程的 **图形化配置**，请使用以下工具：
+
+```
+tools/device-configurator/device-configurator.exe
+libs/TARGET_APP_KIT_PSE84_EVAL_EPC2/config/design.modus
+```
+
+* 修改完成后保存配置，并重新生成代码。
+
+## 启动流程
+
+系统启动顺序如下：
+
+```
++------------------+
+|   Secure M33     |
+|   (安全内核启动)  |
++------------------+
+          |
+          v
++------------------+
+|       M33        |
+|   (非安全核启动)  |
++------------------+
+          |
+          v
++-------------------+
+|       M55         |
+|  (应用处理器启动)  |
++-------------------+
+```
+
+⚠️ 请严格按照以上顺序烧写固件，否则设备可能无法正常运行。
+
+---
+
+* 若示例工程无法正常运行，建议先编译并烧录 **Edgi_Talk_M33_Blink_LED** 工程，确保初始化与核心启动流程正常，再运行本示例。
+* 若要开启 M55，需要在 **M33 工程** 中打开配置：
+
+```
+RT-Thread Settings --> 硬件 --> select SOC Multi Core Mode --> Enable CM55 Core
+```
+
+![config](figures/config.png)

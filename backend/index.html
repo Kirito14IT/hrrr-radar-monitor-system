@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HeartTrack Dashboard | ShanghaiTech</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
+    <script src="https://unpkg.com/feather-icons"></script>
+    <style>
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header with USST Logo -->
+        <header class="flex items-center justify-between mb-12">
+            <div class="flex items-center space-x-4">
+                <h1 class="text-3xl font-bold text-indigo-800">雷达目标心率检测</h1>
+</div>
+<div class="text-base text-gray-600 hidden md:block bg-white/80 backdrop-blur-sm px-4 py-2 rounded-lg shadow-sm">
+<span id="current-time" class="font-medium"></span>
+            </div>
+        </header>
+        <!-- Main Dashboard -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 max-w-7xl mx-auto">
+            <!-- Radar Status Card -->
+            <div class="bg-white rounded-2xl shadow-xl overflow-hidden transition-all hover:shadow-2xl transform hover:-translate-y-1">
+<div class="bg-green-600 px-6 py-5">
+<h2 class="text-xl font-bold text-white flex items-center">
+                        <i data-feather="wifi" class="mr-2"></i> 雷达状态
+                    </h2>
+                </div>
+                <div class="p-6 space-y-4">
+<div class="flex flex-col items-center justify-center h-full">
+                        <p class="text-gray-500 text-center">当前状态</p>
+                        <div class="flex items-center justify-center mt-4">
+                        <i data-feather="alert-circle" id="radar-icon" class="w-20 h-20 text-gray-400 mb-4"></i>
+</div>
+                        <span id="radar-status" class="text-3xl font-bold text-green-600 text-center">--</span>
+                    </div>
+</div>
+            </div>
+            <!-- Heart Rate Card -->
+            <div class="bg-white rounded-2xl shadow-xl overflow-hidden transition-all hover:shadow-2xl transform hover:-translate-y-1">
+                <div class="bg-red-600 px-6 py-5">
+<h2 class="text-xl font-bold text-white flex items-center">
+                        <i data-feather="activity" class="mr-2"></i> 实时心率
+</h2>
+                </div>
+                <div class="p-6 space-y-4">
+<div class="flex flex-col items-center justify-center">
+                            <p class="text-gray-500 text-center">当前心率</p>
+                            <div class="flex items-center justify-center mt-3">
+                                <span id="heart-rate" class="text-4xl md:text-5xl font-bold text-red-600 pulse">--</span>
+                                <span class="text-2xl text-gray-500 ml-2">BPM</span>
+                            </div>
+<div class="relative w-28 h-28 mx-auto">
+<svg viewBox="0 0 36 36" class="absolute">
+                                <path d="M18 2.0845
+                                    a 15.9155 15.9155 0 0 1 0 31.831
+                                    a 15.9155 15.9155 0 0 1 0 -31.831"
+                                    fill="none"
+                                    stroke="#e5e7eb"
+                                    stroke-width="4"
+                                    stroke-dasharray="100, 100"
+                                />
+                                <path id="heart-rate-circle"
+                                    d="M18 2.0845
+                                    a 15.9155 15.9155 0 0 1 0 31.831
+                                    a 15.9155 15.9155 0 0 1 0 -31.831"
+                                    fill="none"
+                                    stroke="#ef4444"
+                                    stroke-width="4"
+                                    stroke-dasharray="0, 100"
+                                    class="transition-all duration-1000 ease-out"
+                                />
+                            </svg>
+                            <div class="absolute inset-0 flex items-center justify-center">
+                                <i data-feather="heart" class="text-red-500 w-10 h-10"></i>
+</div>
+                        </div>
+                    </div>
+</div>
+            </div>
+<!-- Target Distance Card -->
+            <div class="bg-white rounded-2xl shadow-xl overflow-hidden transition-all hover:shadow-2xl transform hover:-translate-y-1">
+<div class="bg-indigo-600 px-6 py-5">
+<h2 class="text-xl font-bold text-white flex items-center">
+                        <i data-feather="target" class="mr-2"></i> 目标距离
+</h2>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div class="flex justify-center">
+                        <div class="text-center">
+                            <div class="flex items-center justify-center">
+                                <span id="target-distance" class="text-4xl md:text-5xl font-bold text-indigo-600">--</span>
+                                <span class="text-2xl text-gray-500 ml-2">米</span>
+                            </div>
+                            <div class="mt-2">
+                                <span id="target-bin" class="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-800">区间: --</span>
+                            </div>
+                        </div>
+                    </div>
+</div>
+            </div>
+</div>
+</div>
+
+    <script>
+    // 更新时间显示
+    function updateTime() {
+        const now = new Date();
+        document.getElementById('current-time').textContent = now.toLocaleString();
+    }
+    setInterval(updateTime, 1000);
+    updateTime();
+
+    // 从 API 获取真实数据（替换原来的模拟数据）
+    async function fetchData() {
+        try {
+            // --------------------------
+            // 1. 配置：true=模拟数据，false=真实API
+            // --------------------------
+            const useMock = false;
+            let data;
+
+            if (useMock) {
+                // 保留模拟数据（调试用）
+                data = {
+                    heart_rate: Math.floor(Math.random() * 40) + 60,
+                    target_distance: Math.random().toFixed(2),
+                    target_bin: Math.floor(Math.random() * 16),
+                    timestamp: Date.now() / 1000,
+                    status: "ok"
+                };
+            } else {
+                // 2. 发起真实 API 请求
+                const response = await fetch('http://localhost:8000/target');
+                // 检查响应状态（如404/500会抛出错误）
+                if (!response.ok) {
+                    throw new Error(`API请求失败：状态码 ${response.status}`);
+                }
+                data = await response.json();
+            }
+
+            // --------------------------
+            // 3. 验证数据有效性（关键！避免NaN）
+            // --------------------------
+            // 更新雷达状态
+            updateRadarStatus(data.status === 'ok');
+
+            // 更新心率（处理null/非数字）
+            if (data.heart_rate !== null && !isNaN(data.heart_rate)) {
+                document.getElementById('heart-rate').textContent = parseFloat(data.heart_rate).toFixed(2);
+                // 更新心率圆环进度（40-140 BPM范围归一化）
+                const heartRatePercent = Math.min(100, Math.max(0, (data.heart_rate - 40) / 1.4));
+                document.getElementById('heart-rate-circle').style.strokeDasharray = `${heartRatePercent}, 100`;
+            } else {
+                document.getElementById('heart-rate').textContent = '--';
+            }
+
+            // 更新目标距离（处理null/非数字）
+            if (data.target_distance !== null && !isNaN(data.target_distance)) {
+                document.getElementById('target-distance').textContent = parseFloat(data.target_distance).toFixed(2);
+            } else {
+                document.getElementById('target-distance').textContent = '--';
+            }
+
+            // 更新目标区间（处理null/非数字）
+            if (data.target_bin !== null && !isNaN(data.target_bin)) {
+                document.getElementById('target-bin').textContent = `区间: ${Math.floor(data.target_bin)}`;
+            } else {
+                document.getElementById('target-bin').textContent = '区间: --';
+            }
+
+        } catch (error) {
+            console.error('数据获取失败:', error);
+            // 显示全局错误提示（可选）
+            document.getElementById('radar-status').textContent = '数据异常';
+            document.getElementById('radar-icon').setAttribute('data-feather', 'alert-circle');
+            document.getElementById('radar-icon').classList.remove('text-green-500');
+            document.getElementById('radar-icon').classList.add('text-red-500');
+            feather.replace(); // 刷新图标
+        }
+    }
+
+    // 辅助函数：更新雷达状态（复用逻辑）
+    function updateRadarStatus(isConnected) {
+        const radarStatus = document.getElementById('radar-status');
+        const radarIcon = document.getElementById('radar-icon');
+
+        if (isConnected) {
+            radarStatus.textContent = '已连接';
+            radarIcon.setAttribute('data-feather', 'wifi');
+            radarIcon.classList.remove('text-gray-400');
+            radarIcon.classList.add('text-green-500');
+        } else {
+            radarStatus.textContent = '未连接';
+            radarIcon.setAttribute('data-feather', 'alert-circle');
+            radarIcon.classList.remove('text-green-500');
+            radarIcon.classList.add('text-gray-400');
+        }
+        feather.replace(); // 刷新图标
+    }
+
+    // 初始化：首次获取数据 + 每5秒刷新
+    fetchData();
+    setInterval(fetchData, 5000);
+
+    // 初始化 Feather 图标
+    document.addEventListener('DOMContentLoaded', function() {
+        feather.replace();
+    });
+    </script>
+</body>
+</html>
