@@ -1,4 +1,5 @@
 # 雷达生命体征监测系统：无开发板持续模拟联调版
+
 ![alt text](项目框架图.png)
 
 这个项目现在可以在**没有毫米波雷达开发板、没有呼噜检测开发板**的情况下跑通完整演示。
@@ -9,6 +10,13 @@
 2. **呼噜检测模拟板**：每秒发送呼噜特征，并每 10 秒上传一个 10 秒音频片段。
 
 关闭某个模拟板终端，就等于把对应开发板关掉；前端大约 5 秒后会显示离线。
+
+> ⚠️ **后端启动方式务必看清**：本项目提供 3 个后端入口文件，**只有 `backend/mock_hardware_api.py`（监听 8081）能提供完整的 sleep overview / 历史数据 / 告警中心接口**。
+> - ❌ `backend/mock_server.py`（端口 8000）—— 早期版本，没有 sleep overview 等新接口。
+> - ❌ `backend/realtime_radar_processing.py`（默认 8081）—— 没有 `/sleep/overview`，且会与 `mock_hardware_api.py` 抢占 8081 端口。
+> - ✅ `backend/mock_hardware_api.py`（端口 8081）—— 前端 `baseURL` 默认指向它，sleep dashboard 唯一可用的后端。
+>
+> 如果在睡眠看护驾驶舱、历史数据或告警中心页面看到 404，请确认你启动的是 `mock_hardware_api.py` 而不是另外两个文件。
 
 ---
 
@@ -76,7 +84,72 @@ cd ..
 
 ---
 
-## 3. 推荐启动方式：4 个终端
+## 3. 真实毫米波雷达开发板启动方式
+
+真实硬件主线固定使用：
+
+- 毫米波雷达开发板 UDP 数据端口：`9988`
+- 呼噜检测开发板 HTTP 音频上传接口：`http://电脑IP:8081/audio`
+- 后端 HTTP API：`8081`
+- 前端 Vite：`5173`
+
+### 终端 1：启动实时雷达处理后端
+
+```powershell
+# 在项目根目录执行
+conda activate radar
+python backend\realtime_radar_processing.py --port 9988 --api-port 8081 --no-presence
+```
+
+调试阶段建议先加 `--no-presence`，用于确认 UDP 接收、目标距离、时间轴和前端在线状态是否跑通。正式验证存在检测时再去掉该参数：
+
+```powershell
+python backend\realtime_radar_processing.py --port 9988 --api-port 8081
+```
+
+### 终端 2：启动前端
+
+```powershell
+cd frontend
+npm run dev
+```
+
+浏览器打开：
+
+```text
+http://localhost:5173/
+```
+
+后端接口自检：
+
+```powershell
+curl http://localhost:8081/status
+curl http://localhost:8081/target
+curl http://localhost:8081/timeline?seconds=180
+curl http://localhost:8081/heartrate
+```
+
+如果开发板正在向 `9988` 发送 UDP 数据，`/status` 中的 `radar_board_online` 应为 `true`，`/timeline` 应返回 `200`。
+
+呼噜检测开发板接入时，把开发板上传地址配置为：
+
+```text
+http://你的电脑IP:8081/audio
+```
+
+如果开发板发送的是每秒 JSON 特征心跳，可用：
+
+```text
+http://你的电脑IP:8081/mock/snore-heartbeat
+```
+
+收到呼噜板数据后，`/status` 中的 `snore_board_online` 应为 `true`，并会更新 `audio_upload_count`、`snore_score`、`snore_dbfs`、`snore_detected`。
+
+---
+
+## 4. 无硬件模拟启动方式：4 个终端
+
+> 📌 **提醒**：本章节的「模拟后端」特指 `mock_hardware_api.py`。如果你的目的是联调 sleep overview / 历史数据 / 告警中心页面，请使用这个文件，不要用 `mock_server.py` 或 `realtime_radar_processing.py`。
 
 ### 终端 1：启动模拟后端
 
@@ -176,7 +249,7 @@ python backend\mock_device_sender.py --snore-board
 
 ---
 
-## 4. 注册、登录和查看页面
+## 5. 注册、登录和查看页面
 
 1. 打开 `http://localhost:5173/`。
 2. 注册一个账号。
@@ -207,7 +280,7 @@ python backend\mock_device_sender.py --snore-board
 
 ---
 
-## 5. DeepSeek AI 分析配置
+## 6. DeepSeek AI 分析配置
 
 历史数据页的“AI分析”现在不再把 API key 写在前端，而是由后端代理调用 DeepSeek。
 
@@ -242,7 +315,7 @@ DEEPSEEK_API_KEY=你的DeepSeek_API_Key
 
 ---
 
-## 6. 可选命令
+## 7. 可选命令
 
 只上传一次 10 秒呼噜音频：
 
@@ -264,7 +337,7 @@ python backend\mock_device_sender.py --demo
 
 ---
 
-## 7. 手动验证清单
+## 8. 手动验证清单
 
 ### 验证雷达模拟板
 
@@ -296,7 +369,7 @@ python backend\mock_device_sender.py --demo
 
 ---
 
-## 8. 常见问题
+## 9. 常见问题
 
 ### 前端显示离线
 
