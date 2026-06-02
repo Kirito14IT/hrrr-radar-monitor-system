@@ -124,6 +124,12 @@ Edgi_Talk_M55_XiaoZhi/rt-thread/documentation/
 Edgi_Talk_M55_XiaoZhi/libraries/**/docs/
 Edgi_Talk_M55_XiaoZhi/libs/**/docs/
 Edgi_Talk_M55_XiaoZhi/packages/**/docs/
+
+# Generated audio / pcm captures from embedded demos (e.g. UDP audio receiver test runs).
+Edgi_Talk_M55_XiaoZhi/output.wav
+Edgi_Talk_M55_XiaoZhi/**/*.wav
+Edgi_Talk_M55_XiaoZhi/**/*.pcm
+Edgi_Talk_M55_XiaoZhi/**/*.raw
 radar_wifi/build/
 radar_wifi/.cache/
 
