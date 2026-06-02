@@ -62,6 +62,13 @@
 #define DB_THREAD_STACK_SIZE 2048
 #define DB_THREAD_PRIORITY 17  // Higher than main meow thread (18)
 #define DB_THREAD_TICK 10
+
+/* NEW: Heartbeat configuration */
+#define HB_INTERVAL_MS 1000                // Send a snore score heartbeat every 1s
+#define HB_THREAD_STACK_SIZE 2048
+#define HB_THREAD_PRIORITY 18              // Same as meow detection (independent work)
+#define HB_THREAD_TICK 10
+/* END NEW */
 /* --- END NEW --- */
 
 namespace {
@@ -134,11 +141,16 @@ static rt_thread_t g_meow_tid = RT_NULL;
 static volatile rt_bool_t g_meow_running = RT_FALSE;
 static rt_thread_t g_db_tid = RT_NULL; // NEW: Thread handle for dB detection
 static volatile rt_bool_t g_db_running = RT_FALSE; // NEW: Flag for dB thread
+static rt_thread_t g_hb_tid = RT_NULL; // NEW: Heartbeat thread handle
+static volatile rt_bool_t g_hb_running = RT_FALSE; // NEW: Heartbeat running flag
 static rt_device_t g_mic_dev = RT_NULL;
 static rt_tick_t g_last_db_send_tick = 0; // NEW: Track last send time
 static float g_db_history[DB_HISTORY_SIZE] rt_section(".m33_m55_shared_hyperram"); // NEW: Ring buffer for dB history
 static int g_db_history_index = 0; // NEW: Index for the ring buffer
 static rt_mutex_t g_db_mutex = RT_NULL; // NEW: Mutex to protect access to history and index
+static rt_mutex_t g_score_mutex = RT_NULL; // NEW: Mutex for the latest snore score
+static volatile float g_latest_score = 0.0f; // NEW: Latest snore score (shared with heartbeat thread)
+static volatile rt_bool_t g_latest_detected = RT_FALSE; // NEW: Latest snore detection flag
 
 /* NEW: Global variables for blue LED blink (moved inside namespace) */
 static rt_tick_t g_blue_blink_until = 0;
@@ -761,6 +773,148 @@ static void audio_send_thread_entry(void *parameter)
 #define MEOW_THREAD_PRIORITY   18
 #define MEOW_THREAD_TICK       10
 
+/* NEW: Small helper to POST a JSON body to the backend.
+ * Used for /mock/snore-session/{start,stop} and /mock/snore-heartbeat.
+ * Returns 0 on success, negative on failure. Non-blocking on transport errors.
+ */
+static int post_json_to_backend(const char *path, const char *json_body)
+{
+    if (!path || !json_body)
+        return -1;
+
+    const size_t body_len = strlen(json_body);
+    char header[256];
+    int header_len = snprintf(header, sizeof(header),
+        "POST %s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %u\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        path, DB_SEND_TARGET_IP, DB_SEND_TARGET_PORT, (unsigned)body_len);
+    if (header_len <= 0 || header_len >= (int)sizeof(header))
+        return -2;
+
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        LOG_W("post_json: socket() failed, errno=%d", errno);
+        return -3;
+    }
+
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family      = AF_INET;
+    serv_addr.sin_port        = htons(DB_SEND_TARGET_PORT);
+    serv_addr.sin_addr.s_addr = inet_addr(DB_SEND_TARGET_IP);
+
+    if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0) {
+        LOG_W("post_json: connect %s:%d failed, errno=%d",
+              DB_SEND_TARGET_IP, DB_SEND_TARGET_PORT, errno);
+        close(sockfd);
+        return -4;
+    }
+
+    /* Send header + body */
+    ssize_t total = 0;
+    ssize_t to_send = (ssize_t)header_len + (ssize_t)body_len;
+    while (total < to_send) {
+        ssize_t n = send(sockfd, header + total, header_len - total, 0);
+        if (n > 0) {
+            total += n;
+            continue;
+        }
+        if (n < 0) {
+            LOG_W("post_json: header send failed, errno=%d", errno);
+            close(sockfd);
+            return -5;
+        }
+        break;
+    }
+    /* Now send the body separately (string literal may be in rodata) */
+    ssize_t body_sent = 0;
+    while (body_sent < (ssize_t)body_len) {
+        ssize_t n = send(sockfd, json_body + body_sent, body_len - body_sent, 0);
+        if (n <= 0) {
+            LOG_W("post_json: body send failed, errno=%d", errno);
+            close(sockfd);
+            return -6;
+        }
+        body_sent += n;
+    }
+    total += body_sent;
+
+    /* Best-effort: read just the status line so the server sees the request
+     * as completed before we close. */
+    char resp[128] = {0};
+    (void)recv(sockfd, resp, sizeof(resp) - 1, 0);
+    close(sockfd);
+
+    LOG_I("post_json: %s sent %d bytes", path, (int)total);
+    return 0;
+}
+
+/* NEW: Heartbeat thread - sends the latest snore score to the backend
+ * every HB_INTERVAL_MS milliseconds.  This keeps the snore board reported
+ * as "online" by the dashboard even while the audio-send thread is busy
+ * collecting a 10-second clip.
+ */
+static void heartbeat_thread_entry(void *parameter)
+{
+    (void)parameter;
+    LOG_I("hb: thread started (interval=%d ms)", HB_INTERVAL_MS);
+
+    /* Announce session start so the dashboard flips to "online" immediately */
+    post_json_to_backend("/mock/snore-session/start", "{\"source\":\"real_snore_board\"}");
+
+    const rt_tick_t period_ticks = rt_tick_from_millisecond(HB_INTERVAL_MS);
+    rt_tick_t next_send = rt_tick_get();
+
+    while (g_hb_running) {
+        const rt_tick_t now = rt_tick_get();
+        /* Sleep in small slices so the loop can be stopped quickly */
+        if ((rt_tick_t)(next_send - now) <= (rt_tick_t)RT_TICK_MAX / 2) {
+            rt_thread_mdelay(50);
+            continue;
+        }
+        next_send = now + period_ticks;
+
+        /* Snapshot the latest score under lock */
+        float score = 0.0f;
+        rt_bool_t detected = RT_FALSE;
+        if (g_score_mutex) {
+            rt_mutex_take(g_score_mutex, RT_WAITING_FOREVER);
+            score = g_latest_score;
+            detected = g_latest_detected;
+            rt_mutex_release(g_score_mutex);
+        }
+
+        char body[160];
+        int body_len = snprintf(body, sizeof(body),
+            "{\"snore_score\":%.3f,\"snore_detected\":%s,\"source\":\"real_snore_board\"}",
+            score, detected ? "true" : "false");
+        if (body_len > 0) {
+            (void)post_json_to_backend("/mock/snore-heartbeat", body);
+        }
+    }
+
+    /* Tell the backend we are gone so the dashboard flips to "offline" now */
+    post_json_to_backend("/mock/snore-session/stop", "{}");
+
+    LOG_I("hb: thread exiting");
+    g_hb_tid = RT_NULL;
+}
+
+/* NEW: Helper used by meow_detect_thread_entry to publish the latest score */
+static void publish_latest_score(float score, rt_bool_t detected)
+{
+    if (!g_score_mutex)
+        return;
+    rt_mutex_take(g_score_mutex, RT_WAITING_FOREVER);
+    g_latest_score = score;
+    g_latest_detected = detected ? RT_TRUE : RT_FALSE;
+    rt_mutex_release(g_score_mutex);
+}
+
 static void meow_detect_thread_entry(void *parameter)
 {
     (void)parameter;
@@ -880,6 +1034,7 @@ static void meow_detect_thread_entry(void *parameter)
         }
 
         xiaozhi_ui_set_meow_result(detected ? true : false, score);
+        publish_latest_score(score, detected);
         if (detected)
         {
             blue_blink_for_ms(1000, 100); // This now calls the function inside the namespace
@@ -908,6 +1063,7 @@ int meow_detect_stop(void)
     /* Idempotent stop: always force LED state to "stopped" */
     g_meow_running = RT_FALSE;
     g_db_running = RT_FALSE;  // Also stop audio thread
+    g_hb_running = RT_FALSE;  // Also stop heartbeat thread
 
     // Stopped: red on, green off, blue off
     leds_init_once();
@@ -927,6 +1083,13 @@ int meow_detect_stop(void)
         LOG_I("meow_detect_stop: deleting audio thread");
         rt_thread_delete(g_db_tid);
         g_db_tid = RT_NULL;
+    }
+
+    /* NEW: Stop heartbeat thread so the dashboard immediately sees us offline */
+    if (g_hb_tid) {
+        LOG_I("meow_detect_stop: deleting heartbeat thread");
+        rt_thread_delete(g_hb_tid);
+        g_hb_tid = RT_NULL;
     }
 
     /* Give main thread time to exit; no hard join API on RT-Thread */
@@ -958,6 +1121,16 @@ int meow_detect_start(void)
     led_write(kLedBlue, RT_FALSE);
 
     g_meow_running = RT_TRUE;
+
+    /* NEW: Create score-publish mutex if needed (shared with heartbeat thread) */
+    if (!g_score_mutex) {
+        g_score_mutex = rt_mutex_create("score_mtx", RT_IPC_FLAG_FIFO);
+        if (!g_score_mutex) {
+            LOG_E("meow: create score mutex failed");
+            meow_detect_stop();
+            return -RT_ENOMEM;
+        }
+    }
 
     g_meow_tid = rt_thread_create("meow_det",
                                   meow_detect_thread_entry,
@@ -1006,6 +1179,29 @@ int meow_detect_start(void)
 
         rt_thread_startup(g_db_tid);
         LOG_I("meow: db thread started alongside main detection");
+    }
+    /* END NEW */
+
+    /* NEW: Start heartbeat thread so the dashboard flips to "online"
+     * immediately and stays online even during the 10-second audio
+     * collection phase. The thread announces session start and then
+     * pushes a 1Hz snore score to /mock/snore-heartbeat. */
+    if (!g_hb_running && !g_hb_tid) {
+        g_hb_running = RT_TRUE;
+        g_hb_tid = rt_thread_create("meow_hb",
+                                    heartbeat_thread_entry,
+                                    RT_NULL,
+                                    HB_THREAD_STACK_SIZE,
+                                    HB_THREAD_PRIORITY,
+                                    HB_THREAD_TICK);
+        if (!g_hb_tid) {
+            LOG_E("meow: create heartbeat thread failed");
+            g_hb_running = RT_FALSE;
+            meow_detect_stop();
+            return -RT_ENOMEM;
+        }
+        rt_thread_startup(g_hb_tid);
+        LOG_I("meow: heartbeat thread started");
     }
     /* END NEW */
 

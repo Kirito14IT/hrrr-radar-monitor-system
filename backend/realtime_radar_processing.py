@@ -119,6 +119,8 @@ ENABLE_PRESENCE_DETECTION = True              # 是否启用存在检测
 PRESENCE_HISTORY_LENGTH = 5                   # 存在检测历史长度
 PRESENCE_COUNT_THRESHOLD = 2                  # 存在检测计数阈值
 BOARD_TIMEOUT_SECONDS = 5.0                   # 开发板离线判定超时
+SNORE_BOARD_TIMEOUT_SECONDS = 15.0             # 呼噜板离线判定超时（10 秒一包音频，宽松一些）
+SNORE_SESSION_GRACE_SECONDS = 30.0             # 呼噜板按下 Snore detect 后保持在线的最长静默期
 TIMELINE_RETENTION_SECONDS = 7200             # 时间轴保留时长
 SAMPLE_RATE = 16000                           # 呼噜板音频采样率
 SAMPLE_WIDTH = 2                              # int16 PCM
@@ -244,6 +246,11 @@ class RealtimeRadarProcessor:
         self.last_snore_heartbeat_at = None
         self.last_audio_received_time = None
         self.last_audio_received_at = None
+        self.snore_session_active = False
+        self.snore_session_stopped = False
+        self.snore_session_started_at = None
+        self.snore_session_started_text = None
+        self.snore_session_last_seen_at = None
         self.last_audio_file = None
         self.last_audio_seconds = 0.0
         self.last_audio_dbfs = None
@@ -342,11 +349,25 @@ class RealtimeRadarProcessor:
         return bool(self.running and age is not None and age <= BOARD_TIMEOUT_SECONDS)
 
     def _snore_board_online(self):
+        # Snore detect 已按下 → 在 session 宽限期内一律视为在线
+        if self.snore_session_active:
+            last_seen = self.snore_session_last_seen_at
+            if last_seen is not None and self._seconds_since(last_seen) <= SNORE_SESSION_GRACE_SECONDS:
+                return True
+            # session 内长时间没收到任何活动，自动结束 session
+            self.snore_session_active = False
+
+        # 用户已经按下 back（或者从未开始过 session 之前的旧路径），
+        # 退回到心跳 / 音频最近活动时间判断。
+        if self.snore_session_stopped:
+            # 显式 back 后立刻离线，不再被 5/15 秒内的心跳“复活”
+            return False
+
         heartbeat_age = self._seconds_since(self.last_snore_heartbeat_time)
         audio_age = self._seconds_since(self.last_audio_received_time)
         return bool(
-            (heartbeat_age is not None and heartbeat_age <= BOARD_TIMEOUT_SECONDS)
-            or (audio_age is not None and audio_age <= BOARD_TIMEOUT_SECONDS)
+            (heartbeat_age is not None and heartbeat_age <= SNORE_BOARD_TIMEOUT_SECONDS)
+            or (audio_age is not None and audio_age <= SNORE_BOARD_TIMEOUT_SECONDS)
         )
 
     def _sleep_stage_for_latest(self, radar_online, heart_rate, breath_rate):
@@ -870,6 +891,8 @@ class RealtimeRadarProcessor:
             "radar_online": radar_online,
             "radar_board_online": radar_online,
             "snore_board_online": snore_online,
+            "snore_session_active": bool(self.snore_session_active),
+            "snore_session_started_at": self.snore_session_started_text,
             "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
             "breath_rate": float(self.breath_rate) if self.breath_rate is not None else None,
             "target_distance": float(self.target_bin * RANGE_RESOLUTION) if self.target_bin is not None else None,
@@ -1054,6 +1077,7 @@ class RealtimeRadarProcessor:
             with self.state_lock:
                 self.last_snore_heartbeat_time = now
                 self.last_snore_heartbeat_at = now_text
+                self.snore_session_last_seen_at = now
                 self.snore_score = round(score, 3)
                 if heartbeat.dbfs is not None:
                     self.snore_dbfs = float(heartbeat.dbfs)
@@ -1075,6 +1099,46 @@ class RealtimeRadarProcessor:
                 "snore_dbfs": heartbeat.dbfs,
                 "snore_level": self._snore_level_from_dbfs(heartbeat.dbfs, score),
                 "snore_detected": self._status_snapshot()["snore_detected"],
+            }
+
+        @self.app.post("/mock/snore-session/start")
+        async def start_snore_session():
+            """呼噜检测板按下 Snore detect 时调用，前端从此刻开始一直显示在线。"""
+            now = time.time()
+            now_text = self._now_iso()
+            with self.state_lock:
+                self.snore_session_active = True
+                self.snore_session_stopped = False
+                self.snore_session_started_at = now
+                self.snore_session_started_text = now_text
+                self.snore_session_last_seen_at = now
+                self.last_snore_heartbeat_time = now
+                self.last_snore_heartbeat_at = now_text
+            self._upsert_timeline()
+            return {
+                "code": 200,
+                "status": "success",
+                "message": "呼噜检测板 Snore detect 已按下",
+                "snore_board_online": self._snore_board_online(),
+                "started_at": now_text,
+            }
+
+        @self.app.post("/mock/snore-session/stop")
+        async def stop_snore_session():
+            """呼噜检测板按下 back 时调用，前端立刻显示离线。"""
+            with self.state_lock:
+                self.snore_session_active = False
+                self.snore_session_stopped = True
+                self.snore_session_last_seen_at = time.time()
+                # 让“最近心跳/音频”不再被 5/15 秒窗口认作在线依据
+                self.last_snore_heartbeat_time = None
+                self.last_audio_received_time = None
+            self._upsert_timeline()
+            return {
+                "code": 200,
+                "status": "success",
+                "message": "呼噜检测板 back 已按下",
+                "snore_board_online": self._snore_board_online(),
             }
 
         @self.app.post("/audio")
@@ -1114,6 +1178,7 @@ class RealtimeRadarProcessor:
                 self.last_audio_received_at = now_text
                 self.last_snore_heartbeat_time = now
                 self.last_snore_heartbeat_at = now_text
+                self.snore_session_last_seen_at = now
                 self.last_audio_file = str(output_file)
                 self.last_audio_seconds = round(seconds, 2)
                 self.last_audio_dbfs = dbfs
