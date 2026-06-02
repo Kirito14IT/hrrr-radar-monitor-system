@@ -34,7 +34,7 @@
 #include "edge-impulse-sdk/CMSIS/DSP/Include/arm_math.h"
 #include <cmath>  // logf, fabsf
 
-/* --- NEW: For UDP Socket --- */
+/* --- NEW: For HTTP Socket --- */
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -51,11 +51,11 @@
 
 /* --- NEW: Configuration for DB sending --- */
 #ifndef DB_SEND_TARGET_IP
-#define DB_SEND_TARGET_IP "192.168.31.34"  // Replace with your target IP
+#define DB_SEND_TARGET_IP "10.160.50.41"  // Replace with your target IP
 #endif
 
 #ifndef DB_SEND_TARGET_PORT
-#define DB_SEND_TARGET_PORT 8888           // Replace with your target port
+#define DB_SEND_TARGET_PORT 8081           // Replace with your target port
 #endif
 
 #define DB_HISTORY_SIZE 10                 // Store 10 seconds of dB readings
@@ -556,13 +556,23 @@ static int meow_infer_from_pcm(const int16_t *pcm, float *out_score, rt_bool_t *
 #endif
 }
 
-/* NEW: Thread to send raw audio via HTTP for exactly 10 seconds */
+/* NEW: Thread to send raw audio via HTTP continuously
+ *  - Collects 10s chunks from the mic
+ *  - POSTs each chunk to the backend as soon as it is ready
+ *  - Loops until g_db_running is cleared (by meow_detect_stop / audio_send_stop)
+ */
 static void audio_send_thread_entry(void *parameter)
 {
     (void)parameter;
     rt_device_t local_mic_dev = RT_NULL;
 
-    LOG_I("audio_send: thread started (HTTP mode), will send for 10 seconds");
+    // 10 seconds of mono audio at 16kHz = 160000 samples
+    constexpr size_t kChunkSamples   = (size_t)kSampleRate * 10;
+    constexpr int    kMaxErrStreak   = 5;
+    constexpr uint32_t kErrBackoffMs = 1000;
+
+    LOG_I("audio_send: thread started (continuous HTTP mode), chunk=%d samples (%.1fs)",
+          (int)kChunkSamples, (float)kChunkSamples / (float)kSampleRate);
 
     local_mic_dev = rt_device_find(BSP_XIAOZHI_MIC_DEVICE_NAME);
     if (!local_mic_dev)
@@ -576,142 +586,171 @@ static void audio_send_thread_entry(void *parameter)
     if (rt_device_open(local_mic_dev, RT_DEVICE_FLAG_RDONLY) != RT_EOK)
     {
         LOG_E("audio_send: cannot open audio device");
-        local_mic_dev = RT_NULL;
         g_db_running = RT_FALSE;
         g_db_tid = RT_NULL;
         return;
     }
     LOG_I("audio_send: opened mic device");
 
-    // Calculate number of samples for 10 seconds at 16kHz
-    // Double buffer size since we're collecting ALL stereo samples
-    const size_t total_samples_needed = kSampleRate * 10 * 2;
-    static int16_t audio_buffer[total_samples_needed] rt_section(".m33_m55_shared_hyperram");
-    size_t collected = 0;
+    // One reusable buffer for the chunk (recycled across iterations to avoid fragmentation)
+    static int16_t audio_buffer[kChunkSamples] rt_section(".m33_m55_shared_hyperram");
 
-    int16_t pdm_frame[PDM_FRAME_SAMPLES];
-    rt_tick_t start_tick = rt_tick_get();
-    const rt_tick_t tick_per_second = rt_tick_from_millisecond(1000);
-    int seconds_sent = 0;
+    int chunk_index = 0;
+    int err_streak  = 0;
 
-    while (g_db_running && collected < total_samples_needed)
+    while (g_db_running)
     {
-        if (!g_db_running) break;
+        // ── Phase 1: collect 10 seconds of audio ─────────────────────
+        size_t collected = 0;
+        const rt_tick_t collect_start   = rt_tick_get();
+        const rt_tick_t collect_deadline = collect_start + rt_tick_from_millisecond(11000); // safety: 11s
 
-        rt_tick_t elapsed = rt_tick_get() - start_tick;
-        int current_second = elapsed / tick_per_second;
+        while (g_db_running && collected < kChunkSamples)
+        {
+            if (rt_tick_get() > collect_deadline)
+            {
+                LOG_W("audio_send: collect deadline reached, got %d/%d samples",
+                      (int)collected, (int)kChunkSamples);
+                break;
+            }
 
-        if (current_second > seconds_sent) {
-            seconds_sent = current_second;
-            LOG_I("audio_send: second %d collected, total=%d", seconds_sent, (int)collected);
+            int16_t pdm_frame[PDM_FRAME_SAMPLES];
+            const rt_size_t read_size = rt_device_read(local_mic_dev, 0, pdm_frame, PDM_FRAME_SIZE);
+            if (read_size == 0)
+            {
+                if (!g_db_running) break;
+                rt_thread_mdelay(1);
+                continue;
+            }
+            if (!g_db_running) break;
+
+            const size_t total_sample = read_size / sizeof(int16_t);
+#if PDM_IS_STEREO
+            // Interleaved L,R,L,R treated as consecutive mono samples
+            for (size_t i = 0; i < total_sample && collected < kChunkSamples; i++)
+            {
+                audio_buffer[collected++] = pdm_frame[i];
+            }
+#else
+            for (size_t i = 0; i < total_sample && collected < kChunkSamples; i++)
+            {
+                audio_buffer[collected++] = pdm_frame[i];
+            }
+#endif
         }
 
-        // Stop exactly after 10 seconds (10000ms = 10 seconds)
-        if (rt_tick_get() - start_tick >= rt_tick_from_millisecond(10000)) break;
-
-        const rt_size_t read_size = rt_device_read(local_mic_dev, 0, pdm_frame, PDM_FRAME_SIZE);
-        if (read_size == 0)
+        if (!g_db_running)
         {
-            if (!g_db_running) break;
-            rt_thread_mdelay(1);
+            LOG_I("audio_send: stop requested during collect, exiting");
+            break;
+        }
+
+        const uint32_t collect_ms =
+            (uint32_t)((rt_tick_get() - collect_start) * 1000 / RT_TICK_PER_SECOND);
+        LOG_I("audio_send: chunk %d collected %d samples in %u ms, sending...",
+              chunk_index, (int)collected, collect_ms);
+
+        // ── Phase 2: send chunk via HTTP ─────────────────────────────
+        char *http_request = (char *)rt_malloc((size_t)collected * 2 + 256);
+        if (!http_request)
+        {
+            LOG_E("audio_send: malloc failed (need %d bytes), backing off",
+                  (int)((size_t)collected * 2 + 256));
+            err_streak++;
+            rt_thread_mdelay(kErrBackoffMs);
             continue;
         }
 
-        if (!g_db_running) break;
+        int req_len = snprintf(http_request, 256,
+            "POST /audio HTTP/1.1\r\n"
+            "Host: %s:%d\r\n"
+            "Content-Type: audio/wav\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n"
+            "\r\n",
+            DB_SEND_TARGET_IP, DB_SEND_TARGET_PORT, (int)((size_t)collected * 2));
 
-        const size_t total_sample = read_size / sizeof(int16_t);
-        // Log every time to check collection rate
-        LOG_I("audio_send: read %d bytes, collected=%d, time_elapsed=%d",
-             (int)read_size, (int)collected, (int)(rt_tick_get() - start_tick));
-#if PDM_IS_STEREO
-        // Take BOTH channels: 320 stereo samples -> 320 mono samples (16kHz)
-        // Interleaved L,R,L,R data is treated as consecutive mono samples
-        for (size_t i = 0; i < total_sample && collected < total_samples_needed; i++)
+        memcpy(http_request + req_len, audio_buffer, (size_t)collected * 2);
+
+        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0)
         {
-            audio_buffer[collected++] = pdm_frame[i];
+            LOG_E("audio_send: socket() failed, errno=%d", errno);
+            rt_free(http_request);
+            err_streak++;
+            rt_thread_mdelay(kErrBackoffMs);
+            continue;
         }
-#else
-        for (size_t i = 0; i < total_sample && collected < total_samples_needed; i++)
+
+        struct sockaddr_in serv_addr;
+        memset(&serv_addr, 0, sizeof(serv_addr));
+        serv_addr.sin_family      = AF_INET;
+        serv_addr.sin_port        = htons(DB_SEND_TARGET_PORT);
+        serv_addr.sin_addr.s_addr = inet_addr(DB_SEND_TARGET_IP);
+
+        if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) != 0)
         {
-            audio_buffer[collected++] = pdm_frame[i];
+            LOG_E("audio_send: connect %s:%d failed, errno=%d",
+                  DB_SEND_TARGET_IP, DB_SEND_TARGET_PORT, errno);
+            close(sockfd);
+            rt_free(http_request);
+            err_streak++;
+            rt_thread_mdelay(kErrBackoffMs);
+            continue;
         }
-#endif
+
+        ssize_t total_sent = 0;
+        ssize_t to_send    = (ssize_t)req_len + (ssize_t)((size_t)collected * 2);
+        const rt_tick_t send_start = rt_tick_get();
+        while (total_sent < to_send)
+        {
+            ssize_t sent = send(sockfd, http_request + total_sent, to_send - total_sent, 0);
+            if (sent < 0)
+            {
+                LOG_E("audio_send: send failed, errno=%d", errno);
+                break;
+            }
+            total_sent += sent;
+        }
+
+        const uint32_t send_ms =
+            (uint32_t)((rt_tick_get() - send_start) * 1000 / RT_TICK_PER_SECOND);
+
+        if (total_sent == to_send)
+        {
+            LOG_I("audio_send: chunk %d sent %d bytes in %u ms",
+                  chunk_index, (int)total_sent, send_ms);
+            err_streak = 0;
+        }
+        else
+        {
+            LOG_W("audio_send: chunk %d partial send %d/%d bytes",
+                  chunk_index, (int)total_sent, (int)to_send);
+            err_streak++;
+        }
+
+        close(sockfd);
+        rt_free(http_request);
+
+        chunk_index++;
+
+        // Pause if too many consecutive failures; otherwise yield briefly
+        if (err_streak >= kMaxErrStreak)
+        {
+            LOG_E("audio_send: %d consecutive errors, pausing %u ms",
+                  err_streak, kErrBackoffMs * 5);
+            rt_thread_mdelay(kErrBackoffMs * 5);
+            err_streak = 0;
+        }
+        else
+        {
+            rt_thread_mdelay(10);
+        }
     }
 
     rt_device_close(local_mic_dev);
-    local_mic_dev = RT_NULL;
 
-    if (!g_db_running) {
-        LOG_I("audio_send: stopped early");
-        g_db_tid = RT_NULL;
-        return;
-    }
-
-    LOG_I("audio_send: collected %d samples, sending via HTTP", (int)collected);
-
-    // Create HTTP request
-    char *http_request = (char *)rt_malloc(collected * 2 + 256);
-    if (!http_request) {
-        LOG_E("audio_send: malloc failed");
-        g_db_tid = RT_NULL;
-        return;
-    }
-
-    int req_len = snprintf(http_request, 256,
-        "POST /audio HTTP/1.1\r\n"
-        "Host: %s:%d\r\n"
-        "Content-Type: audio/wav\r\n"
-        "Content-Length: %d\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        DB_SEND_TARGET_IP, DB_SEND_TARGET_PORT + 1, (int)(collected * 2));
-
-    memcpy(http_request + req_len, audio_buffer, collected * 2);
-
-    // Create TCP socket
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        LOG_E("audio_send: cannot create TCP socket");
-        rt_free(http_request);
-        g_db_tid = RT_NULL;
-        return;
-    }
-
-    struct sockaddr_in serv_addr;
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(DB_SEND_TARGET_PORT + 1);  // Use HTTP port (8889)
-    serv_addr.sin_addr.s_addr = inet_addr(DB_SEND_TARGET_IP);
-
-    LOG_I("audio_send: connecting to %s:%d", DB_SEND_TARGET_IP, DB_SEND_TARGET_PORT + 1);
-
-    // Connect to server
-    if (connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) != 0) {
-        LOG_E("audio_send: connect failed, errno=%d", errno);
-        close(sockfd);
-        rt_free(http_request);
-        g_db_tid = RT_NULL;
-        return;
-    }
-
-    // Send HTTP request
-    ssize_t total_sent = 0;
-    ssize_t to_send = req_len + collected * 2;
-    while (total_sent < to_send) {
-        ssize_t sent = send(sockfd, http_request + total_sent, to_send - total_sent, 0);
-        if (sent < 0) {
-            LOG_E("audio_send: send failed, errno=%d", errno);
-            break;
-        }
-        total_sent += sent;
-    }
-
-    LOG_I("audio_send: sent %d bytes via HTTP", (int)total_sent);
-
-    close(sockfd);
-    rt_free(http_request);
-
-    LOG_I("audio_send: thread exiting");
+    LOG_I("audio_send: thread exiting, total chunks sent: %d", chunk_index);
     g_db_running = RT_FALSE;
     g_db_tid = RT_NULL;
 }
@@ -1127,7 +1166,7 @@ static int audio_send_only(void)
     rt_kprintf("Audio send started (without meow detection)\n");
     return RT_EOK;
 }
-MSH_CMD_EXPORT(audio_send_only, Send 10s audio via UDP without meow detection);
+MSH_CMD_EXPORT(audio_send_only, Continuously send mic audio (10s chunks) via HTTP without meow detection);
 
 /* NEW: Stop audio send */
 static int audio_send_stop(void)
