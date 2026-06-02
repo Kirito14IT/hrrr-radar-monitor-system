@@ -1,6 +1,6 @@
 <template>
-  <div class="sleep-page">
-    <div class="hero-panel">
+  <div class="sleep-page care-page-shell">
+    <div class="hero-panel care-glass-card">
       <div>
         <div class="eyebrow">Night Guardian Command Center</div>
         <h1>睡眠看护驾驶舱</h1>
@@ -37,7 +37,7 @@
     </div>
 
     <div class="dashboard-grid">
-      <section class="score-card neon-card">
+      <section class="score-card care-glass-card">
         <div class="section-title">Sleep Quality Score</div>
         <div class="score-layout">
           <div class="score-ring" :style="scoreStyle">
@@ -59,7 +59,7 @@
         </div>
       </section>
 
-      <section class="event-card neon-card">
+      <section class="event-card care-glass-card">
         <div class="section-header">
           <div class="section-title">夜间守护事件流</div>
           <select v-model="eventFilter" class="dark-select">
@@ -89,7 +89,7 @@
         </div>
       </section>
 
-      <section class="heat-card neon-card">
+      <section class="heat-card care-glass-card">
         <div class="section-header">
           <div>
             <div class="section-title">呼噜扰动地图</div>
@@ -119,7 +119,7 @@
     </div>
 
     <div class="stability-grid">
-      <div v-for="card in stabilityCards" :key="card.key" class="stability-card">
+      <div v-for="card in stabilityCards" :key="card.key" class="stability-card care-glass-card">
         <div class="mini-title">{{ card.title }}</div>
         <div class="mini-value">{{ card.value }}<span>{{ card.unit }}</span></div>
         <div class="mini-bar"><i :style="{ width: `${card.value}%` }"></i></div>
@@ -161,10 +161,12 @@ const topPenalties = computed(() => (score.value.penalties || []).slice(0, 4))
 
 const scoreStyle = computed(() => {
   const value = Math.max(0, Math.min(100, Number(score.value.score || 0)))
-  const color = value >= 86 ? '#26f7a5' : value >= 68 ? '#f7d154' : '#ff6b9a'
+  const color = value >= 86 ? '#16a34a' : value >= 68 ? '#f59e0b' : '#ef4444'
+  const track = getComputedStyle(document.documentElement)
+    .getPropertyValue('--care-surface-muted').trim() || 'rgba(15,59,72,.1)'
   return {
-    background: `conic-gradient(${color} ${value * 3.6}deg, rgba(255,255,255,.08) 0deg)`,
-    boxShadow: `0 0 36px ${color}55`
+    background: `conic-gradient(${color} ${value * 3.6}deg, ${track} 0deg)`,
+    boxShadow: `0 0 36px ${color}33`
   }
 })
 
@@ -189,7 +191,7 @@ const filteredEvents = computed(() => {
 function localDate() {
   const now = new Date()
   const offset = now.getTimezoneOffset() * 60000
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10)
+  return new Date(now - offset).toISOString().slice(0, 10)
 }
 
 function userID() {
@@ -212,10 +214,17 @@ async function loadOverview() {
     overview.worst_disturbance = response.worst_disturbance || null
   } catch (error) {
     console.error('sleep overview load failed:', error)
+    const status = error.response?.status
+    const hint =
+      status === 404
+        ? '检测到 8081 端口有服务，但缺少 /sleep/overview 接口。\n请停止当前后端，改启动：python backend\\mock_hardware_api.py\n（不要启动 realtime_radar_processing.py 或 mock_server.py）'
+        : !error.response
+        ? '无法连接 8081 端口后端服务。\n请先在项目根目录执行：conda activate radar && python backend\\mock_hardware_api.py'
+        : '请先启动后端：python backend\\mock_hardware_api.py'
     overview.score = {
       score: 0,
-      label: '后端未连接',
-      summary: '请先启动 python backend\\mock_hardware_api.py。',
+      label: status === 404 ? '后端接口缺失' : '后端未连接',
+      summary: hint,
       penalties: []
     }
   } finally {
@@ -285,33 +294,7 @@ onBeforeUnmount(() => {
   min-height: calc(100vh - 90px);
   margin: -20px;
   padding: 22px;
-  color: #ecf7ff;
-  background:
-    radial-gradient(circle at 15% 12%, rgba(52, 211, 255, 0.22), transparent 32%),
-    radial-gradient(circle at 84% 16%, rgba(165, 85, 255, 0.28), transparent 34%),
-    linear-gradient(135deg, #06111f 0%, #09182d 48%, #120c2a 100%);
-  overflow: hidden;
-}
-
-.sleep-page::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background-image: linear-gradient(rgba(255,255,255,.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
-  background-size: 36px 36px;
-  mask-image: radial-gradient(circle at 50% 20%, black, transparent 82%);
-}
-
-.hero-panel,
-.neon-card,
-.stability-card,
-.device-pill {
-  position: relative;
-  border: 1px solid rgba(123, 220, 255, 0.22);
-  background: rgba(7, 18, 35, 0.72);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.34), inset 0 0 0 1px rgba(255,255,255,.03);
-  backdrop-filter: blur(14px);
+  color: var(--care-text);
 }
 
 .hero-panel {
@@ -325,7 +308,7 @@ onBeforeUnmount(() => {
 }
 
 .eyebrow {
-  color: #67e8f9;
+  color: var(--care-primary-strong);
   letter-spacing: 0.18em;
   text-transform: uppercase;
   font-size: 12px;
@@ -336,11 +319,12 @@ h1 {
   margin: 0;
   font-size: 34px;
   letter-spacing: 0.04em;
+  color: var(--care-text-strong);
 }
 
 .hero-copy {
   margin: 10px 0 0;
-  color: #9fb7d5;
+  color: var(--care-muted);
   max-width: 720px;
 }
 
@@ -355,23 +339,33 @@ h1 {
 .control-strip select,
 .control-strip input,
 .dark-select {
-  border: 1px solid rgba(103, 232, 249, 0.28);
+  border: 1px solid var(--care-border);
   border-radius: 999px;
-  color: #dff8ff;
-  background: rgba(7, 22, 42, 0.88);
+  color: var(--care-text);
+  background: var(--care-surface-strong);
   padding: 9px 14px;
   outline: none;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .control-strip button {
   cursor: pointer;
+  font-weight: 600;
+}
+
+.control-strip button:hover,
+.control-strip select:hover,
+.control-strip input:hover,
+.dark-select:hover {
+  border-color: var(--care-primary-border);
 }
 
 .control-strip button.active,
 .control-strip button.refresh {
-  color: #06111f;
-  background: linear-gradient(135deg, #67e8f9, #a7f3d0);
-  box-shadow: 0 0 18px rgba(103, 232, 249, 0.42);
+  color: var(--care-text-on-primary);
+  background: linear-gradient(135deg, var(--care-primary), var(--care-accent));
+  border-color: transparent;
+  box-shadow: 0 0 18px var(--care-primary-soft);
 }
 
 .device-row {
@@ -384,16 +378,20 @@ h1 {
 .device-pill {
   border-radius: 999px;
   padding: 8px 14px;
-  color: #95aac7;
+  border: 1px solid var(--care-border);
+  background: var(--care-surface-strong);
+  color: var(--care-muted);
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .device-pill.online {
-  color: #afffe2;
-  border-color: rgba(38, 247, 165, .42);
+  color: var(--care-success);
+  border-color: var(--care-success);
+  background: var(--care-success-soft);
 }
 
 .device-pill.muted {
-  color: #b9c7dc;
+  color: var(--care-muted-strong);
 }
 
 .pulse {
@@ -402,12 +400,12 @@ h1 {
   height: 8px;
   border-radius: 50%;
   margin-right: 7px;
-  background: #5f718a;
+  background: var(--care-muted);
 }
 
 .online .pulse {
-  background: #26f7a5;
-  box-shadow: 0 0 12px #26f7a5;
+  background: var(--care-success);
+  box-shadow: 0 0 12px var(--care-success);
 }
 
 .dashboard-grid {
@@ -426,7 +424,7 @@ h1 {
 }
 
 .section-title {
-  color: #e7fbff;
+  color: var(--care-text-strong);
   font-weight: 800;
   letter-spacing: 0.04em;
   font-size: 17px;
@@ -441,7 +439,7 @@ h1 {
 }
 
 .section-subtitle {
-  color: #91a8c7;
+  color: var(--care-muted);
   margin: 8px 0 0;
   font-size: 13px;
 }
@@ -468,8 +466,9 @@ h1 {
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: radial-gradient(circle, #10233d, #07111f);
-  border: 1px solid rgba(255,255,255,.12);
+  background: radial-gradient(circle, var(--care-surface-strong), var(--care-surface));
+  border: 1px solid var(--care-border);
+  color: var(--care-text-strong);
 }
 
 .score-core strong {
@@ -479,16 +478,17 @@ h1 {
 
 .score-core span {
   margin-top: -24px;
-  color: #87a7c7;
+  color: var(--care-muted);
 }
 
 .score-text h2 {
   font-size: 32px;
   margin: 0 0 10px;
+  color: var(--care-text-strong);
 }
 
 .score-text p {
-  color: #a9bad2;
+  color: var(--care-muted-strong);
   line-height: 1.8;
 }
 
@@ -507,15 +507,15 @@ h1 {
 }
 
 .penalty-tag {
-  color: #ffd4df;
-  background: rgba(255, 107, 154, 0.14);
-  border: 1px solid rgba(255, 107, 154, 0.32);
+  color: var(--care-danger);
+  background: var(--care-danger-soft);
+  border: 1px solid var(--care-danger);
 }
 
 .good-tag {
-  color: #b9ffdf;
-  background: rgba(38, 247, 165, 0.12);
-  border: 1px solid rgba(38, 247, 165, 0.3);
+  color: var(--care-success);
+  background: var(--care-success-soft);
+  border: 1px solid var(--care-success);
 }
 
 .event-card {
@@ -535,7 +535,7 @@ h1 {
   grid-template-columns: 18px 1fr;
   gap: 12px;
   padding: 14px 0;
-  border-bottom: 1px solid rgba(255,255,255,.08);
+  border-bottom: 1px solid var(--care-divider);
 }
 
 .event-dot {
@@ -543,37 +543,38 @@ h1 {
   height: 10px;
   border-radius: 50%;
   margin-top: 6px;
-  background: #67e8f9;
-  box-shadow: 0 0 16px #67e8f9;
+  background: var(--care-accent);
+  box-shadow: 0 0 16px var(--care-accent);
 }
 
 .event-item.warning .event-dot {
-  background: #f7d154;
-  box-shadow: 0 0 18px #f7d154;
+  background: var(--care-warning);
+  box-shadow: 0 0 18px var(--care-warning);
 }
 
 .event-item.critical .event-dot {
-  background: #ff6b9a;
-  box-shadow: 0 0 20px #ff6b9a;
+  background: var(--care-danger);
+  box-shadow: 0 0 20px var(--care-danger);
 }
 
 .event-item.normal .event-dot {
-  background: #26f7a5;
-  box-shadow: 0 0 16px #26f7a5;
+  background: var(--care-success);
+  box-shadow: 0 0 16px var(--care-success);
 }
 
 .event-meta {
-  color: #7e93b3;
+  color: var(--care-muted);
   font-size: 12px;
 }
 
 .event-title {
   font-weight: 800;
   margin: 4px 0;
+  color: var(--care-text-strong);
 }
 
 .event-message {
-  color: #aebdd2;
+  color: var(--care-muted-strong);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -584,14 +585,14 @@ h1 {
 
 .worst-box {
   text-align: right;
-  color: #91a8c7;
+  color: var(--care-muted);
   font-size: 12px;
 }
 
 .worst-box strong {
   display: block;
   margin-top: 4px;
-  color: #f7d154;
+  color: var(--care-warning);
   font-size: 18px;
 }
 
@@ -610,20 +611,21 @@ h1 {
   justify-content: center;
   padding: 6px;
   font-size: 11px;
-  color: rgba(255,255,255,.78);
-  background: linear-gradient(180deg, rgba(59, 130, 246, calc(.18 + var(--level) * .3)), rgba(20, 28, 56, .9));
-  border: 1px solid rgba(103, 232, 249, .12);
+  color: var(--care-text-strong);
+  background: linear-gradient(180deg, rgba(56, 189, 248, calc(.18 + var(--level) * .3)), var(--care-surface-2));
+  border: 1px solid var(--care-border-soft);
+  transition: background 0.2s ease, border-color 0.2s ease;
 }
 
 .heat-cell.warning {
-  background: linear-gradient(180deg, rgba(168, 85, 247, calc(.26 + var(--level) * .34)), rgba(36, 22, 56, .94));
+  background: linear-gradient(180deg, rgba(168, 85, 247, calc(.26 + var(--level) * .34)), var(--care-surface-2));
   border-color: rgba(168, 85, 247, .34);
 }
 
 .heat-cell.critical {
-  background: linear-gradient(180deg, rgba(255, 107, 154, calc(.32 + var(--level) * .38)), rgba(64, 18, 45, .96));
-  border-color: rgba(255, 107, 154, .45);
-  box-shadow: 0 0 18px rgba(255, 107, 154, .22);
+  background: linear-gradient(180deg, rgba(239, 68, 68, calc(.32 + var(--level) * .38)), var(--care-surface-2));
+  border-color: var(--care-danger);
+  box-shadow: 0 0 18px var(--care-danger-soft);
 }
 
 .stability-grid {
@@ -639,7 +641,7 @@ h1 {
 }
 
 .mini-title {
-  color: #94a9c7;
+  color: var(--care-muted);
   font-size: 13px;
 }
 
@@ -647,17 +649,18 @@ h1 {
   font-size: 32px;
   font-weight: 900;
   margin: 8px 0;
+  color: var(--care-text-strong);
 }
 
 .mini-value span {
-  color: #8da5c5;
+  color: var(--care-muted);
   font-size: 14px;
   margin-left: 3px;
 }
 
 .mini-bar {
   height: 8px;
-  background: rgba(255,255,255,.08);
+  background: var(--care-surface-muted);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -666,17 +669,17 @@ h1 {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #67e8f9, #26f7a5);
-  box-shadow: 0 0 12px rgba(103, 232, 249, .5);
+  background: linear-gradient(90deg, var(--care-primary), var(--care-success));
+  box-shadow: 0 0 12px var(--care-primary-soft);
 }
 
 .stability-card p {
-  color: #8ca1bf;
+  color: var(--care-muted-strong);
   margin: 10px 0 0;
 }
 
 .empty-state {
-  color: #8ea4c4;
+  color: var(--care-muted);
   line-height: 1.8;
   padding: 24px 0;
 }

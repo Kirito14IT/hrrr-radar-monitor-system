@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard-container">
+  <div class="dashboard-container care-page-shell">
     <div class="control-panel">
       <el-button
         :type="isAutoRefreshing ? 'danger' : 'primary'"
@@ -22,19 +22,22 @@
     </div>
 
     <div class="device-panel">
-      <div class="device-card" :class="{ online: statusState.radar_board_online }">
-        <div class="device-title">毫米波雷达模拟板</div>
-        <div class="device-value">{{ statusState.radar_board_online ? '正在连续发送' : '未连接' }}</div>
+      <div class="device-card care-glass-card" :class="{ online: statusState.radar_board_online }">
+        <div class="device-title">毫米波雷达开发板</div>
+        <div class="device-value">{{ radarDeviceValue }}</div>
         <div class="device-meta">数据来源：心率、呼吸率、距离、相位波形</div>
+        <div v-if="statusState.radar_board_online" class="device-meta">
+          {{ radarDistanceText }}
+        </div>
         <div class="device-meta">
           帧号 {{ statusState.last_radar_frame_number || 0 }} · 最近 {{ formatAge(statusState.radar_age_seconds) }}
         </div>
         <div v-if="!statusState.radar_board_online" class="device-hint">
-          终端运行：python backend\mock_device_sender.py --radar-board
+          后端运行：python backend\realtime_radar_processing.py --port 9988 --api-port 8081 --no-presence
         </div>
       </div>
 
-      <div class="device-card" :class="{ online: statusState.snore_board_online, warning: statusState.snore_detected }">
+      <div class="device-card care-glass-card" :class="{ online: statusState.snore_board_online, warning: statusState.snore_detected }">
         <div class="device-title">呼噜检测模拟板</div>
         <div class="device-value">
           分数 {{ statusState.snore_score.toFixed(2) }} · 音频 {{ statusState.audio_upload_count || 0 }} 次
@@ -45,12 +48,12 @@
         </div>
         <div class="device-meta">最近音频 {{ formatAudioTime(statusState.last_audio_received_at) }}</div>
         <div v-if="!statusState.snore_board_online" class="device-hint">
-          终端运行：python backend\mock_device_sender.py --snore-board
+          呼噜板上传：POST http://电脑IP:8081/audio
         </div>
       </div>
     </div>
 
-    <div class="snore-wave-card" :class="{ active: statusState.snore_board_online, warning: statusState.snore_detected }">
+    <div class="snore-wave-card care-glass-card" :class="{ active: statusState.snore_board_online, warning: statusState.snore_detected }">
       <div class="snore-wave-info">
         <div class="device-title">呼噜声浪监测</div>
         <div class="snore-wave-value">{{ snorePercent.toFixed(0) }}%</div>
@@ -75,17 +78,17 @@
     </div>
 
     <div class="insight-grid">
-      <div class="insight-card">
+      <div class="insight-card care-glass-card">
         <div class="insight-title">睡眠分期</div>
         <div class="insight-value">{{ insight.sleepStage }}</div>
         <div class="insight-text">{{ insight.sleepReason }}</div>
       </div>
-      <div class="insight-card">
+      <div class="insight-card care-glass-card">
         <div class="insight-title">呼噜-生命体征关联</div>
         <div class="insight-value">{{ insight.snoreLabel }}</div>
         <div class="insight-text">{{ insight.snoreImpact }}</div>
       </div>
-      <div class="insight-card">
+      <div class="insight-card care-glass-card">
         <div class="insight-title">实时健康摘要</div>
         <div class="insight-value">{{ insight.latestTime || '等待数据' }}</div>
         <div class="insight-text">{{ insight.summary }}</div>
@@ -93,7 +96,7 @@
     </div>
 
     <div class="charts-layout">
-      <div class="module-card">
+      <div class="module-card care-glass-card">
         <div class="chart-header">
           <span class="dot red"></span> 心率趋势 (Heart Rate)
           <span class="chart-subtitle">共享真实时间轴</span>
@@ -104,7 +107,7 @@
         </div>
       </div>
 
-      <div class="module-card">
+      <div class="module-card care-glass-card">
         <div class="chart-header">
           <span class="dot blue"></span> 呼吸趋势 (Breath Rate)
           <span class="chart-subtitle">与心率逐秒对齐</span>
@@ -115,7 +118,7 @@
         </div>
       </div>
 
-      <div class="module-card snore-chart-card">
+      <div class="module-card snore-chart-card care-glass-card">
         <div class="chart-header">
           <span class="dot orange"></span> 呼噜强度趋势 (Snore Level)
           <span class="chart-subtitle">与心率/呼吸同一时间轴</span>
@@ -130,14 +133,16 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import * as echarts from 'echarts'
 import HeartRateMonitor from './HeartRateMonitor.vue'
 import BreathRateMonitor from './BreathRateMonitor.vue'
 import { useUserStore } from '@/stores/userStore'
+import { useThemeStore } from '@/stores/themeStore'
 import request from '@/utils/request'
 
 const userStore = useUserStore()
+const themeStore = useThemeStore()
 const isAutoRefreshing = ref(false)
 const currentHeartRate = ref(null)
 const currentBreathRate = ref(null)
@@ -155,7 +160,9 @@ const statusState = reactive({
   last_audio_received_at: null,
   last_radar_frame_number: 0,
   radar_age_seconds: null,
-  snore_age_seconds: null
+  snore_age_seconds: null,
+  target_distance: null,
+  target_bin: null
 })
 
 const insight = reactive({
@@ -180,6 +187,21 @@ const snorePercent = computed(() => {
   return Math.max(0, Math.min(100, Number(level || 0) * 100))
 })
 
+const hasRadarVitals = computed(() => isNumber(currentHeartRate.value) && isNumber(currentBreathRate.value))
+
+const radarDeviceValue = computed(() => {
+  if (!statusState.radar_board_online) return '未连接'
+  if (!hasRadarVitals.value) return '等待生命体征计算'
+  return '正在连续发送'
+})
+
+const radarDistanceText = computed(() => {
+  const distance = statusState.target_distance
+  if (!isNumber(distance) || distance <= 0) return '目标距离：等待处理'
+  const bin = statusState.target_bin === null || statusState.target_bin === undefined ? '--' : statusState.target_bin
+  return `目标距离：${Number(distance).toFixed(2)} 米 · bin ${bin}`
+})
+
 const snoreBars = computed(() => {
   const base = snorePercent.value / 100
   return Array.from({ length: 34 }, (_, index) => {
@@ -193,10 +215,19 @@ const snoreBars = computed(() => {
   })
 })
 
-const initOption = (color, unit, yMax = null) => ({
+const readToken = (name, fallback) => {
+  if (typeof window === 'undefined') return fallback
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
+const buildOption = (color, unit, yMax = null) => ({
   grid: { top: 35, right: 24, bottom: 42, left: 45 },
   tooltip: {
     trigger: 'axis',
+    backgroundColor: readToken('--care-surface-strong', '#fff'),
+    borderColor: readToken('--care-border', '#d9d9d9'),
+    textStyle: { color: readToken('--care-text', '#333') },
     formatter: (params) => {
       const item = params?.[0]
       const value = item?.data
@@ -207,16 +238,16 @@ const initOption = (color, unit, yMax = null) => ({
     type: 'category',
     boundaryGap: false,
     data: [],
-    axisLabel: { color: '#8c8c8c', fontSize: 11 },
-    axisLine: { lineStyle: { color: '#d9d9d9' } }
+    axisLabel: { color: readToken('--care-muted', '#8c8c8c'), fontSize: 11 },
+    axisLine: { lineStyle: { color: readToken('--care-border-soft', '#d9d9d9') } }
   },
   yAxis: {
     type: 'value',
     scale: yMax === null,
     max: yMax,
     min: yMax === null ? null : 0,
-    splitLine: { lineStyle: { type: 'dashed' } },
-    axisLabel: { color: '#8c8c8c' }
+    splitLine: { lineStyle: { color: readToken('--care-grid-line-soft', '#eee'), type: 'dashed' } },
+    axisLabel: { color: readToken('--care-muted', '#8c8c8c') }
   },
   series: [{
     type: 'line',
@@ -234,9 +265,9 @@ const initOption = (color, unit, yMax = null) => ({
   }]
 })
 
-const optionHeart = ref(initOption('rgb(255, 87, 87)', 'BPM'))
-const optionBreath = ref(initOption('rgb(24, 144, 255)', 'RPM'))
-const optionSnore = ref(initOption('rgb(250, 140, 22)', '%', 100))
+const optionHeart = ref(buildOption('rgb(255, 87, 87)', 'BPM'))
+const optionBreath = ref(buildOption('rgb(24, 144, 255)', 'RPM'))
+const optionSnore = ref(buildOption('rgb(250, 140, 22)', '%', 100))
 
 const formatAudioTime = (value) => {
   if (!value) return '暂无'
@@ -270,6 +301,20 @@ const average = (rows, key) => {
   return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
+const applyThemeToCharts = () => {
+  const tokens = {
+    heart: 'rgb(255, 87, 87)',
+    breath: 'rgb(24, 144, 255)',
+    snore: 'rgb(250, 140, 22)'
+  }
+  optionHeart.value = buildOption(tokens.heart, 'BPM')
+  optionBreath.value = buildOption(tokens.breath, 'RPM')
+  optionSnore.value = buildOption(tokens.snore, '%', 100)
+  if (heartChart) heartChart.setOption(optionHeart.value, true)
+  if (breathChart) breathChart.setOption(optionBreath.value, true)
+  if (snoreChart) snoreChart.setOption(optionSnore.value, true)
+}
+
 const setCharts = (rows) => {
   const labels = rows.map(row => formatTimeLabel(row.timestamp))
   optionHeart.value.xAxis.data = labels
@@ -298,18 +343,27 @@ const updateInsights = (rows) => {
   }
 
   const latest = rows[rows.length - 1]
-  const radarValid = !!latest.radar_online && isNumber(latest.heart_rate) && isNumber(latest.breath_rate)
+  const radarOnline = !!latest.radar_online
+  const radarValid = radarOnline && isNumber(latest.heart_rate) && isNumber(latest.breath_rate)
   currentHeartRate.value = radarValid ? latest.heart_rate : null
   currentBreathRate.value = radarValid ? latest.breath_rate : null
-  isUserPresent.value = radarValid
+  statusState.target_distance = isNumber(latest.target_distance) ? Number(latest.target_distance) : statusState.target_distance
+  statusState.target_bin = latest.target_bin ?? statusState.target_bin
+  isUserPresent.value = radarOnline
   insight.latestTime = formatTimeLabel(latest.timestamp)
   insight.sleepStage = latest.sleep_stage || '等待数据'
 
   if (!latest.radar_online) {
-    insight.sleepReason = '雷达模拟板离线或无人，心率/呼吸图表会断线，不再用 0 伪装成真实数据。'
+    insight.sleepReason = '雷达开发板离线或无人，心率/呼吸图表会断线，不再用 0 伪装成真实数据。'
     insight.summary = latest.snore_online
-      ? '雷达模拟板未连接；呼噜板仍在线，所以声浪和呼噜强度趋势仍可继续显示。'
-      : '雷达模拟板和呼噜检测板都未连接。'
+      ? '雷达开发板未连接；呼噜板仍在线，所以声浪和呼噜强度趋势仍可继续显示。'
+      : '雷达开发板和呼噜检测板都未连接。'
+  } else if (!radarValid) {
+    const distanceText = isNumber(latest.target_distance) && latest.target_distance > 0
+      ? `，目标距离 ${Number(latest.target_distance).toFixed(2)} 米`
+      : ''
+    insight.sleepReason = `雷达开发板在线${distanceText}，正在等待存在检测、信号分解或模型推理给出心率/呼吸率。`
+    insight.summary = '已收到雷达时间轴数据；生命体征暂为空时不再伪装成离线或 0 值。'
   } else if (latest.snore_detected) {
     insight.sleepReason = '当前检测到呼噜扰动，分期暂时标记为疑似呼噜扰动。'
     insight.summary = `当前心率 ${latest.heart_rate} BPM，呼吸 ${latest.breath_rate} RPM，伴随呼噜事件。`
@@ -362,6 +416,8 @@ const loadStatus = async () => {
     statusState.last_radar_frame_number = res.last_radar_frame_number || 0
     statusState.radar_age_seconds = res.radar_age_seconds
     statusState.snore_age_seconds = res.snore_age_seconds
+    statusState.target_distance = isNumber(res.target_distance) ? Number(res.target_distance) : statusState.target_distance
+    statusState.target_bin = res.target_bin ?? statusState.target_bin
   } catch (error) {
     console.warn('获取模拟设备状态失败:', error)
     statusState.radar_board_online = false
@@ -441,50 +497,131 @@ onMounted(() => {
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
   window.removeEventListener('resize', handleResize)
+  heartChart?.dispose()
+  breathChart?.dispose()
+  snoreChart?.dispose()
+})
+
+// 主题切换时重新应用 ECharts 主题色
+watch(() => themeStore.mode, () => {
+  applyThemeToCharts()
 })
 </script>
 
 <style scoped>
-.dashboard-container { padding: 0; }
+.dashboard-container { padding: 0; color: var(--care-text); }
 .control-panel { margin-bottom: 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.device-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: #666; }
-.status-pill { padding: 5px 10px; border-radius: 999px; background: #f5f5f5; color: #777; border: 1px solid #e8e8e8; }
-.status-pill.online { background: #e6f7ed; color: #237804; border-color: #b7eb8f; }
-.status-pill.warning { background: #fff7e6; color: #ad6800; border-color: #ffd591; }
+.device-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--care-muted); }
+.status-pill {
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: var(--care-surface-strong);
+  color: var(--care-muted-strong);
+  border: 1px solid var(--care-border-soft);
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.status-pill.online { background: var(--care-success-soft); color: var(--care-success); border-color: var(--care-success); }
+.status-pill.warning { background: var(--care-warning-soft); color: var(--care-warning); border-color: var(--care-warning); }
 .device-panel { display: grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap: 14px; margin-bottom: 18px; }
-.device-card { border: 1px solid #efefef; background: #fafafa; border-radius: 12px; padding: 14px 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
-.device-card.online { background: linear-gradient(135deg, #f6ffed, #ffffff); border-color: #b7eb8f; }
-.device-card.warning { background: linear-gradient(135deg, #fff7e6, #ffffff); border-color: #ffd591; }
-.device-title { font-size: 14px; color: #666; margin-bottom: 8px; }
-.device-value { font-size: 20px; font-weight: 700; color: #1f1f1f; margin-bottom: 6px; }
-.device-meta { font-size: 12px; color: #8c8c8c; line-height: 1.8; }
-.device-hint { margin-top: 8px; font-family: Consolas, 'Courier New', monospace; font-size: 12px; color: #cf1322; background: #fff1f0; border-radius: 6px; padding: 6px 8px; }
-.snore-wave-card { display: grid; grid-template-columns: 220px 1fr 280px; align-items: center; gap: 18px; background: radial-gradient(circle at 10% 20%, #fff7e6, #ffffff 45%); border: 1px solid #ffd591; border-radius: 16px; padding: 16px 18px; margin-bottom: 18px; box-shadow: 0 4px 20px rgba(250, 140, 22, 0.12); }
-.snore-wave-card.active { border-color: #ffc069; }
-.snore-wave-card.warning { box-shadow: 0 0 0 1px #fa8c16, 0 8px 28px rgba(250, 140, 22, 0.25); }
-.snore-wave-value { font-size: 34px; font-weight: 800; color: #fa8c16; line-height: 1; margin-bottom: 8px; }
-.sound-bars { height: 96px; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 0 10px; border-radius: 14px; background: linear-gradient(180deg, rgba(255,247,230,0.88), rgba(255,255,255,0.9)); overflow: hidden; }
-.sound-bar { width: 9px; min-height: 8px; border-radius: 999px; background: linear-gradient(180deg, #ff4d4f, #fa8c16, #ffd666); transition: height 0.35s ease, opacity 0.35s ease; box-shadow: 0 0 12px rgba(250, 140, 22, 0.35); }
-.sound-bar.hot { background: linear-gradient(180deg, #ff1f1f, #fa541c, #ffc53d); box-shadow: 0 0 18px rgba(250, 84, 28, 0.6); }
-.snore-wave-readout { display: flex; flex-direction: column; gap: 8px; color: #8c4a00; font-size: 13px; }
+.device-card {
+  border: 1px solid var(--care-border-soft);
+  background: var(--care-surface-strong);
+  color: var(--care-text);
+  border-radius: var(--care-radius-md);
+  padding: 14px 16px;
+  box-shadow: var(--care-shadow-soft);
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.device-card.online { background: linear-gradient(135deg, var(--care-success-soft), var(--care-surface-strong)); border-color: var(--care-success); }
+.device-card.warning { background: linear-gradient(135deg, var(--care-warning-soft), var(--care-surface-strong)); border-color: var(--care-warning); }
+.device-title { font-size: 14px; color: var(--care-muted); margin-bottom: 8px; }
+.device-value { font-size: 20px; font-weight: 700; color: var(--care-text-strong); margin-bottom: 6px; }
+.device-meta { font-size: 12px; color: var(--care-muted); line-height: 1.8; }
+.device-hint {
+  margin-top: 8px;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--care-danger);
+  background: var(--care-danger-soft);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.snore-wave-card {
+  display: grid;
+  grid-template-columns: 220px 1fr 280px;
+  align-items: center;
+  gap: 18px;
+  background: radial-gradient(circle at 10% 20%, var(--care-warning-soft), var(--care-surface-strong) 45%);
+  border: 1px solid var(--care-warning);
+  border-radius: var(--care-radius-lg);
+  padding: 16px 18px;
+  margin-bottom: 18px;
+  box-shadow: var(--care-shadow-soft);
+  color: var(--care-text);
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.snore-wave-card.active { border-color: var(--care-warning); }
+.snore-wave-card.warning { box-shadow: 0 0 0 1px var(--care-warning), 0 8px 28px var(--care-warning-soft); }
+.snore-wave-value { font-size: 34px; font-weight: 800; color: var(--care-warning); line-height: 1; margin-bottom: 8px; }
+.sound-bars {
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--care-warning-soft), var(--care-surface-strong));
+  overflow: hidden;
+}
+.sound-bar {
+  width: 9px;
+  min-height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--care-danger), var(--care-warning), #ffd666);
+  transition: height 0.35s ease, opacity 0.35s ease;
+  box-shadow: 0 0 12px var(--care-warning-soft);
+}
+.sound-bar.hot { background: linear-gradient(180deg, #ff1f1f, var(--care-warning), #ffc53d); box-shadow: 0 0 18px rgba(250, 84, 28, 0.6); }
+.snore-wave-readout { display: flex; flex-direction: column; gap: 8px; color: var(--care-muted-strong); font-size: 13px; }
 .insight-grid { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 14px; margin-bottom: 18px; }
-.insight-card { background: #fff; border-radius: 12px; border: 1px solid #edf0f2; padding: 14px 16px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); min-height: 118px; }
-.insight-title { color: #8c8c8c; font-size: 13px; margin-bottom: 8px; }
-.insight-value { font-size: 22px; color: #1f1f1f; font-weight: 700; margin-bottom: 8px; }
-.insight-text { color: #595959; font-size: 13px; line-height: 1.7; }
+.insight-card {
+  background: var(--care-surface-strong);
+  color: var(--care-text);
+  border-radius: var(--care-radius-md);
+  border: 1px solid var(--care-border-soft);
+  padding: 14px 16px;
+  box-shadow: var(--care-shadow-soft);
+  min-height: 118px;
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+.insight-title { color: var(--care-muted); font-size: 13px; margin-bottom: 8px; }
+.insight-value { font-size: 22px; color: var(--care-text-strong); font-weight: 700; margin-bottom: 8px; }
+.insight-text { color: var(--care-muted-strong); font-size: 13px; line-height: 1.7; }
 .charts-layout { display: grid; grid-template-columns: repeat(2, minmax(360px, 1fr)); gap: 20px; }
-.module-card { background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.05); padding: 20px; display: flex; flex-direction: column; min-width: 0; }
+.module-card {
+  background: var(--care-surface-strong);
+  color: var(--care-text);
+  border-radius: var(--care-radius-md);
+  border: 1px solid var(--care-border-soft);
+  box-shadow: var(--care-shadow-soft);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
 .snore-chart-card { grid-column: 1 / -1; }
-.chart-header { font-size: 18px; font-weight: bold; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
-.chart-subtitle { font-size: 12px; color: #8c8c8c; font-weight: 400; }
+.chart-header { font-size: 18px; font-weight: bold; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; color: var(--care-text-strong); }
+.chart-subtitle { font-size: 12px; color: var(--care-muted); font-weight: 400; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.red { background: #ff5757; }
 .dot.blue { background: #1890ff; }
-.dot.orange { background: #fa8c16; }
+.dot.orange { background: var(--care-warning); }
 .chart-box { width: 100%; height: 250px; margin-bottom: 20px; }
 .chart-box.compact { height: 220px; margin-bottom: 8px; }
 .monitor-box { height: 220px; }
-.snore-note { color: #8c8c8c; font-size: 13px; line-height: 1.7; }
+.snore-note { color: var(--care-muted); font-size: 13px; line-height: 1.7; }
 @media (max-width: 1200px) {
   .snore-wave-card { grid-template-columns: 1fr; }
   .charts-layout { grid-template-columns: 1fr; }

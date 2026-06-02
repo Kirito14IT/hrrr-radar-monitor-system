@@ -1,13 +1,13 @@
 <template>
-  <div>
-    <el-button type="primary" @click="toggleAutoRefresh" style="margin: 20px 0;">
+  <div class="breath-page care-page-shell">
+    <el-button type="primary" @click="toggleAutoRefresh" style="margin: 0 0 16px;">
       {{ isAutoRefreshing ? '停止监测' : '开始监测' }}
     </el-button>
 
-    <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
-      <div id="breath-chart" style="width: 600px; height: 400px;"></div>
+    <div class="breath-layout">
+      <div id="breath-chart" class="breath-chart care-glass-card"></div>
 
-      <div style="width: 500px; display: flex; align-items: center; justify-content: center;">
+      <div class="breath-monitor care-glass-card">
         <BreathRateMonitor :rate="currentBreathRate" :is-present="isUserPresent" />
       </div>
     </div>
@@ -15,55 +15,74 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, reactive } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as echarts from 'echarts'
 import request from '@/utils/request'
-import BreathRateMonitor from './BreathRateMonitor.vue' // 引入刚才写的组件
+import BreathRateMonitor from './BreathRateMonitor.vue'
+import { useThemeStore } from '@/stores/themeStore'
 
+const themeStore = useThemeStore()
 const isAutoRefreshing = ref(false)
 const currentBreathRate = ref(0)
 const isUserPresent = ref(true)
 let refreshTimer = null
 let myChart = null
 
-// 图表配置
-const option = ref({
-  title: { text: '实时呼吸波形 (相位)' },
+const readToken = (name, fallback) => {
+  if (typeof window === 'undefined') return fallback
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
+const buildOption = () => ({
+  backgroundColor: 'transparent',
+  title: {
+    text: '实时呼吸波形 (相位)',
+    left: 'center',
+    textStyle: { color: readToken('--care-text-strong', '#102333'), fontWeight: 700 }
+  },
   tooltip: { trigger: 'axis' },
-  xAxis: { type: 'category', show: false }, // 隐藏X轴刻度
-  yAxis: { type: 'value', min: -2, max: 2 }, // 根据模拟数据范围调整
+  xAxis: {
+    type: 'category',
+    show: false,
+    data: [],
+    axisLabel: { color: readToken('--care-muted', '#8c8c8c') }
+  },
+  yAxis: {
+    type: 'value',
+    min: -2,
+    max: 2,
+    splitLine: { lineStyle: { color: readToken('--care-grid-line-soft', '#eee') } },
+    axisLabel: { color: readToken('--care-muted', '#8c8c8c') }
+  },
   series: [{
     name: '呼吸波形',
     type: 'line',
     smooth: true,
     showSymbol: false,
     data: [],
-    lineStyle: { color: '#1890ff', width: 3 }, // 蓝色线条
+    lineStyle: { color: 'rgb(24, 144, 255)', width: 3 },
     areaStyle: { color: 'rgba(24, 144, 255, 0.1)' }
   }]
 })
+
+const option = ref(buildOption())
 
 const loadData = async () => {
   try {
     const res = await request.get('/detailed')
 
-    // 1. 获取呼吸率
     currentBreathRate.value = res.breath_rate || 0
     isUserPresent.value = (res.target_distance || 0) > 0.1 && currentBreathRate.value > 0
 
-    // 2. 获取波形数据 (phase_values)
-    // 这是后端生成的 100 个点的数组，直接显示就是波形
     const waveform = res.phase_values || []
 
-    // 更新图表
     option.value.series[0].data = waveform
-    // X轴数据简单生成 1-100 即可
-    option.value.xAxis = { data: Array.from({length: waveform.length}, (_, i) => i) }
+    option.value.xAxis = { ...option.value.xAxis, data: Array.from({ length: waveform.length }, (_, i) => i) }
 
     if (myChart) myChart.setOption(option.value)
-
   } catch (err) {
-    console.error("获取数据失败", err)
+    console.error('获取数据失败', err)
   }
 }
 
@@ -73,7 +92,7 @@ const toggleAutoRefresh = () => {
     isAutoRefreshing.value = false
   } else {
     loadData()
-    refreshTimer = setInterval(loadData, 200) // 10Hz刷新，波形更流畅
+    refreshTimer = setInterval(loadData, 200)
     isAutoRefreshing.value = true
   }
 }
@@ -86,6 +105,62 @@ const initChart = () => {
   }
 }
 
+const applyTheme = () => {
+  option.value = buildOption()
+  if (myChart) myChart.setOption(option.value, true)
+}
+
+watch(() => themeStore.mode, () => {
+  applyTheme()
+})
+
 onMounted(() => { initChart() })
-onUnmounted(() => { clearInterval(refreshTimer) })
+onUnmounted(() => {
+  clearInterval(refreshTimer)
+  myChart?.dispose()
+})
 </script>
+
+<style scoped>
+.breath-page {
+  display: flex;
+  flex-direction: column;
+  color: var(--care-text);
+}
+
+.breath-layout {
+  display: flex;
+  justify-content: space-around;
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.breath-chart {
+  width: 600px;
+  max-width: 100%;
+  height: 400px;
+  padding: 16px;
+}
+
+.breath-monitor {
+  width: 500px;
+  max-width: 100%;
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 1100px) {
+  .breath-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .breath-chart,
+  .breath-monitor {
+    width: 100%;
+  }
+}
+</style>

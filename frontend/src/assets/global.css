@@ -1,32 +1,229 @@
-:root {
+/* =====================================================================
+   HRRR Radar Monitor - 全局主题
+   通过 :root 与 [data-theme="dark"] / [data-theme="light"] 提供完整 token
+   业务页面/Element Plus 均通过 CSS 变量响应切换
+   ===================================================================== */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  /* —— 画布 —— */
   --care-bg: #edf7f6;
   --care-bg-deep: #071827;
+  --care-app-bg: #f5fbfa;
+  --care-page-gradient:
+    radial-gradient(circle at 5% 5%, rgba(22, 183, 169, 0.18), transparent 34%),
+    radial-gradient(circle at 94% 10%, rgba(56, 189, 248, 0.16), transparent 30%),
+    linear-gradient(135deg, #f5fbfa 0%, #edf7f6 48%, #e8f5ff 100%);
+
+  /* —— 表面 —— */
   --care-surface: rgba(255, 255, 255, 0.88);
   --care-surface-strong: #ffffff;
+  --care-surface-soft: rgba(255, 255, 255, 0.66);
+  --care-surface-2: rgba(255, 255, 255, 0.78);
   --care-surface-dark: rgba(9, 24, 45, 0.82);
+  --care-surface-muted: rgba(100, 116, 139, 0.08);
+  --care-surface-inverse: #0f1f2e;
+
+  /* —— 主题色 —— */
   --care-primary: #16b7a9;
   --care-primary-strong: #0f8f85;
+  --care-primary-soft: rgba(22, 183, 169, 0.1);
+  --care-primary-border: rgba(22, 183, 169, 0.22);
   --care-accent: #38bdf8;
+  --care-accent-soft: rgba(56, 189, 248, 0.12);
   --care-success: #16a34a;
+  --care-success-soft: rgba(22, 163, 74, 0.1);
   --care-warning: #f59e0b;
+  --care-warning-soft: rgba(245, 158, 11, 0.12);
   --care-danger: #ef4444;
+  --care-danger-soft: rgba(239, 68, 68, 0.1);
+
+  /* —— 文字 —— */
   --care-text: #102333;
+  --care-text-strong: #0a1726;
+  --care-text-inverse: #ffffff;
+  --care-text-on-primary: #ffffff;
   --care-muted: #64748b;
+  --care-muted-strong: #41576b;
+  --care-link: #0369a1;
+
+  /* —— 边线/分割线 —— */
   --care-border: rgba(15, 143, 133, 0.16);
-  --care-radius-lg: 24px;
-  --care-radius-md: 16px;
+  --care-border-soft: rgba(15, 143, 133, 0.12);
+  --care-divider: rgba(15, 59, 72, 0.12);
+  --care-divider-strong: rgba(15, 59, 72, 0.2);
+  --care-grid-line: rgba(100, 116, 139, 0.14);
+  --care-grid-line-soft: rgba(100, 116, 139, 0.08);
+
+  /* —— 阴影 —— */
   --care-shadow: 0 18px 55px rgba(15, 59, 72, 0.12);
   --care-shadow-soft: 0 10px 30px rgba(15, 59, 72, 0.09);
+  --care-shadow-card: 0 4px 20px rgba(15, 59, 72, 0.08);
+  --care-shadow-strong: 0 24px 70px rgba(15, 59, 72, 0.18);
+
+  /* —— 圆角 —— */
+  --care-radius-lg: 24px;
+  --care-radius-md: 16px;
+  --care-radius-sm: 12px;
+  --care-radius-pill: 999px;
+
+  /* —— 侧栏(浅色下与画布同色系) —— */
+  --care-sidebar-bg: linear-gradient(180deg, #ffffff 0%, #f0faf8 52%, #e6f5ff 100%);
+  --care-sidebar-text: #102333;
+  --care-sidebar-text-active: #0a1726;
+  --care-sidebar-text-strong: #0a1726;
+  --care-sidebar-muted: #64748b;
+  --care-sidebar-hover: rgba(22, 183, 169, 0.1);
+  --care-sidebar-active: linear-gradient(135deg, rgba(22, 183, 169, 0.18), rgba(56, 189, 248, 0.14));
+  --care-sidebar-footer-bg: rgba(15, 59, 72, 0.04);
+  --care-sidebar-divider: rgba(15, 59, 72, 0.1);
+  --care-shadow-color: rgba(7, 24, 39, 0.1);
+
+  /* —— Element Plus 主题覆盖 —— */
+  --el-color-primary: #16b7a9;
+  --el-color-primary-light-3: #4ec5b9;
+  --el-color-primary-light-5: #80d3c9;
+  --el-color-primary-light-7: #b3e2dc;
+  --el-color-primary-light-8: #cce9e5;
+  --el-color-primary-light-9: #e6f4f2;
+  --el-color-primary-dark-2: #0f8f85;
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f5fbfa;
+  --el-bg-color-overlay: #ffffff;
+  --el-text-color-primary: #102333;
+  --el-text-color-regular: #334155;
+  --el-text-color-secondary: #64748b;
+  --el-text-color-placeholder: #94a3b8;
+  --el-border-color: rgba(15, 143, 133, 0.16);
+  --el-border-color-light: rgba(15, 143, 133, 0.12);
+  --el-border-color-lighter: rgba(15, 143, 133, 0.08);
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color-light: rgba(15, 143, 133, 0.04);
+  --el-fill-color-lighter: rgba(15, 143, 133, 0.02);
+  --el-fill-color: rgba(15, 143, 133, 0.08);
+  --el-mask-color: rgba(15, 23, 42, 0.45);
 }
 
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* —— 画布 —— */
+  --care-bg: #0a1726;
+  --care-bg-deep: #050d18;
+  --care-app-bg: #0a1726;
+  --care-page-gradient:
+    radial-gradient(circle at 8% 6%, rgba(34, 211, 238, 0.18), transparent 36%),
+    radial-gradient(circle at 92% 12%, rgba(168, 85, 247, 0.18), transparent 34%),
+    linear-gradient(135deg, #0a1726 0%, #0d1f33 48%, #131a2c 100%);
+
+  /* —— 表面 —— */
+  --care-surface: rgba(17, 27, 45, 0.78);
+  --care-surface-strong: #152338;
+  --care-surface-soft: rgba(17, 27, 45, 0.6);
+  --care-surface-2: rgba(23, 36, 58, 0.82);
+  --care-surface-dark: rgba(7, 14, 27, 0.88);
+  --care-surface-muted: rgba(148, 163, 184, 0.12);
+  --care-surface-inverse: #f1f5f9;
+
+  /* —— 主题色（深色下饱和度更亮） —— */
+  --care-primary: #2dd4bf;
+  --care-primary-strong: #5eead4;
+  --care-primary-soft: rgba(45, 212, 191, 0.18);
+  --care-primary-border: rgba(45, 212, 191, 0.32);
+  --care-accent: #38bdf8;
+  --care-accent-soft: rgba(56, 189, 248, 0.18);
+  --care-success: #4ade80;
+  --care-success-soft: rgba(74, 222, 128, 0.18);
+  --care-warning: #fbbf24;
+  --care-warning-soft: rgba(251, 191, 36, 0.18);
+  --care-danger: #f87171;
+  --care-danger-soft: rgba(248, 113, 113, 0.18);
+
+  /* —— 文字 —— */
+  --care-text: #e2e8f0;
+  --care-text-strong: #f8fafc;
+  --care-text-inverse: #0a1726;
+  --care-text-on-primary: #042f2e;
+  --care-muted: #94a3b8;
+  --care-muted-strong: #cbd5e1;
+  --care-link: #7dd3fc;
+
+  /* —— 边线/分割线 —— */
+  --care-border: rgba(125, 211, 252, 0.18);
+  --care-border-soft: rgba(125, 211, 252, 0.1);
+  --care-divider: rgba(148, 163, 184, 0.16);
+  --care-divider-strong: rgba(148, 163, 184, 0.28);
+  --care-grid-line: rgba(148, 163, 184, 0.18);
+  --care-grid-line-soft: rgba(148, 163, 184, 0.08);
+
+  /* —— 阴影 —— */
+  --care-shadow: 0 22px 60px rgba(0, 0, 0, 0.55);
+  --care-shadow-soft: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --care-shadow-card: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --care-shadow-strong: 0 28px 80px rgba(0, 0, 0, 0.7);
+
+  /* —— 侧栏(深色下使用更深一档,与深色背景更协调) —— */
+  --care-sidebar-bg: linear-gradient(180deg, #050d18 0%, #071827 50%, #0a1f1d 100%);
+  --care-sidebar-text: #cbd5e1;
+  --care-sidebar-text-active: #f0fdfa;
+  --care-sidebar-text-strong: #f8fafc;
+  --care-sidebar-muted: #64748b;
+  --care-sidebar-hover: rgba(45, 212, 191, 0.12);
+  --care-sidebar-active: linear-gradient(135deg, rgba(45, 212, 191, 0.7), rgba(56, 189, 248, 0.55));
+  --care-sidebar-footer-bg: rgba(125, 211, 252, 0.06);
+  --care-sidebar-divider: rgba(125, 211, 252, 0.12);
+  --care-shadow-color: rgba(0, 0, 0, 0.55);
+
+  /* —— Element Plus 主题覆盖（深色） —— */
+  --el-color-primary: #2dd4bf;
+  --el-color-primary-light-3: #5eead4;
+  --el-color-primary-light-5: #5eead4;
+  --el-color-primary-light-7: #99f6e4;
+  --el-color-primary-light-8: #ccfbf1;
+  --el-color-primary-light-9: #134e4a;
+  --el-color-primary-dark-2: #14b8a6;
+  --el-bg-color: #152338;
+  --el-bg-color-page: #0a1726;
+  --el-bg-color-overlay: #1e293b;
+  --el-text-color-primary: #e2e8f0;
+  --el-text-color-regular: #cbd5e1;
+  --el-text-color-secondary: #94a3b8;
+  --el-text-color-placeholder: #64748b;
+  --el-border-color: rgba(125, 211, 252, 0.18);
+  --el-border-color-light: rgba(125, 211, 252, 0.12);
+  --el-border-color-lighter: rgba(125, 211, 252, 0.06);
+  --el-fill-color-blank: #152338;
+  --el-fill-color-light: rgba(125, 211, 252, 0.06);
+  --el-fill-color-lighter: rgba(125, 211, 252, 0.03);
+  --el-fill-color: rgba(125, 211, 252, 0.1);
+  --el-mask-color: rgba(0, 0, 0, 0.7);
+}
+
+/* ==================== 基础 ==================== */
 * {
   box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
 }
 
 body {
   margin: 0;
   color: var(--care-text);
-  background: var(--care-bg);
+  background: var(--care-app-bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', Roboto, Oxygen, Ubuntu, sans-serif;
+  transition: background-color 0.35s ease, color 0.35s ease;
+}
+
+a {
+  color: var(--care-link);
+  text-decoration: none;
 }
 
 button,
@@ -46,22 +243,25 @@ select:focus-visible,
   outline-offset: 2px;
 }
 
+/* ==================== 通用容器 ==================== */
 .care-page-shell {
   min-height: calc(100vh - 84px);
   margin: -20px;
   padding: 24px;
-  background:
-    radial-gradient(circle at 5% 5%, rgba(22, 183, 169, 0.18), transparent 34%),
-    radial-gradient(circle at 94% 10%, rgba(56, 189, 248, 0.16), transparent 30%),
-    linear-gradient(135deg, #f5fbfa 0%, #edf7f6 48%, #e8f5ff 100%);
+  background: var(--care-page-gradient);
+  color: var(--care-text);
+  transition: background 0.35s ease, color 0.35s ease;
 }
 
 .care-glass-card {
   border: 1px solid var(--care-border);
   border-radius: var(--care-radius-lg);
   background: var(--care-surface);
+  color: var(--care-text);
   box-shadow: var(--care-shadow);
   backdrop-filter: blur(16px);
+  transition: background 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease,
+    color 0.35s ease;
 }
 
 .care-kicker {
@@ -70,4 +270,87 @@ select:focus-visible,
   font-weight: 800;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+[data-theme='dark'] .care-kicker {
+  color: var(--care-primary-strong);
+}
+
+/* ==================== Element Plus 兜底 ==================== */
+[data-theme='dark'] .el-card,
+[data-theme='dark'] .el-table,
+[data-theme='dark'] .el-input__wrapper,
+[data-theme='dark'] .el-textarea__inner,
+[data-theme='dark'] .el-select__wrapper,
+[data-theme='dark'] .el-date-editor.el-input,
+[data-theme='dark'] .el-pagination {
+  background-color: var(--el-fill-color-blank);
+  color: var(--el-text-color-primary);
+  border-color: var(--el-border-color);
+}
+
+[data-theme='dark'] .el-table th,
+[data-theme='dark'] .el-table tr {
+  background-color: var(--el-fill-color-blank) !important;
+  color: var(--el-text-color-primary) !important;
+}
+
+[data-theme='dark'] .el-table--striped .el-table__body tr.el-table__row--striped td {
+  background-color: rgba(125, 211, 252, 0.04) !important;
+}
+
+[data-theme='dark'] .el-table td,
+[data-theme='dark'] .el-table th.is-leaf {
+  border-bottom-color: var(--el-border-color-lighter) !important;
+}
+
+[data-theme='dark'] .el-table--enable-row-hover .el-table__body tr:hover > td {
+  background-color: rgba(125, 211, 252, 0.08) !important;
+}
+
+[data-theme='dark'] .el-empty__description p {
+  color: var(--el-text-color-secondary);
+}
+
+[data-theme='dark'] .el-pagination .btn-prev,
+[data-theme='dark'] .el-pagination .btn-next,
+[data-theme='dark'] .el-pagination .el-pager li {
+  background-color: transparent;
+  color: var(--el-text-color-regular);
+}
+
+[data-theme='dark'] .el-pagination .el-pager li.is-active {
+  color: var(--el-color-primary);
+}
+
+[data-theme='dark'] .el-pagination__sizes .el-select .el-select__wrapper,
+[data-theme='dark'] .el-pagination__jump .el-input__wrapper {
+  background-color: var(--el-fill-color-blank);
+}
+
+[data-theme='dark'] .el-tag {
+  border-color: var(--el-border-color);
+}
+
+/* ==================== 浅色侧栏图标 ==================== */
+/* manage.vue 里的 .menu-icon 在浅色下要去掉 invert 滤镜，否则图标会变白看不见 */
+[data-theme='light'] .menu-icon {
+  filter: none;
+  opacity: 0.7;
+}
+
+/* ==================== 滚动条 ==================== */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--care-border);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--care-primary-border);
 }

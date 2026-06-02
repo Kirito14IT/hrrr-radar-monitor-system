@@ -143,8 +143,10 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import * as echarts from 'echarts'
 import request from '@/utils/request'
 import { useAlertPolicyStore } from '@/stores/alertPolicyStore'
+import { useThemeStore } from '@/stores/themeStore'
 
 const policy = useAlertPolicyStore()
+const themeStore = useThemeStore()
 
 const loading = ref(false)
 const error = ref('')
@@ -379,12 +381,16 @@ function renderChart() {
   }
   const rows = timelineRows.value
   const labels = rows.map(row => formatTimeLabel(row.timestamp))
+  const muted = readToken('--care-muted', '#64748b')
+  const grid = readToken('--care-grid-line-soft', 'rgba(100,116,139,.14)')
+  const strongText = readToken('--care-muted-strong', '#41576b')
   trendChart.setOption({
+    backgroundColor: 'transparent',
     color: ['#ef4444', '#38bdf8', '#f59e0b'],
     tooltip: { trigger: 'axis' },
     legend: {
       top: 0,
-      textStyle: { color: '#41576b' },
+      textStyle: { color: strongText },
       data: ['心率', '呼吸率', '呼噜强度']
     },
     grid: { left: 42, right: 24, top: 42, bottom: 34 },
@@ -392,12 +398,12 @@ function renderChart() {
       type: 'category',
       boundaryGap: false,
       data: labels,
-      axisLabel: { color: '#64748b' }
+      axisLabel: { color: muted }
     },
     yAxis: {
       type: 'value',
-      splitLine: { lineStyle: { color: 'rgba(100,116,139,.14)' } },
-      axisLabel: { color: '#64748b' }
+      splitLine: { lineStyle: { color: grid } },
+      axisLabel: { color: muted }
     },
     series: [
       {
@@ -431,6 +437,12 @@ function renderChart() {
   })
 }
 
+function readToken(name, fallback) {
+  if (typeof window === 'undefined') return fallback
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
 function formatTimeLabel(value) {
   if (!value) return ''
   const date = new Date(value)
@@ -443,6 +455,7 @@ function resizeChart() {
 }
 
 watch(timelineRows, () => nextTick(renderChart))
+watch(() => themeStore.mode, () => nextTick(renderChart))
 
 onMounted(() => {
   loadData()
@@ -484,15 +497,15 @@ onBeforeUnmount(() => {
   width: 240px;
   height: 240px;
   border-radius: 50%;
-  background: rgba(22, 183, 169, 0.12);
+  background: var(--care-primary-soft);
 }
 
 .risk-card.warning::after {
-  background: rgba(245, 158, 11, 0.16);
+  background: var(--care-warning-soft);
 }
 
 .risk-card.critical::after {
-  background: rgba(239, 68, 68, 0.13);
+  background: var(--care-danger-soft);
 }
 
 .risk-card h1 {
@@ -513,8 +526,8 @@ onBeforeUnmount(() => {
   margin-top: 22px;
   padding: 16px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.76);
-  border: 1px solid rgba(15, 143, 133, 0.14);
+  background: var(--care-surface-2);
+  border: 1px solid var(--care-border-soft);
 }
 
 .risk-summary span {
@@ -635,18 +648,18 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(100, 116, 139, 0.13);
-  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid var(--care-border-soft);
+  background: var(--care-surface-soft);
 }
 
 .matrix-item.warning {
-  border-color: rgba(245, 158, 11, 0.34);
-  background: rgba(245, 158, 11, 0.08);
+  border-color: var(--care-warning);
+  background: var(--care-warning-soft);
 }
 
 .matrix-item.critical {
-  border-color: rgba(239, 68, 68, 0.3);
-  background: rgba(239, 68, 68, 0.08);
+  border-color: var(--care-danger);
+  background: var(--care-danger-soft);
 }
 
 .matrix-icon {
@@ -655,19 +668,19 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   border-radius: 16px;
-  color: #075985;
-  background: rgba(56, 189, 248, 0.12);
+  color: var(--care-link);
+  background: var(--care-accent-soft);
   font-weight: 900;
 }
 
 .matrix-item.warning .matrix-icon {
-  color: #92400e;
-  background: rgba(245, 158, 11, 0.13);
+  color: var(--care-warning);
+  background: var(--care-warning-soft);
 }
 
 .matrix-item.critical .matrix-icon {
-  color: #991b1b;
-  background: rgba(239, 68, 68, 0.12);
+  color: var(--care-danger);
+  background: var(--care-danger-soft);
 }
 
 .matrix-item strong,
@@ -692,16 +705,16 @@ onBeforeUnmount(() => {
   gap: 14px;
   padding: 14px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(100, 116, 139, 0.14);
+  background: var(--care-surface-2);
+  border: 1px solid var(--care-border-soft);
 }
 
 .action-item.warning {
-  border-color: rgba(245, 158, 11, 0.34);
+  border-color: var(--care-warning);
 }
 
 .action-item.critical {
-  border-color: rgba(239, 68, 68, 0.32);
+  border-color: var(--care-danger);
 }
 
 .action-item p {
@@ -712,8 +725,8 @@ onBeforeUnmount(() => {
   padding: 28px;
   border-radius: 18px;
   color: var(--care-muted);
-  background: rgba(22, 183, 169, 0.08);
-  border: 1px dashed rgba(22, 183, 169, 0.28);
+  background: var(--care-primary-soft);
+  border: 1px dashed var(--care-primary-border);
 }
 
 .policy-grid {

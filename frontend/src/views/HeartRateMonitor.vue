@@ -48,11 +48,11 @@ const statusText = computed(() => {
 });
 
 const statusColor = computed(() => {
-  if (!props.isPresent || !hasRate.value) return '#999999';
-  if (props.rate === 0) return '#faad14';
-  if (props.rate < 60) return '#faad14';
-  if (props.rate < 100) return '#52c41a';
-  return '#f5222d';
+  if (!props.isPresent || !hasRate.value) return 'var(--care-muted)';
+  if (props.rate === 0) return 'var(--care-warning)';
+  if (props.rate < 60) return 'var(--care-warning)';
+  if (props.rate < 100) return 'var(--care-success)';
+  return 'var(--care-danger)';
 });
 
 const statusClass = computed(() => {
@@ -69,21 +69,62 @@ const fillPercentage = computed(() => {
 </script>
 
 <style scoped>
-.heart-rate-monitor { width: 100%; height: 100%; box-sizing: border-box; background: #fff; border-radius: 12px; border: 1px solid #f0f0f0; padding: 16px; display: flex; flex-direction: column; justify-content: space-between; }
-.monitor-header { background: #ffeaea; padding: 8px 12px; border-radius: 8px; display: flex; align-items: center; margin-bottom: 10px; }
-.heart-icon { width: 18px; height: 18px; color: #ff4d4f; margin-right: 8px; }
-.title-text { font-size: 16px; font-weight: bold; color: #333; }
-.monitor-subtitle { font-size: 12px; color: #999; margin-bottom: 10px; }
-.heart-rate-data { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 15px; }
+.heart-rate-monitor {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background: var(--care-surface-strong);
+  color: var(--care-text);
+  border-radius: var(--care-radius-md);
+  border: 1px solid var(--care-border-soft);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+.monitor-header {
+  background: var(--care-danger-soft);
+  padding: 8px 12px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.heart-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--care-danger);
+  margin-right: 8px;
+}
+.title-text {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--care-text-strong);
+}
+.monitor-subtitle {
+  font-size: 12px;
+  color: var(--care-muted);
+  margin-bottom: 10px;
+}
+.heart-rate-data {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 15px;
+}
 
 /* ✅ 修改：稍微缩小字号以容纳 .00 */
 .rate-value { font-size: 36px; font-weight: bold; line-height: 1; }
 
-.rate-unit { font-size: 14px; color: #999; margin-left: 4px; }
+.rate-unit { font-size: 14px; color: var(--care-muted); margin-left: 4px; }
 .status-indicator { padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; white-space: nowrap; }
-.status-normal { background: #e6f7ed; } .status-slow { background: #f6ffed; } .status-fast { background: #fff1f0; } .abnormal-text { background: #f5f5f5; }
+.status-normal { background: var(--care-success-soft); }
+.status-slow { background: var(--care-warning-soft); }
+.status-fast { background: var(--care-danger-soft); }
+.abnormal-text { background: var(--care-surface-muted); }
 .heart-rate-scale { position: relative; height: 30px; }
-.scale-container { height: 6px; background: #f5f5f5; border-radius: 3px; overflow: hidden; }
+.scale-container { height: 6px; background: var(--care-surface-muted); border-radius: 3px; overflow: hidden; }
 .scale-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
-.scale-marks { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; color: #ccc; }
+.scale-marks { display: flex; justify-content: space-between; margin-top: 4px; font-size: 10px; color: var(--care-muted); }
 </style>
