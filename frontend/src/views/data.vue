@@ -320,8 +320,8 @@ onMounted(() => {
   border-radius: 18px;
   padding: 14px 16px;
   color: var(--care-primary-strong);
-  background: rgba(22, 183, 169, 0.1);
-  border: 1px solid rgba(22, 183, 169, 0.22);
+  background: var(--care-primary-soft);
+  border: 1px solid var(--care-primary-border);
 }
 
 .hero-status span,
@@ -335,21 +335,22 @@ onMounted(() => {
   display: block;
   margin-top: 6px;
   font-size: 22px;
+  color: inherit;
 }
 
 .hero-status.running {
-  color: #0369a1;
-  background: rgba(56, 189, 248, 0.12);
+  color: var(--care-link);
+  background: var(--care-accent-soft);
 }
 
 .hero-status.fallback {
-  color: #b45309;
-  background: rgba(245, 158, 11, 0.12);
+  color: var(--care-warning);
+  background: var(--care-warning-soft);
 }
 
 .hero-status.failed {
-  color: #b91c1c;
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--care-danger);
+  background: var(--care-danger-soft);
 }
 
 .login-empty {
@@ -466,20 +467,20 @@ onMounted(() => {
   padding: 5px 10px;
   font-size: 12px;
   color: var(--care-primary-strong);
-  background: rgba(22, 183, 169, 0.1);
-  border: 1px solid rgba(22, 183, 169, 0.22);
+  background: var(--care-primary-soft);
+  border: 1px solid var(--care-primary-border);
 }
 
 .provider-badge.fallback {
-  color: #b45309;
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.28);
+  color: var(--care-warning);
+  background: var(--care-warning-soft);
+  border-color: var(--care-warning);
 }
 
 .time-badge {
   color: var(--care-muted);
-  background: rgba(100, 116, 139, 0.08);
-  border-color: rgba(100, 116, 139, 0.16);
+  background: var(--care-surface-muted);
+  border-color: var(--care-border-soft);
 }
 
 .analysis-loading,
@@ -487,8 +488,8 @@ onMounted(() => {
 .report-box {
   border-radius: 18px;
   padding: 18px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(15, 143, 133, 0.12);
+  background: var(--care-surface-2);
+  border: 1px solid var(--care-border-soft);
 }
 
 .analysis-empty h3 {
@@ -502,7 +503,7 @@ onMounted(() => {
 .report-box pre {
   margin: 0;
   white-space: pre-wrap;
-  color: #183447;
+  color: var(--care-text);
   line-height: 1.75;
   font-family: inherit;
 }

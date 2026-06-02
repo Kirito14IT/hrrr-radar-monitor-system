@@ -1,10 +1,30 @@
 <!DOCTYPE html>
-<html lang="">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8">
     <link rel="icon" href="/favicon.ico">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vite App</title>
+    <meta name="color-scheme" content="light dark">
+    <title>HRRR 雷达睡眠看护系统</title>
+    <script>
+      // 在 Vue 启动前同步主题，避免首屏白闪
+      (function () {
+        try {
+          var stored = localStorage.getItem('hrrr-radar-theme')
+          var theme = stored
+          if (stored) {
+            try { theme = JSON.parse(stored).mode || stored } catch (e) { theme = stored }
+          }
+          if (theme !== 'light' && theme !== 'dark') {
+            theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark' : 'light'
+          }
+          document.documentElement.setAttribute('data-theme', theme)
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

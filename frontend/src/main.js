@@ -16,6 +16,9 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 // 全局样式
 import '@/assets/global.css'
 
+// 在创建应用之前，先让主题 store 生效（避免首屏闪烁）
+import { useThemeStore } from '@/stores/themeStore'
+
 // 创建应用实例（只创建一次！）
 const app = createApp(App)
 
@@ -23,6 +26,9 @@ const app = createApp(App)
 const pinia = createPinia()
 pinia.use(piniaPluginPersistedstate)
 app.use(pinia)
+
+// 启动即把当前主题写到 <html data-theme>，避免首屏白闪
+useThemeStore(pinia).applyToDom()
 
 // 使用路由
 app.use(router)

@@ -47,16 +47,16 @@ const statusText = computed(() => {
 });
 
 const statusColor = computed(() => {
-  if (!props.isPresent || !hasRate.value) return '#999999';
-  if (props.rate === 0) return '#faad14';
-  if (props.rate < 10 || props.rate > 24) return '#faad14';
-  return '#1890ff';
+  if (!props.isPresent || !hasRate.value) return 'var(--care-muted)';
+  if (props.rate === 0) return 'var(--care-warning)';
+  if (props.rate < 10 || props.rate > 24) return 'var(--care-warning)';
+  return 'var(--care-accent)';
 });
 
 const statusBg = computed(() => {
-  if (!props.isPresent || !hasRate.value) return '#f5f5f5';
-  if (props.rate === 0 || props.rate < 10 || props.rate > 24) return '#fff7e6';
-  return '#e6f7ff';
+  if (!props.isPresent || !hasRate.value) return 'var(--care-surface-muted)';
+  if (props.rate === 0 || props.rate < 10 || props.rate > 24) return 'var(--care-warning-soft)';
+  return 'var(--care-accent-soft)';
 });
 
 const fillPercent = computed(() => {
@@ -66,20 +66,58 @@ const fillPercent = computed(() => {
 </script>
 
 <style scoped>
-.monitor-card { width: 100%; height: 100%; box-sizing: border-box; background: #fff; border-radius: 12px; border: 1px solid #f0f0f0; padding: 16px; display: flex; flex-direction: column; justify-content: space-between; }
-.monitor-header { display: flex; align-items: center; background: #e6f7ff; padding: 8px 12px; border-radius: 8px; margin-bottom: 10px; }
-.icon { width: 18px; height: 18px; margin-right: 8px; color: #1890ff; }
-.title { font-size: 16px; font-weight: bold; color: #333; }
-.subtitle { font-size: 12px; color: #999; margin-bottom: 10px; }
-.data-row { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 15px; }
+.monitor-card {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  background: var(--care-surface-strong);
+  color: var(--care-text);
+  border-radius: var(--care-radius-md);
+  border: 1px solid var(--care-border-soft);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+.monitor-header {
+  display: flex;
+  align-items: center;
+  background: var(--care-accent-soft);
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.icon {
+  width: 18px;
+  height: 18px;
+  margin-right: 8px;
+  color: var(--care-accent);
+}
+.title {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--care-text-strong);
+}
+.subtitle {
+  font-size: 12px;
+  color: var(--care-muted);
+  margin-bottom: 10px;
+}
+.data-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 15px;
+}
 
 /* ✅ 修改：字号调整为 36px */
 .value { font-size: 36px; font-weight: bold; line-height: 1; transition: color 0.3s; }
 
-.unit { font-size: 14px; color: #999; margin-left: 4px; }
+.unit { font-size: 14px; color: var(--care-muted); margin-left: 4px; }
 .status-tag { padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .scale-box { height: 30px; }
-.scale-track { height: 6px; background: #f5f5f5; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+.scale-track { height: 6px; background: var(--care-surface-muted); border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
 .scale-bar { height: 100%; transition: width 0.5s ease; }
-.scale-labels { display: flex; justify-content: space-between; font-size: 10px; color: #ccc; }
+.scale-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--care-muted); }
 </style>
