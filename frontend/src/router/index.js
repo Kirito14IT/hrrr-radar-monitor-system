@@ -7,6 +7,7 @@ import breath_pic from "../views/breath_pic.vue"; // <--- 引入新页面
 import sleep_dashboard from "../views/sleep_dashboard.vue";
 import alert_center from "../views/alert_center.vue";
 import project_intro from "../views/project_intro.vue";
+import environment_analysis from "../views/environment_analysis.vue";
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -36,6 +37,12 @@ const router = createRouter({
           name: 'alert_center',
           meta: { title: '看护预警中心' },
           component: alert_center,
+        },
+        {
+          path: 'environment_analysis',
+          name: 'environment_analysis',
+          meta: { title: '睡眠环境分析' },
+          component: environment_analysis,
         },
         {
           path: 'heart_pic',

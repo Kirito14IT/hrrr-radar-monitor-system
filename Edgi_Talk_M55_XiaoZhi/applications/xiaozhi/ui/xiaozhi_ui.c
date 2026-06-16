@@ -15,6 +15,7 @@
 #include <lvgl.h>
 #include "xiaozhi_ui.h"
 #include "xiaozhi.h"
+#include "alarm_clock.h"
 
 /*****************************************************************************
  * Macro Definitions
@@ -53,9 +54,16 @@ typedef enum
 {
     UI_CMD_SET_STATUS = 0,
     UI_CMD_SET_OUTPUT,
-    UI_CMD_SET_MEOW_RESULT,
+    UI_CMD_SET_SNORE_RESULT,
+    UI_CMD_SET_SNORE_GUARD,
+    UI_CMD_SHOW_EMERGENCY,
+    UI_CMD_SET_EMERGENCY_RESOLUTION,
+    UI_CMD_SHOW_ALARM_RING,
+    UI_CMD_HIDE_ALARM_RING,
+    UI_CMD_REFRESH_ALARM,
     UI_CMD_SET_EMOJI,
     UI_CMD_SET_ADC,
+    UI_CMD_SET_ENVIRONMENT,
     UI_CMD_CLEAR_INFO,
     UI_CMD_SHOW_AP_INFO,
     UI_CMD_SHOW_CONNECTING,
@@ -136,25 +144,48 @@ static const char *s_emoji_names[EMOJI_NUM] =
     "kissy", "confident"
 };
 
-/* Meow detection mode flag */
-static rt_bool_t s_meow_mode = RT_FALSE;
+/* Snore detection screen state */
+static rt_bool_t s_snore_mode = RT_FALSE;
+static rt_bool_t s_network_overlay_active = RT_FALSE;
 static lv_obj_t *s_main_screen = RT_NULL;
-static lv_obj_t *s_meow_screen = RT_NULL;
-static lv_obj_t *s_meow_label_title = RT_NULL;
-static lv_obj_t *s_meow_label_result = RT_NULL;
-static lv_obj_t *s_meow_label_score = RT_NULL;
-static lv_obj_t *s_meow_panel = RT_NULL;
-static lv_obj_t *s_btn_meow = RT_NULL;
-static lv_obj_t *s_lbl_meow = RT_NULL;
-static lv_obj_t *s_meow_cat_canvas = RT_NULL;
+static lv_obj_t *s_snore_screen = RT_NULL;
+static lv_obj_t *s_snore_label_title = RT_NULL;
+static lv_obj_t *s_snore_label_result = RT_NULL;
+static lv_obj_t *s_snore_label_score = RT_NULL;
+static lv_obj_t *s_snore_panel = RT_NULL;
+static lv_obj_t *s_btn_snore = RT_NULL;
+static lv_obj_t *s_lbl_snore = RT_NULL;
+static lv_obj_t *s_snore_inference_badge = RT_NULL;
+static lv_obj_t *s_snore_inference_label = RT_NULL;
+static lv_obj_t *s_snore_canvas = RT_NULL;
+static lv_obj_t *s_emergency_screen = RT_NULL;
+static lv_obj_t *s_emergency_phrase = RT_NULL;
+static lv_obj_t *s_emergency_hint = RT_NULL;
+static lv_obj_t *s_emergency_resolve_btn = RT_NULL;
+static lv_obj_t *s_emergency_resolve_label = RT_NULL;
+static lv_obj_t *s_alarm_screen = RT_NULL;
+static lv_obj_t *s_alarm_time_label = RT_NULL;
+static lv_obj_t *s_alarm_toggle_label = RT_NULL;
+static lv_obj_t *s_alarm_action_label = RT_NULL;
+static lv_obj_t *s_alarm_ring_screen = RT_NULL;
+static lv_obj_t *s_alarm_ring_time_label = RT_NULL;
+static lv_obj_t *s_alarm_ring_dismiss_btn = RT_NULL;
+static lv_obj_t *s_alarm_ring_dismiss_label = RT_NULL;
+static lv_obj_t *s_btn_alarm = RT_NULL;
+static lv_obj_t *s_lbl_alarm = RT_NULL;
+static alarm_clock_config_t s_alarm_edit = {RT_FALSE, 7, 0};
+static rt_bool_t s_alarm_ringing = RT_FALSE;
 
-static void meow_back_btn_event_cb(lv_event_t *e);
-static void meow_build_screen(void);
+static void snore_back_btn_event_cb(lv_event_t *e);
+static void snore_build_screen(void);
+static void emergency_build_screen(void);
+static void alarm_build_screen(void);
+static void alarm_ring_build_screen(void);
 
-/* Large canvas buffer for cat pixel art (ARGB8888) */
-static uint8_t s_meow_cat_buf[360 * 240 * 4] rt_section(".m33_m55_shared_hyperram");
+/* Canvas buffer for the snore illustration (ARGB8888). */
+static uint8_t s_snore_canvas_buf[360 * 240 * 4] rt_section(".m33_m55_shared_hyperram");
 
-static inline void meow_canvas_px(lv_obj_t *canvas, int w, int h, int x, int y, lv_color_t col)
+static inline void snore_canvas_px(lv_obj_t *canvas, int w, int h, int x, int y, lv_color_t col)
 {
     if (!canvas)
         return;
@@ -163,96 +194,67 @@ static inline void meow_canvas_px(lv_obj_t *canvas, int w, int h, int x, int y, 
     lv_canvas_set_px(canvas, x, y, col, LV_OPA_COVER);
 }
 
-static void meow_draw_cat_pixelart(lv_obj_t *canvas)
+static void snore_draw_sleep_pixelart(lv_obj_t *canvas)
 {
     if (!canvas)
         return;
 
     const int W = 360;
     const int H = 240;
-    lv_canvas_set_buffer(canvas, s_meow_cat_buf, W, H, LV_COLOR_FORMAT_ARGB8888);
+    lv_canvas_set_buffer(canvas, s_snore_canvas_buf, W, H, LV_COLOR_FORMAT_ARGB8888);
     lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_TRANSP);
 
-    const lv_color_t O = lv_color_hex(0x111111);  /* outline */
-    const lv_color_t G1 = lv_color_hex(0xB9B9B9); /* fur light */
-    const lv_color_t G2 = lv_color_hex(0x8F8F8F); /* fur dark */
-    const lv_color_t P = lv_color_hex(0xFF8FB1);  /* cheeks */
+    const lv_color_t outline = lv_color_hex(0x142033);
+    const lv_color_t bed = lv_color_hex(0x5477A8);
+    const lv_color_t blanket = lv_color_hex(0x66C2B0);
+    const lv_color_t pillow = lv_color_hex(0xE8F1F8);
+    const lv_color_t skin = lv_color_hex(0xF2B49B);
+    const lv_color_t hair = lv_color_hex(0x39495E);
+    const lv_color_t sound = lv_color_hex(0xFFB347);
+    const lv_color_t sleep = lv_color_hex(0x8CB8FF);
+    const int S = 6;
+    const int ox = 48;
+    const int oy = 12;
 
-    /* helpers */
-    const int S = 7; /* pixel scale */
-    const int ox = 40;
-    const int oy = 10;
-
-    auto_draw:
-    (void)S;
-
-    /* draw a scaled pixel */
     #define PX(xx,yy,col) do { \
         for(int sy=0; sy<S; sy++) for(int sx=0; sx<S; sx++) \
-            meow_canvas_px(canvas, W, H, (ox + (xx)*S + sx), (oy + (yy)*S + sy), (col)); \
+            snore_canvas_px(canvas, W, H, (ox + (xx)*S + sx), (oy + (yy)*S + sy), (col)); \
     } while(0)
 
-    /* draw filled rect in scaled pixels */
     #define RECT(x0,y0,x1,y1,col) do { \
         for(int yy=(y0); yy<=(y1); yy++) for(int xx=(x0); xx<=(x1); xx++) PX(xx,yy,(col)); \
     } while(0)
 
-    /* speech bubble */
-    RECT(6, 0, 34, 10, lv_color_hex(0xFFFFFF));
-    /* border */
-    for (int x = 6; x <= 34; x++) { PX(x, 0, O); PX(x, 10, O); }
-    for (int y = 0; y <= 10; y++) { PX(6, y, O); PX(34, y, O); }
-    /* tail */
-    RECT(10, 10, 12, 12, lv_color_hex(0xFFFFFF));
-    PX(10, 10, O); PX(11, 11, O); PX(12, 12, O);
-    PX(9, 10, O); PX(10, 11, O); PX(11, 12, O);
+    /* Bed frame, mattress and pillow. */
+    RECT(3, 25, 43, 33, bed);
+    RECT(3, 33, 46, 35, outline);
+    RECT(5, 36, 7, 38, outline);
+    RECT(42, 36, 44, 38, outline);
+    RECT(5, 21, 16, 27, pillow);
 
-    /* "MEOW!" block letters (5x7) */
-    /* M */
-    RECT(9, 2, 9, 8, O); RECT(13, 2, 13, 8, O);
-    PX(10, 3, O); PX(11, 4, O); PX(12, 3, O);
-    /* E */
-    RECT(15, 2, 15, 8, O); RECT(15, 2, 19, 2, O); RECT(15, 5, 18, 5, O); RECT(15, 8, 19, 8, O);
-    /* O */
-    RECT(21, 2, 25, 2, O); RECT(21, 8, 25, 8, O); RECT(21, 3, 21, 7, O); RECT(25, 3, 25, 7, O);
-    /* W */
-    RECT(27, 2, 27, 8, O); RECT(31, 2, 31, 8, O);
-    PX(28, 7, O); PX(29, 6, O); PX(30, 7, O);
-    /* ! */
-    RECT(33, 2, 33, 6, O); PX(33, 8, O);
+    /* Sleeping person facing right. */
+    RECT(12, 18, 20, 26, hair);
+    RECT(15, 19, 23, 26, skin);
+    RECT(14, 18, 20, 19, hair);
+    PX(21, 22, outline);
+    PX(23, 24, outline);
+    RECT(20, 25, 22, 26, skin);
 
-    /* cat body */
-    /* base shape */
-    RECT(10, 16, 30, 34, G1);
-    RECT(12, 14, 28, 15, G1);
-    /* ears */
-    RECT(12, 12, 15, 14, G1);
-    RECT(25, 12, 28, 14, G1);
-    /* tail */
-    RECT(30, 26, 33, 28, G1);
-    RECT(33, 28, 34, 33, G1);
+    /* Blanket and body. */
+    RECT(20, 26, 42, 32, blanket);
+    RECT(24, 24, 39, 25, blanket);
+    for (int x = 20; x <= 42; x++) PX(x, 32, outline);
 
-    /* outline (thicker) */
-    for (int x = 10; x <= 30; x++) { PX(x, 16, O); PX(x, 34, O); }
-    for (int y = 16; y <= 34; y++) { PX(10, y, O); PX(30, y, O); }
-    for (int x = 12; x <= 28; x++) { PX(x, 14, O); PX(x, 15, O); }
-    PX(12, 13, O); PX(15, 12, O); PX(25, 12, O); PX(28, 13, O);
-    /* tail outline */
-    for (int x = 30; x <= 33; x++) PX(x, 26, O);
-    for (int y = 26; y <= 33; y++) PX(34, y, O);
-    PX(33, 33, O); PX(32, 33, O);
+    /* Snore sound waves near the mouth. */
+    PX(26, 23, sound); PX(27, 22, sound); PX(27, 24, sound);
+    PX(29, 21, sound); PX(30, 20, sound); PX(30, 24, sound); PX(29, 25, sound);
+    PX(33, 19, sound); PX(34, 18, sound); PX(34, 26, sound); PX(33, 27, sound);
 
-    /* simple stripes */
-    RECT(12, 20, 13, 22, G2);
-    RECT(27, 20, 28, 22, G2);
-    RECT(14, 26, 15, 28, G2);
-    RECT(25, 26, 26, 28, G2);
-
-    /* face */
-    PX(17, 24, O); PX(23, 24, O); /* eyes */
-    PX(20, 26, O);                /* nose */
-    PX(19, 27, O); PX(21, 27, O); /* mouth */
-    PX(16, 26, P); PX(24, 26, P); /* cheeks */
+    /* ZZZ sleep symbol. */
+    RECT(31, 4, 37, 5, sleep); RECT(35, 6, 36, 6, sleep); RECT(33, 7, 34, 7, sleep);
+    RECT(31, 8, 37, 9, sleep);
+    RECT(39, 0, 45, 1, sleep); RECT(43, 2, 44, 2, sleep); RECT(41, 3, 42, 3, sleep);
+    RECT(39, 4, 45, 5, sleep);
 
     #undef PX
     #undef RECT
@@ -341,155 +343,128 @@ static void switch_cont_anim(bool hidden)
 }
 
 /**
- * @brief Meow detect button event callback
+ * @brief Snore detect button event callback
  */
-static void meow_btn_event_cb(lv_event_t *e)
+static void snore_btn_event_cb(lv_event_t *e)
 {
+    static rt_tick_t last_click_tick = 0;
     lv_event_code_t code = lv_event_get_code(e);
     if (code != LV_EVENT_CLICKED)
     {
         return;
     }
 
-    /* Main screen button always means "enter meow detector". If already in meow mode,
-     * ignore the click (exit is handled by the Back button on the meow screen). */
-    if (s_meow_mode)
+    const rt_tick_t now = rt_tick_get();
+    if (last_click_tick != 0 &&
+        (rt_tick_t)(now - last_click_tick) < rt_tick_from_millisecond(700))
+    {
         return;
+    }
+    last_click_tick = now;
 
-    /* Enter meow detect mode: switch screen, suspend voice, start detector */
-    if (!s_meow_screen)
-    {
-        meow_build_screen();
-    }
-    if (s_meow_screen)
-    {
-        lv_screen_load(s_meow_screen);
-    }
-
-    xz_voice_suspend();
-    if (meow_detect_start() == RT_EOK)
-    {
-        s_meow_mode = RT_TRUE;
-        if (s_meow_label_result)
-            lv_label_set_text(s_meow_label_result, "Listening...");
-        if (s_meow_label_score)
-            lv_label_set_text(s_meow_label_score, "-");
-    }
-    else
-    {
-        /* Failed to start meow detection, resume voice */
-        xz_voice_resume();
-        if (s_main_screen)
-            lv_screen_load(s_main_screen);
-    }
+    (void)xz_set_snore_guard_enabled(s_snore_mode ? RT_FALSE : RT_TRUE);
 }
 
-void xiaozhi_ui_enter_meow_mode_from_voice(void)
+void xiaozhi_ui_enter_snore_mode_from_voice(void)
 {
-    /* 语音指令触发入口：等价于主界面点击一次 Meow detect 按钮 */
-    if (s_meow_mode)
+    if (s_snore_mode)
         return;
 
-    if (!s_meow_screen)
+    if (!s_snore_screen)
     {
-        meow_build_screen();
+        snore_build_screen();
     }
-    if (s_meow_screen)
+    if (s_snore_screen)
     {
-        lv_screen_load(s_meow_screen);
+        lv_screen_load(s_snore_screen);
     }
 
-    xz_voice_suspend();
-    if (meow_detect_start() == RT_EOK)
+    if (xz_set_snore_guard_enabled(RT_TRUE) == RT_EOK)
     {
-        s_meow_mode = RT_TRUE;
-        if (s_meow_label_result)
-            lv_label_set_text(s_meow_label_result, "Listening...");
-        if (s_meow_label_score)
-            lv_label_set_text(s_meow_label_score, "-");
+        if (s_snore_label_result)
+            lv_label_set_text(s_snore_label_result, "Listening...");
+        if (s_snore_label_score)
+            lv_label_set_text(s_snore_label_score, "-");
     }
     else
     {
-        xz_voice_resume();
         if (s_main_screen)
             lv_screen_load(s_main_screen);
     }
 }
 
-static void meow_back_btn_event_cb(lv_event_t *e)
+static void snore_back_btn_event_cb(lv_event_t *e)
 {
     lv_event_code_t code = lv_event_get_code(e);
     if (code != LV_EVENT_CLICKED)
         return;
 
-    if (s_meow_mode)
+    if (s_snore_mode)
     {
-        meow_detect_stop();
-        xz_voice_resume();
-        s_meow_mode = RT_FALSE;
+        (void)xz_set_snore_guard_enabled(RT_FALSE);
     }
 
     if (s_main_screen)
         lv_screen_load(s_main_screen);
 }
 
-static void meow_build_screen(void)
+static void snore_build_screen(void)
 {
-    s_meow_screen = lv_obj_create(NULL);
-    lv_obj_clear_flag(s_meow_screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(s_meow_screen, lv_color_hex(0x0A0D12), LV_PART_MAIN | LV_STATE_DEFAULT);
+    s_snore_screen = lv_obj_create(NULL);
+    lv_obj_clear_flag(s_snore_screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_snore_screen, lv_color_hex(0x0A0D12), LV_PART_MAIN | LV_STATE_DEFAULT);
 
     /* Center panel (outer frame) */
-    s_meow_panel = lv_obj_create(s_meow_screen);
-    lv_obj_remove_flag(s_meow_panel, LV_OBJ_FLAG_SCROLLABLE);
+    s_snore_panel = lv_obj_create(s_snore_screen);
+    lv_obj_remove_flag(s_snore_panel, LV_OBJ_FLAG_SCROLLABLE);
     /* 稍微缩小一点并完全居中，避免右侧被裁剪 */
-    lv_obj_set_size(s_meow_panel, LV_PCT(90), LV_PCT(86));
-    lv_obj_center(s_meow_panel);
-    lv_obj_set_style_bg_color(s_meow_panel, lv_color_hex(0x101722), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(s_meow_panel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_radius(s_meow_panel, SCALE_DPX(18), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(s_meow_panel, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(s_meow_panel, lv_color_hex(0x2B3A55), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_pad_all(s_meow_panel, SCALE_DPX(18), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(s_snore_panel, LV_PCT(90), LV_PCT(86));
+    lv_obj_center(s_snore_panel);
+    lv_obj_set_style_bg_color(s_snore_panel, lv_color_hex(0x101722), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(s_snore_panel, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(s_snore_panel, SCALE_DPX(18), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(s_snore_panel, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(s_snore_panel, lv_color_hex(0x2B3A55), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(s_snore_panel, SCALE_DPX(18), LV_PART_MAIN | LV_STATE_DEFAULT);
 
     /* Title */
-    s_meow_label_title = lv_label_create(s_meow_panel);
-    lv_label_set_text(s_meow_label_title, "Meow detector");
-    lv_obj_add_style(s_meow_label_title, &s_style_30, 0);
-    lv_obj_set_width(s_meow_label_title, LV_PCT(100));
-    lv_obj_set_style_text_align(s_meow_label_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_align(s_meow_label_title, LV_ALIGN_TOP_MID, 0, 0);
+    s_snore_label_title = lv_label_create(s_snore_panel);
+    lv_label_set_text(s_snore_label_title, "Snore detector");
+    lv_obj_add_style(s_snore_label_title, &s_style_30, 0);
+    lv_obj_set_width(s_snore_label_title, LV_PCT(100));
+    lv_obj_set_style_text_align(s_snore_label_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(s_snore_label_title, LV_ALIGN_TOP_MID, 0, 0);
 
-    /* Cat pixel art (shown only when detected) */
-    s_meow_cat_canvas = lv_canvas_create(s_meow_panel);
-    lv_obj_set_size(s_meow_cat_canvas, SCALE_DPX(360), SCALE_DPX(240));
-    lv_obj_align(s_meow_cat_canvas, LV_ALIGN_TOP_MID, 0, SCALE_DPX(55));
-    meow_draw_cat_pixelart(s_meow_cat_canvas);
-    lv_obj_add_flag(s_meow_cat_canvas, LV_OBJ_FLAG_HIDDEN);
+    /* Sleeping-person snore illustration, shown only when snoring is detected. */
+    s_snore_canvas = lv_canvas_create(s_snore_panel);
+    lv_obj_set_size(s_snore_canvas, SCALE_DPX(360), SCALE_DPX(240));
+    lv_obj_align(s_snore_canvas, LV_ALIGN_TOP_MID, 0, SCALE_DPX(55));
+    snore_draw_sleep_pixelart(s_snore_canvas);
+    lv_obj_add_flag(s_snore_canvas, LV_OBJ_FLAG_HIDDEN);
 
     /* Result */
-    s_meow_label_result = lv_label_create(s_meow_panel);
-    lv_label_set_text(s_meow_label_result, "Listening...");
-    lv_obj_add_style(s_meow_label_result, &s_style_30, 0);
-    lv_obj_set_style_text_color(s_meow_label_result, lv_color_hex(0xffffff), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_width(s_meow_label_result, LV_PCT(100));
-    lv_obj_set_style_text_align(s_meow_label_result, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_align_to(s_meow_label_result, s_meow_cat_canvas, LV_ALIGN_OUT_BOTTOM_MID, 0, SCALE_DPX(10));
+    s_snore_label_result = lv_label_create(s_snore_panel);
+    lv_label_set_text(s_snore_label_result, "Listening...");
+    lv_obj_add_style(s_snore_label_result, &s_style_30, 0);
+    lv_obj_set_style_text_color(s_snore_label_result, lv_color_hex(0xffffff), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_width(s_snore_label_result, LV_PCT(100));
+    lv_obj_set_style_text_align(s_snore_label_result, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align_to(s_snore_label_result, s_snore_canvas, LV_ALIGN_OUT_BOTTOM_MID, 0, SCALE_DPX(10));
 
     /* Score */
-    s_meow_label_score = lv_label_create(s_meow_panel);
-    lv_label_set_text(s_meow_label_score, "-");
-    lv_obj_add_style(s_meow_label_score, &s_style_24, 0);
-    lv_obj_set_style_text_color(s_meow_label_score, lv_color_hex(0xC7D2FE), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_width(s_meow_label_score, LV_PCT(100));
-    lv_obj_set_style_text_align(s_meow_label_score, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_align_to(s_meow_label_score, s_meow_label_result, LV_ALIGN_OUT_BOTTOM_MID, 0, SCALE_DPX(6));
+    s_snore_label_score = lv_label_create(s_snore_panel);
+    lv_label_set_text(s_snore_label_score, "-");
+    lv_obj_add_style(s_snore_label_score, &s_style_24, 0);
+    lv_obj_set_style_text_color(s_snore_label_score, lv_color_hex(0xC7D2FE), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_width(s_snore_label_score, LV_PCT(100));
+    lv_obj_set_style_text_align(s_snore_label_score, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align_to(s_snore_label_score, s_snore_label_result, LV_ALIGN_OUT_BOTTOM_MID, 0, SCALE_DPX(6));
 
     /* Back button */
-    lv_obj_t *btn_back = lv_button_create(s_meow_panel);
+    lv_obj_t *btn_back = lv_button_create(s_snore_panel);
     lv_obj_set_size(btn_back, SCALE_DPX(180), SCALE_DPX(54));
     lv_obj_align(btn_back, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_add_event_cb(btn_back, meow_back_btn_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(btn_back, snore_back_btn_event_cb, LV_EVENT_ALL, NULL);
     lv_obj_set_style_radius(btn_back, SCALE_DPX(14), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(btn_back, lv_color_hex(0x1F2A44), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(btn_back, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -499,6 +474,273 @@ static void meow_build_screen(void)
     lv_label_set_text(lbl_back, "Back");
     lv_obj_add_style(lbl_back, &s_style_24, 0);
     lv_obj_center(lbl_back);
+}
+
+static void emergency_resolve_btn_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+
+    if (s_emergency_resolve_btn)
+        lv_obj_add_state(s_emergency_resolve_btn, LV_STATE_DISABLED);
+    if (s_emergency_resolve_label)
+        lv_label_set_text(s_emergency_resolve_label, "正在解除...");
+    if (s_emergency_hint)
+        lv_label_set_text(s_emergency_hint, "正在同步看护中心，请稍候");
+
+    xz_resolve_emergency_from_board();
+}
+
+static void emergency_build_screen(void)
+{
+    s_emergency_screen = lv_obj_create(NULL);
+    lv_obj_clear_flag(s_emergency_screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_emergency_screen, lv_color_hex(0x16090B), 0);
+
+    lv_obj_t *accent = lv_obj_create(s_emergency_screen);
+    lv_obj_clear_flag(accent, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(accent, LV_PCT(100), SCALE_DPX(14));
+    lv_obj_align(accent, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(accent, lv_color_hex(0xEF4444), 0);
+    lv_obj_set_style_border_width(accent, 0, 0);
+    lv_obj_set_style_radius(accent, 0, 0);
+
+    lv_obj_t *badge = lv_label_create(s_emergency_screen);
+    lv_label_set_text(badge, "SOS");
+    lv_obj_add_style(badge, &s_style_30, 0);
+    lv_obj_set_style_text_color(badge, lv_color_hex(0xFF6B6B), 0);
+    lv_obj_align(badge, LV_ALIGN_TOP_MID, 0, SCALE_DPX(58));
+
+    lv_obj_t *title = lv_label_create(s_emergency_screen);
+    lv_label_set_text(title, "紧急求助已触发");
+    lv_obj_add_style(title, &s_style_30, 0);
+    lv_obj_set_width(title, LV_PCT(90));
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, SCALE_DPX(120));
+
+    s_emergency_phrase = lv_label_create(s_emergency_screen);
+    lv_label_set_text(s_emergency_phrase, "检测到求助语音");
+    lv_obj_add_style(s_emergency_phrase, &s_style_24, 0);
+    lv_obj_set_width(s_emergency_phrase, LV_PCT(88));
+    lv_obj_set_style_text_color(s_emergency_phrase, lv_color_hex(0xFFD4D4), 0);
+    lv_obj_align(s_emergency_phrase, LV_ALIGN_TOP_MID, 0, SCALE_DPX(190));
+
+    s_emergency_hint = lv_label_create(s_emergency_screen);
+    lv_label_set_text(s_emergency_hint, "请先确认人员安全，再解除紧急状态");
+    lv_obj_add_style(s_emergency_hint, &s_style_20, 0);
+    lv_obj_set_width(s_emergency_hint, LV_PCT(90));
+    lv_obj_set_style_text_color(s_emergency_hint, lv_color_hex(0xD8B4B8), 0);
+    lv_obj_align(s_emergency_hint, LV_ALIGN_TOP_MID, 0, SCALE_DPX(255));
+
+    s_emergency_resolve_btn = lv_button_create(s_emergency_screen);
+    lv_obj_set_size(s_emergency_resolve_btn, SCALE_DPX(310), SCALE_DPX(68));
+    lv_obj_align(s_emergency_resolve_btn, LV_ALIGN_BOTTOM_MID, 0, -SCALE_DPX(55));
+    lv_obj_set_style_bg_color(s_emergency_resolve_btn, lv_color_hex(0xF8FAFC), 0);
+    lv_obj_set_style_radius(s_emergency_resolve_btn, SCALE_DPX(12), 0);
+    lv_obj_add_event_cb(s_emergency_resolve_btn, emergency_resolve_btn_event_cb, LV_EVENT_ALL, NULL);
+
+    s_emergency_resolve_label = lv_label_create(s_emergency_resolve_btn);
+    lv_label_set_text(s_emergency_resolve_label, "解除紧急状态");
+    lv_obj_add_style(s_emergency_resolve_label, &s_style_24, 0);
+    lv_obj_set_style_text_color(s_emergency_resolve_label, lv_color_hex(0x7F1D1D), 0);
+    lv_obj_center(s_emergency_resolve_label);
+}
+
+static void alarm_refresh_labels(void)
+{
+    if (s_alarm_time_label)
+        lv_label_set_text_fmt(s_alarm_time_label, "%02d:%02d",
+                              s_alarm_edit.hour, s_alarm_edit.minute);
+    if (s_alarm_toggle_label)
+        lv_label_set_text(s_alarm_toggle_label, s_alarm_edit.enabled ? "已启用" : "已关闭");
+    if (s_lbl_alarm)
+        lv_label_set_text_fmt(s_lbl_alarm, "闹钟 %02d:%02d",
+                              s_alarm_edit.hour, s_alarm_edit.minute);
+}
+
+static void alarm_open_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+    alarm_clock_get(&s_alarm_edit);
+    s_alarm_ringing = RT_FALSE;
+    if (!s_alarm_screen)
+        alarm_build_screen();
+    alarm_refresh_labels();
+    if (s_alarm_action_label)
+        lv_label_set_text(s_alarm_action_label, "保存并返回");
+    if (s_alarm_screen)
+        lv_screen_load(s_alarm_screen);
+}
+
+static void alarm_adjust_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+    int change = (int)(rt_base_t)lv_event_get_user_data(e);
+    if (change == -60 || change == 60)
+        s_alarm_edit.hour = (s_alarm_edit.hour + (change / 60) + 24) % 24;
+    else
+        s_alarm_edit.minute = (s_alarm_edit.minute + change + 60) % 60;
+    alarm_refresh_labels();
+}
+
+static void alarm_toggle_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+    s_alarm_edit.enabled = s_alarm_edit.enabled ? RT_FALSE : RT_TRUE;
+    alarm_refresh_labels();
+}
+
+static void alarm_action_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+        return;
+
+    (void)alarm_clock_set(&s_alarm_edit);
+    if (s_main_screen)
+        lv_screen_load(s_main_screen);
+}
+
+static void alarm_ring_dismiss_event_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_alarm_ringing)
+        return;
+
+    s_alarm_ringing = RT_FALSE;
+    if (s_alarm_ring_dismiss_btn)
+        lv_obj_add_state(s_alarm_ring_dismiss_btn, LV_STATE_DISABLED);
+    if (s_alarm_ring_dismiss_label)
+        lv_label_set_text(s_alarm_ring_dismiss_label, "正在关闭...");
+
+    alarm_clock_dismiss();
+    if (s_main_screen)
+        lv_screen_load(s_main_screen);
+}
+
+static lv_obj_t *alarm_create_button(lv_obj_t *parent,
+                                     const char *text,
+                                     lv_event_cb_t callback,
+                                     void *user_data)
+{
+    lv_obj_t *button = lv_button_create(parent);
+    lv_obj_set_size(button, SCALE_DPX(115), SCALE_DPX(58));
+    lv_obj_add_event_cb(button, callback, LV_EVENT_ALL, user_data);
+    lv_obj_set_style_radius(button, SCALE_DPX(10), 0);
+    lv_obj_t *label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_add_style(label, &s_style_24, 0);
+    lv_obj_center(label);
+    return button;
+}
+
+static void alarm_build_screen(void)
+{
+    s_alarm_screen = lv_obj_create(NULL);
+    lv_obj_clear_flag(s_alarm_screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_alarm_screen, lv_color_hex(0x071018), 0);
+
+    lv_obj_t *title = lv_label_create(s_alarm_screen);
+    lv_label_set_text(title, "每日闹钟");
+    lv_obj_add_style(title, &s_style_30, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, SCALE_DPX(42));
+
+    s_alarm_time_label = lv_label_create(s_alarm_screen);
+    lv_label_set_text(s_alarm_time_label, "07:00");
+    lv_obj_add_style(s_alarm_time_label, &s_style_30, 0);
+    lv_obj_set_style_text_color(s_alarm_time_label, lv_color_hex(0x7DD3FC), 0);
+    lv_obj_align(s_alarm_time_label, LV_ALIGN_TOP_MID, 0, SCALE_DPX(105));
+
+    lv_obj_t *hour_down = alarm_create_button(s_alarm_screen, "- 时",
+                                               alarm_adjust_event_cb, (void *)(rt_base_t)-60);
+    lv_obj_align(hour_down, LV_ALIGN_CENTER, -SCALE_DPX(190), -SCALE_DPX(25));
+    lv_obj_t *hour_up = alarm_create_button(s_alarm_screen, "+ 时",
+                                             alarm_adjust_event_cb, (void *)(rt_base_t)60);
+    lv_obj_align(hour_up, LV_ALIGN_CENTER, -SCALE_DPX(62), -SCALE_DPX(25));
+    lv_obj_t *minute_down = alarm_create_button(s_alarm_screen, "- 分",
+                                                 alarm_adjust_event_cb, (void *)(rt_base_t)-5);
+    lv_obj_align(minute_down, LV_ALIGN_CENTER, SCALE_DPX(66), -SCALE_DPX(25));
+    lv_obj_t *minute_up = alarm_create_button(s_alarm_screen, "+ 分",
+                                               alarm_adjust_event_cb, (void *)(rt_base_t)5);
+    lv_obj_align(minute_up, LV_ALIGN_CENTER, SCALE_DPX(194), -SCALE_DPX(25));
+
+    lv_obj_t *toggle = lv_button_create(s_alarm_screen);
+    lv_obj_set_size(toggle, SCALE_DPX(190), SCALE_DPX(58));
+    lv_obj_align(toggle, LV_ALIGN_CENTER, 0, SCALE_DPX(55));
+    lv_obj_add_event_cb(toggle, alarm_toggle_event_cb, LV_EVENT_ALL, NULL);
+    s_alarm_toggle_label = lv_label_create(toggle);
+    lv_label_set_text(s_alarm_toggle_label, "已关闭");
+    lv_obj_add_style(s_alarm_toggle_label, &s_style_24, 0);
+    lv_obj_center(s_alarm_toggle_label);
+
+    lv_obj_t *action = lv_button_create(s_alarm_screen);
+    lv_obj_set_size(action, SCALE_DPX(280), SCALE_DPX(62));
+    lv_obj_align(action, LV_ALIGN_BOTTOM_MID, 0, -SCALE_DPX(45));
+    lv_obj_add_event_cb(action, alarm_action_event_cb, LV_EVENT_ALL, NULL);
+    s_alarm_action_label = lv_label_create(action);
+    lv_label_set_text(s_alarm_action_label, "保存并返回");
+    lv_obj_add_style(s_alarm_action_label, &s_style_24, 0);
+    lv_obj_center(s_alarm_action_label);
+}
+
+static void alarm_ring_build_screen(void)
+{
+    s_alarm_ring_screen = lv_obj_create(NULL);
+    lv_obj_clear_flag(s_alarm_ring_screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(s_alarm_ring_screen, lv_color_hex(0x071018), 0);
+
+    lv_obj_t *accent = lv_obj_create(s_alarm_ring_screen);
+    lv_obj_remove_flag(accent, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(accent, LV_PCT(100), SCALE_DPX(12));
+    lv_obj_align(accent, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(accent, lv_color_hex(0xF59E0B), 0);
+    lv_obj_set_style_border_width(accent, 0, 0);
+    lv_obj_set_style_radius(accent, 0, 0);
+
+    lv_obj_t *badge = lv_label_create(s_alarm_ring_screen);
+    lv_label_set_text(badge, "ALARM");
+    lv_obj_add_style(badge, &s_style_24, 0);
+    lv_obj_set_style_text_color(badge, lv_color_hex(0xFBBF24), 0);
+    lv_obj_align(badge, LV_ALIGN_TOP_MID, 0, SCALE_DPX(46));
+
+    lv_obj_t *title = lv_label_create(s_alarm_ring_screen);
+    lv_label_set_text(title, "闹钟响了");
+    lv_obj_add_style(title, &s_style_30, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, SCALE_DPX(100));
+
+    s_alarm_ring_time_label = lv_label_create(s_alarm_ring_screen);
+    lv_label_set_text(s_alarm_ring_time_label, "07:00");
+    lv_obj_add_style(s_alarm_ring_time_label, &s_style_30, 0);
+    lv_obj_set_style_text_color(s_alarm_ring_time_label,
+                                lv_color_hex(0x7DD3FC), 0);
+    lv_obj_align(s_alarm_ring_time_label, LV_ALIGN_CENTER,
+                 0, -SCALE_DPX(28));
+
+    lv_obj_t *hint = lv_label_create(s_alarm_ring_screen);
+    lv_label_set_text(hint, "点击下方按钮停止闹钟");
+    lv_obj_add_style(hint, &s_style_20, 0);
+    lv_obj_set_style_text_color(hint, lv_color_hex(0xCBD5E1), 0);
+    lv_obj_align(hint, LV_ALIGN_CENTER, 0, SCALE_DPX(45));
+
+    s_alarm_ring_dismiss_btn = lv_button_create(s_alarm_ring_screen);
+    lv_obj_set_size(s_alarm_ring_dismiss_btn,
+                    SCALE_DPX(330), SCALE_DPX(76));
+    lv_obj_align(s_alarm_ring_dismiss_btn, LV_ALIGN_BOTTOM_MID,
+                 0, -SCALE_DPX(42));
+    lv_obj_set_style_bg_color(s_alarm_ring_dismiss_btn,
+                              lv_color_hex(0xF59E0B), 0);
+    lv_obj_set_style_radius(s_alarm_ring_dismiss_btn, SCALE_DPX(12), 0);
+    lv_obj_add_event_cb(s_alarm_ring_dismiss_btn,
+                        alarm_ring_dismiss_event_cb,
+                        LV_EVENT_ALL, NULL);
+
+    s_alarm_ring_dismiss_label = lv_label_create(s_alarm_ring_dismiss_btn);
+    lv_label_set_text(s_alarm_ring_dismiss_label, "关闭闹钟");
+    lv_obj_add_style(s_alarm_ring_dismiss_label, &s_style_24, 0);
+    lv_obj_set_style_text_color(s_alarm_ring_dismiss_label,
+                                lv_color_hex(0x111827), 0);
+    lv_obj_center(s_alarm_ring_dismiss_label);
 }
 
 /**
@@ -632,20 +874,59 @@ static rt_err_t ui_objects_init(void)
     lv_obj_set_style_text_color(s_label_info, lv_color_hex(0xffffff), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(s_label_info, LV_ALIGN_BOTTOM_MID, 0, 0);
 
-    /* Meow detect button (main screen) */
-    s_btn_meow = lv_button_create(screen);
-    lv_obj_set_size(s_btn_meow, SCALE_DPX(200), SCALE_DPX(56));
-    /* Place it above AP/SSID info area (as in the red box) */
-    lv_obj_align(s_btn_meow, LV_ALIGN_CENTER, 0, SCALE_DPX(120));
-    lv_obj_add_event_cb(s_btn_meow, meow_btn_event_cb, LV_EVENT_ALL, NULL);
+    /* Snore detect button (main screen) */
+    s_btn_snore = lv_button_create(screen);
+    lv_obj_set_size(s_btn_snore, SCALE_DPX(200), SCALE_DPX(56));
+    lv_obj_align(s_btn_snore, LV_ALIGN_CENTER, -SCALE_DPX(110), SCALE_DPX(120));
+    lv_obj_add_event_cb(s_btn_snore, snore_btn_event_cb, LV_EVENT_ALL, NULL);
 
-    s_lbl_meow = lv_label_create(s_btn_meow);
-    lv_label_set_text(s_lbl_meow, "Snore detect");
-    lv_obj_center(s_lbl_meow);
+    s_lbl_snore = lv_label_create(s_btn_snore);
+    lv_obj_add_style(s_lbl_snore, &s_style_20, 0);
+    lv_label_set_text(s_lbl_snore, "启动呼噜监测");
+    lv_obj_center(s_lbl_snore);
 
-    /* Force LED state to "stopped" at boot:
-     * red on, green off, blue off (active-low handled in driver). */
-    meow_detect_stop();
+    /* Compact live inference result. It remains visible while the main
+     * screen is active, including when snore guard was auto-started. */
+    s_snore_inference_badge = lv_obj_create(screen);
+    lv_obj_remove_flag(s_snore_inference_badge, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_snore_inference_badge,
+                    SCALE_DPX(300), SCALE_DPX(42));
+    lv_obj_align(s_snore_inference_badge, LV_ALIGN_CENTER,
+                 0, SCALE_DPX(66));
+    lv_obj_set_style_radius(s_snore_inference_badge, SCALE_DPX(8),
+                            LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(s_snore_inference_badge,
+                              lv_color_hex(0x172033),
+                              LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(s_snore_inference_badge, LV_OPA_COVER,
+                            LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(s_snore_inference_badge, 1,
+                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(s_snore_inference_badge,
+                                  lv_color_hex(0x3B4A68),
+                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(s_snore_inference_badge, 0,
+                             LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    s_snore_inference_label = lv_label_create(s_snore_inference_badge);
+    lv_obj_add_style(s_snore_inference_label, &s_style_20, 0);
+    lv_label_set_text(s_snore_inference_label, "SNORE  --  PAUSED");
+    lv_obj_set_width(s_snore_inference_label, LV_PCT(100));
+    lv_obj_set_style_text_align(s_snore_inference_label,
+                                LV_TEXT_ALIGN_CENTER,
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(s_snore_inference_label);
+
+    s_btn_alarm = lv_button_create(screen);
+    lv_obj_set_size(s_btn_alarm, SCALE_DPX(190), SCALE_DPX(56));
+    lv_obj_align(s_btn_alarm, LV_ALIGN_CENTER, SCALE_DPX(110), SCALE_DPX(120));
+    lv_obj_add_event_cb(s_btn_alarm, alarm_open_event_cb, LV_EVENT_ALL, NULL);
+    s_lbl_alarm = lv_label_create(s_btn_alarm);
+    lv_obj_add_style(s_lbl_alarm, &s_style_20, 0);
+    alarm_clock_get(&s_alarm_edit);
+    lv_label_set_text_fmt(s_lbl_alarm, "闹钟 %02d:%02d",
+                          s_alarm_edit.hour, s_alarm_edit.minute);
+    lv_obj_center(s_lbl_alarm);
 
     /* ADC label - positioned in top right */
     s_label_adc = lv_label_create(screen);
@@ -732,37 +1013,187 @@ static void ui_process_message(const ui_msg_t *msg)
         }
         break;
 
-    case UI_CMD_SET_MEOW_RESULT:
-        if (s_meow_label_result)
+    case UI_CMD_SET_SNORE_RESULT:
         {
-            /* msg->data format: "<0/1>,<score>" */
-            int det = 0;
+            /* data: model_positive,alert_triggered,suppressed,score */
+            int model_positive = 0;
+            int alert_triggered = 0;
+            int suppressed = 0;
             float score = 0.0f;
-            sscanf(msg->data, "%d,%f", &det, &score);
-            if (det)
+            int fields = sscanf(msg->data, "%d,%d,%d,%f",
+                                &model_positive, &alert_triggered,
+                                &suppressed, &score);
+
+            /* Accept the old "detected,score" format for compatibility. */
+            if (fields < 4)
             {
-                lv_label_set_text(s_meow_label_result, "SNORE DETECTED");
-                lv_obj_set_style_text_color(s_meow_label_result, lv_color_hex(0xff4040), LV_PART_MAIN | LV_STATE_DEFAULT);
-                if (s_meow_cat_canvas)
-                    lv_obj_clear_flag(s_meow_cat_canvas, LV_OBJ_FLAG_HIDDEN);
+                model_positive = 0;
+                score = 0.0f;
+                sscanf(msg->data, "%d,%f", &model_positive, &score);
+                alert_triggered = model_positive;
+                suppressed = 0;
+            }
+
+            if (s_snore_inference_label)
+            {
+                char summary[48];
+                const int percent = (int)(score * 100.0f + 0.5f);
+                const char *state = model_positive
+                    ? (suppressed ? "MUTED"
+                                  : (alert_triggered ? "ALARM"
+                                                     : "DETECTED"))
+                    : "NORMAL";
+                rt_snprintf(summary, sizeof(summary),
+                            "SNORE  %d%%  %s", percent, state);
+                lv_label_set_text(s_snore_inference_label, summary);
+                lv_obj_set_style_text_color(
+                    s_snore_inference_label,
+                    model_positive
+                        ? (suppressed ? lv_color_hex(0xFBBF24)
+                                      : lv_color_hex(0xFF5C5C))
+                        : lv_color_hex(0x67E8A5),
+                    LV_PART_MAIN | LV_STATE_DEFAULT);
+            }
+
+            if (s_snore_inference_badge)
+            {
+                lv_obj_set_style_border_color(
+                    s_snore_inference_badge,
+                    model_positive
+                        ? (suppressed ? lv_color_hex(0xF59E0B)
+                                      : lv_color_hex(0xEF4444))
+                        : lv_color_hex(0x22C55E),
+                    LV_PART_MAIN | LV_STATE_DEFAULT);
+            }
+
+            if (!s_snore_label_result)
+                break;
+
+            if (model_positive)
+            {
+                lv_label_set_text(s_snore_label_result,
+                                  suppressed
+                                      ? "SNORE DETECTED - MUTED"
+                                      : (alert_triggered
+                                             ? "SNORE ALARM"
+                                             : "SNORE DETECTED"));
+                lv_obj_set_style_text_color(
+                    s_snore_label_result,
+                    suppressed ? lv_color_hex(0xFBBF24)
+                               : lv_color_hex(0xff4040),
+                    LV_PART_MAIN | LV_STATE_DEFAULT);
+                if (s_snore_canvas)
+                    lv_obj_clear_flag(s_snore_canvas, LV_OBJ_FLAG_HIDDEN);
             }
             else
             {
-                lv_label_set_text(s_meow_label_result, "NO SNORE");
-                lv_obj_set_style_text_color(s_meow_label_result, lv_color_hex(0x888888), LV_PART_MAIN | LV_STATE_DEFAULT);
-                if (s_meow_cat_canvas)
-                    lv_obj_add_flag(s_meow_cat_canvas, LV_OBJ_FLAG_HIDDEN);
+                lv_label_set_text(s_snore_label_result, "NO SNORE");
+                lv_obj_set_style_text_color(s_snore_label_result, lv_color_hex(0x888888), LV_PART_MAIN | LV_STATE_DEFAULT);
+                if (s_snore_canvas)
+                    lv_obj_add_flag(s_snore_canvas, LV_OBJ_FLAG_HIDDEN);
             }
-            if (s_meow_label_score)
+            if (s_snore_label_score)
             {
                 char tmp[32];
                 rt_snprintf(tmp, sizeof(tmp), "score: %.2f", score);
-                lv_label_set_text(s_meow_label_score, tmp);
-                lv_obj_set_style_text_color(s_meow_label_score,
-                                            det ? lv_color_hex(0xffffff) : lv_color_hex(0x888888),
+                lv_label_set_text(s_snore_label_score, tmp);
+                lv_obj_set_style_text_color(s_snore_label_score,
+                                            model_positive ? lv_color_hex(0xffffff) : lv_color_hex(0x888888),
                                             LV_PART_MAIN | LV_STATE_DEFAULT);
             }
         }
+        break;
+
+    case UI_CMD_SET_SNORE_GUARD:
+        s_snore_mode = strcmp(msg->data, "enabled") == 0 ? RT_TRUE : RT_FALSE;
+        if (s_lbl_snore)
+            lv_label_set_text(s_lbl_snore, s_snore_mode ? "暂停呼噜监测" : "继续呼噜监测");
+        if (s_label_status)
+            lv_label_set_text(s_label_status, s_snore_mode ? "呼噜守护中" : "小智语音就绪");
+        if (s_snore_inference_label)
+        {
+            lv_label_set_text(s_snore_inference_label,
+                              s_snore_mode
+                                  ? "SNORE  --  ANALYZING"
+                                  : "SNORE  --  PAUSED");
+            lv_obj_set_style_text_color(
+                s_snore_inference_label,
+                s_snore_mode ? lv_color_hex(0x93C5FD)
+                             : lv_color_hex(0x94A3B8),
+                LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+        if (s_snore_inference_badge)
+        {
+            lv_obj_set_style_border_color(
+                s_snore_inference_badge,
+                s_snore_mode ? lv_color_hex(0x3B82F6)
+                             : lv_color_hex(0x3B4A68),
+                LV_PART_MAIN | LV_STATE_DEFAULT);
+        }
+        break;
+
+    case UI_CMD_SHOW_EMERGENCY:
+        if (!s_emergency_screen)
+            emergency_build_screen();
+        if (s_emergency_phrase)
+            lv_label_set_text_fmt(s_emergency_phrase, "检测到：%s", msg->data[0] ? msg->data : "求助语音");
+        if (s_emergency_hint)
+            lv_label_set_text(s_emergency_hint, "请先确认人员安全，再解除紧急状态");
+        if (s_emergency_resolve_label)
+            lv_label_set_text(s_emergency_resolve_label, "解除紧急状态");
+        if (s_emergency_resolve_btn)
+            lv_obj_remove_state(s_emergency_resolve_btn, LV_STATE_DISABLED);
+        if (s_emergency_screen)
+            lv_screen_load(s_emergency_screen);
+        break;
+
+    case UI_CMD_SET_EMERGENCY_RESOLUTION:
+        if (s_main_screen)
+            lv_screen_load(s_main_screen);
+        if (strcmp(msg->data, "success") == 0)
+        {
+            if (s_label_status)
+                lv_label_set_text(s_label_status, "紧急状态已解除");
+            if (s_label_output)
+                lv_label_set_text(s_label_output, "看护中心已记录处理结果");
+        }
+        else
+        {
+            if (s_label_status)
+                lv_label_set_text(s_label_status, "本地紧急状态已解除");
+            if (s_label_output)
+                lv_label_set_text(s_label_output, "看护中心同步失败");
+        }
+        break;
+
+    case UI_CMD_SHOW_ALARM_RING:
+        alarm_clock_get(&s_alarm_edit);
+        s_alarm_ringing = RT_TRUE;
+        if (!s_alarm_ring_screen)
+            alarm_ring_build_screen();
+        if (s_alarm_ring_time_label)
+            lv_label_set_text_fmt(s_alarm_ring_time_label, "%02d:%02d",
+                                  s_alarm_edit.hour, s_alarm_edit.minute);
+        if (s_alarm_ring_dismiss_btn)
+            lv_obj_remove_state(s_alarm_ring_dismiss_btn, LV_STATE_DISABLED);
+        if (s_alarm_ring_dismiss_label)
+            lv_label_set_text(s_alarm_ring_dismiss_label, "关闭闹钟");
+        if (s_alarm_ring_screen)
+            lv_screen_load(s_alarm_ring_screen);
+        break;
+
+    case UI_CMD_HIDE_ALARM_RING:
+        if (s_alarm_ringing)
+        {
+            s_alarm_ringing = RT_FALSE;
+            if (s_main_screen)
+                lv_screen_load(s_main_screen);
+        }
+        break;
+
+    case UI_CMD_REFRESH_ALARM:
+        alarm_clock_get(&s_alarm_edit);
+        alarm_refresh_labels();
         break;
 
     case UI_CMD_SET_ADC:
@@ -772,22 +1203,32 @@ static void ui_process_message(const ui_msg_t *msg)
         }
         break;
 
+    case UI_CMD_SET_ENVIRONMENT:
+        if (s_label_info && !s_snore_mode && !s_network_overlay_active)
+        {
+            lv_label_set_text(s_label_info, msg->data);
+        }
+        break;
+
     case UI_CMD_SET_EMOJI:
         ui_show_emoji(ui_find_emoji_index(msg->data));
         break;
 
     case UI_CMD_CLEAR_INFO:
+        s_network_overlay_active = RT_FALSE;
         if (s_label_info) lv_label_set_text(s_label_info, " ");
         if (s_label_output) lv_label_set_text(s_label_output, " ");
         break;
 
     case UI_CMD_SHOW_AP_INFO:
+        s_network_overlay_active = RT_TRUE;
         if (s_label_status) lv_label_set_text(s_label_status, "连接中...");
         if (s_label_info) lv_label_set_text(s_label_info, "使用手机或电脑连接热点");
         if (s_label_output) lv_label_set_text(s_label_output, "SSID: RT-Thread-AP 密码: 123456789 IP:192.168.169.1");
         break;
 
     case UI_CMD_SHOW_CONNECTING:
+        s_network_overlay_active = RT_TRUE;
         if (s_label_status) lv_label_set_text(s_label_status, "连接中...");
         if (s_label_info) lv_label_set_text(s_label_info, "正在连接已保存的WiFi...");
         if (s_label_output) lv_label_set_text(s_label_output, " ");
@@ -974,11 +1415,57 @@ void xiaozhi_ui_set_output(const char *output)
     ui_send_message(UI_CMD_SET_OUTPUT, output, "");
 }
 
-void xiaozhi_ui_set_meow_result(bool detected, float score)
+void xiaozhi_ui_set_snore_result(bool detected, float score)
 {
-    char tmp[32];
-    rt_snprintf(tmp, sizeof(tmp), "%d,%.3f", detected ? 1 : 0, score);
-    ui_send_message(UI_CMD_SET_MEOW_RESULT, tmp, "0,0.0");
+    xiaozhi_ui_set_snore_inference(detected, detected, false, score);
+}
+
+void xiaozhi_ui_set_snore_inference(bool model_positive,
+                                    bool alert_triggered,
+                                    bool alert_suppressed,
+                                    float score)
+{
+    char tmp[48];
+    rt_snprintf(tmp, sizeof(tmp), "%d,%d,%d,%.3f",
+                model_positive ? 1 : 0,
+                alert_triggered ? 1 : 0,
+                alert_suppressed ? 1 : 0,
+                score);
+    ui_send_message(UI_CMD_SET_SNORE_RESULT, tmp, "0,0,0,0.0");
+}
+
+void xiaozhi_ui_set_snore_guard_state(bool enabled)
+{
+    ui_send_message(UI_CMD_SET_SNORE_GUARD,
+                    enabled ? "enabled" : "paused",
+                    "paused");
+}
+
+void xiaozhi_ui_show_alarm_ring(void)
+{
+    ui_send_message(UI_CMD_SHOW_ALARM_RING, "ring", "ring");
+}
+
+void xiaozhi_ui_hide_alarm_ring(void)
+{
+    ui_send_message(UI_CMD_HIDE_ALARM_RING, "stop", "stop");
+}
+
+void xiaozhi_ui_refresh_alarm_clock(void)
+{
+    ui_send_message(UI_CMD_REFRESH_ALARM, "refresh", "refresh");
+}
+
+void xiaozhi_ui_show_emergency(const char *phrase)
+{
+    ui_send_message(UI_CMD_SHOW_EMERGENCY, phrase, "求助语音");
+}
+
+void xiaozhi_ui_set_emergency_resolution(bool success)
+{
+    ui_send_message(UI_CMD_SET_EMERGENCY_RESOLUTION,
+                    success ? "success" : "failed",
+                    "failed");
 }
 
 void xiaozhi_ui_set_emoji(const char *emoji)
@@ -989,6 +1476,41 @@ void xiaozhi_ui_set_emoji(const char *emoji)
 void xiaozhi_ui_set_adc(const char *adc_str)
 {
     ui_send_message(UI_CMD_SET_ADC, adc_str, "");
+}
+
+void xiaozhi_ui_set_environment(float temperature_c,
+                                float humidity_pct,
+                                bool valid,
+                                const char *status)
+{
+    char tmp[UI_MSG_DATA_SIZE];
+    const char *state = (status && status[0] != '\0') ? status : "UNKNOWN";
+
+    if (valid)
+    {
+        int temp_x10 = (temperature_c >= 0.0f) ?
+                       (int)(temperature_c * 10.0f + 0.5f) :
+                       (int)(temperature_c * 10.0f - 0.5f);
+        int humidity_x10 = (humidity_pct >= 0.0f) ?
+                           (int)(humidity_pct * 10.0f + 0.5f) :
+                           (int)(humidity_pct * 10.0f - 0.5f);
+        int temp_abs = temp_x10 < 0 ? -temp_x10 : temp_x10;
+        int humidity_abs = humidity_x10 < 0 ? -humidity_x10 : humidity_x10;
+
+        rt_snprintf(tmp, sizeof(tmp), "Env %s%d.%dC  %d.%d%%RH  %s",
+                    temp_x10 < 0 ? "-" : "",
+                    temp_abs / 10,
+                    temp_abs % 10,
+                    humidity_abs / 10,
+                    humidity_abs % 10,
+                    state);
+    }
+    else
+    {
+        rt_snprintf(tmp, sizeof(tmp), "Env sensor %s", state);
+    }
+
+    ui_send_message(UI_CMD_SET_ENVIRONMENT, tmp, "");
 }
 
 void xiaozhi_ui_clear_info(void)

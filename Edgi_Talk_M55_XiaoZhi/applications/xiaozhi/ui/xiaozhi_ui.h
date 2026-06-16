@@ -59,7 +59,43 @@ void xiaozhi_ui_set_output(const char *output);
  * @param detected True if snore detected
  * @param score Confidence score (0~1)
  */
-void xiaozhi_ui_set_meow_result(bool detected, float score);
+void xiaozhi_ui_set_snore_result(bool detected, float score);
+
+/**
+ * @brief Show the complete snore inference state on the board.
+ * @param model_positive True when the model score crosses its threshold
+ * @param alert_triggered True when the local care alarm was triggered
+ * @param alert_suppressed True when playback suppression blocked the alarm
+ * @param score Model confidence score (0~1)
+ */
+void xiaozhi_ui_set_snore_inference(bool model_positive,
+                                    bool alert_triggered,
+                                    bool alert_suppressed,
+                                    float score);
+
+/**
+ * @brief Update the main-screen snore guard button and state.
+ */
+void xiaozhi_ui_set_snore_guard_state(bool enabled);
+
+/**
+ * @brief Show the alarm ringing screen.
+ */
+void xiaozhi_ui_show_alarm_ring(void);
+void xiaozhi_ui_hide_alarm_ring(void);
+void xiaozhi_ui_refresh_alarm_clock(void);
+
+/**
+ * @brief Show the emergency state screen (thread-safe)
+ * @param phrase Matched emergency phrase
+ */
+void xiaozhi_ui_show_emergency(const char *phrase);
+
+/**
+ * @brief Finish the emergency resolve operation (thread-safe)
+ * @param success True when the backend accepted the resolution
+ */
+void xiaozhi_ui_set_emergency_resolution(bool success);
 
 /**
  * @brief Enter snore detect screen and start detection (for voice command)
@@ -69,7 +105,7 @@ void xiaozhi_ui_set_meow_result(bool detected, float score);
  * - 切换到打鼾检测界面
  * - 启动连续打鼾检测线程
  */
-void xiaozhi_ui_enter_meow_mode_from_voice(void);
+void xiaozhi_ui_enter_snore_mode_from_voice(void);
 
 /**
  * @brief Update emoji display
@@ -82,6 +118,18 @@ void xiaozhi_ui_set_emoji(const char *emoji);
  * @param adc_str ADC value string to display
  */
 void xiaozhi_ui_set_adc(const char *adc_str);
+
+/**
+ * @brief Update idle environment line
+ * @param temperature_c Temperature in Celsius
+ * @param humidity_pct Relative humidity percentage
+ * @param valid True if the reading is valid
+ * @param status Short status text (for example: OK, STALE, SENSOR_ERROR)
+ */
+void xiaozhi_ui_set_environment(float temperature_c,
+                                float humidity_pct,
+                                bool valid,
+                                const char *status);
 
 /**
  * @brief Clear info label (label2)

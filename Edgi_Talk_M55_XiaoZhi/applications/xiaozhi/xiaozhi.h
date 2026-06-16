@@ -203,9 +203,14 @@ void xz_speaker(int on);
 void xz_voice_suspend(void);
 void xz_voice_resume(void);
 
-/* Snore detection control (implemented in meow_detect_once.cpp) */
-int meow_detect_start(void);
-int meow_detect_stop(void);
+/* Snore detection control (implemented in snore_detect.cpp) */
+int snore_detect_start(void);
+int snore_detect_stop(void);
+int snore_detect_is_running(void);
+int snore_detect_pause_for_voice(void);
+int snore_detect_resume_after_voice(void);
+int xz_set_snore_guard_enabled(rt_bool_t enabled);
+rt_bool_t xz_is_snore_guard_enabled(void);
 void xz_audio_decoder_encoder_open(uint8_t is_websocket);
 void xz_audio_decoder_encoder_close(void);
 void xz_audio_downlink(uint8_t *data, uint32_t size, uint32_t *aes_value, uint8_t need_aes);
@@ -217,6 +222,13 @@ rt_bool_t xz_is_multi_turn_conversation_enabled(void);
 /* Audio notification functions */
 void xz_play_power_on_sound(void);
 void xz_play_wake_sound(void);
+void xz_trigger_care_alarm(void);
+void xz_trigger_emergency_event(const char *source,
+                                const char *phrase,
+                                const char *transcript);
+void xz_resolve_emergency_from_board(void);
+void xz_trigger_alarm_clock(void);
+void xz_stop_alarm_clock(void);
 
 #ifdef __cplusplus
 }

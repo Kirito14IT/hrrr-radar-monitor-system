@@ -2,11 +2,7 @@
   <div class="history-workspace care-page-shell">
     <section class="history-hero care-glass-card">
       <div>
-        <div class="care-kicker">Historical Vitals Intelligence</div>
-        <h1>历史数据与 AI 洞察</h1>
-        <p>
-          汇总雷达历史心率与呼吸率，保留跨页面 AI 分析过程，并将本地规则/DeepSeek 报告沉淀为可回看的健康摘要。
-        </p>
+        <h1>历史数据</h1>
       </div>
       <div class="hero-status" :class="analysisStatusClass">
         <span>{{ analysisStatusText }}</span>
@@ -16,7 +12,6 @@
 
     <div v-if="!userID" class="login-empty care-glass-card">
       <h2>请先登录以查看数据</h2>
-      <p>登录后可查询历史生命体征，并启动 AI / 本地健康分析。</p>
     </div>
 
     <template v-else>
@@ -48,7 +43,6 @@
         <article v-for="card in metricCards" :key="card.key" class="metric-card care-glass-card">
           <span>{{ card.title }}</span>
           <strong>{{ card.value }}</strong>
-          <small>{{ card.detail }}</small>
         </article>
       </section>
 
@@ -57,7 +51,6 @@
           <div class="section-heading">
             <div>
               <h2>历史生命体征记录</h2>
-              <p>心率与呼吸率已标记偏低、正常、偏高，便于快速定位异常样本。</p>
             </div>
             <el-tag effect="plain" type="info">共 {{ store.total }} 条</el-tag>
           </div>
@@ -116,7 +109,6 @@
           <div class="section-heading compact">
             <div>
               <h2>AI / 本地健康分析</h2>
-              <p>离开页面后分析仍会继续，返回本页可看到过程或结果。</p>
             </div>
           </div>
 
@@ -131,14 +123,12 @@
 
           <div v-if="store.aiLoading" class="analysis-loading">
             <el-skeleton :rows="7" animated />
-            <p>正在生成分析报告。此过程已经移入 Pinia store，路由切换不会中断页面状态。</p>
           </div>
           <div v-else-if="store.AiData" class="report-box">
             <pre>{{ store.AiData }}</pre>
           </div>
           <div v-else class="analysis-empty">
             <h3>尚未生成报告</h3>
-            <p>先查询历史记录，再点击“AI 分析”。未配置 DeepSeek key 时后端会自动返回本地规则分析。</p>
             <el-button type="primary" :disabled="store.tableData.length === 0" @click="runAiAnalysis">
               生成报告
             </el-button>

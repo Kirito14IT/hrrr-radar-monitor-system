@@ -5,7 +5,6 @@
       <span class="title">呼吸监测</span>
     </div>
 
-    <div class="subtitle">实时呼吸频率</div>
 
     <div class="data-row">
       <div class="value-group">

@@ -10,12 +10,15 @@
 
 #include "xiaozhi.h"
 #include "wake_word/xiaozhi_wakeword.h"
+#include "audio_capture_hub.h"
+#include "../backend_target_config.h"
 #include <lwip/apps/websocket_client.h>
 #include <cJSON.h>
 #include <netdev.h>
 #include <webclient.h>
 #include <wavplayer.h>
 #include <string.h>
+#include <stdio.h>
 
 #define DBG_TAG "xz.ws"
 #define DBG_LVL DBG_LOG
@@ -33,6 +36,14 @@
 #define BUTTON_DEBOUNCE_MS 20
 #define WAKEWORD_INIT_FLAG_RESET 0
 #define TTS_SENTENCE_TIMEOUT_MS 6000
+
+#ifndef DB_SEND_TARGET_IP
+#define DB_SEND_TARGET_IP "192.168.0.101"
+#endif
+
+#ifndef DB_SEND_TARGET_PORT
+#define DB_SEND_TARGET_PORT 8081
+#endif
 
 /* Global application state */
 xiaozhi_app_t g_app =
@@ -53,6 +64,11 @@ xiaozhi_app_t g_app =
         .tts_stop_workqueue = RT_NULL,
         .pending_listen_start = RT_FALSE,
         .pending_play_wake_sound = RT_FALSE};
+
+static volatile rt_bool_t g_snore_guard_enabled = RT_FALSE;
+static volatile rt_bool_t g_snore_guard_auto_started = RT_FALSE;
+static void xz_prepare_voice_input(void);
+static void xz_restore_idle_audio(void);
 
 #include "ui/xiaozhi_ui.h"
 #include "iot/iot_c_api.h"
@@ -136,12 +152,15 @@ void xz_wakeword_detected_callback(const char *wake_word, float confidence)
     g_app.pending_listen_start = RT_FALSE;
     g_app.pending_play_wake_sound = RT_FALSE;
 
-    /* Completely stop wake word detection during conversation to avoid mic0 conflict */
+    /* Pause wake-word inference during the cloud conversation. */
     if (xz_wakeword_is_enabled())
     {
-        LOG_D("Stopping wake word detection during conversation to free mic0");
+        LOG_D("Pausing wake word detection during conversation");
         xz_wakeword_stop();
     }
+
+    /* Snore detection keeps its independent audio-hub subscription. */
+    xz_prepare_voice_input();
 
     /* Enable microphone */
     xz_mic(1);
@@ -160,10 +179,7 @@ void xz_wakeword_detected_callback(const char *wake_word, float confidence)
         xz_mic(0);
         xiaozhi_ui_chat_status("   就绪");
         xiaozhi_ui_chat_output("就绪");
-        if (!xz_wakeword_is_enabled())
-        {
-            xz_wakeword_start();
-        }
+        xz_restore_idle_audio();
     }
 }
 
@@ -188,6 +204,7 @@ static void tts_stop_restart_listening(struct rt_work *work, void *work_data)
 
     /* Multi-turn conversation: keep listening without restarting wake word detection */
     g_app.state = kDeviceStateListening;
+    xz_prepare_voice_input();
     xz_mic(1);
 
     /* Try to send listen start */
@@ -203,6 +220,7 @@ static void tts_stop_restart_listening(struct rt_work *work, void *work_data)
         g_app.state = kDeviceStateIdle;
         xz_mic(0);
         xiaozhi_ui_chat_status("   就绪");
+        xz_restore_idle_audio();
         xiaozhi_ui_chat_output("就绪");
     }
 }
@@ -256,12 +274,7 @@ static void ensure_state_consistency(void)
             xiaozhi_ui_chat_status("   就绪");
             xiaozhi_ui_chat_output("就绪");
 
-            /* Restart wake word detection after state reset */
-            if (!xz_wakeword_is_enabled())
-            {
-                LOG_D("Restarting wake word detection after connection loss during listening");
-                xz_wakeword_start();
-            }
+            xz_restore_idle_audio();
         }
     }
 
@@ -275,12 +288,7 @@ static void ensure_state_consistency(void)
         xiaozhi_ui_chat_status("   休眠中");
         xiaozhi_ui_chat_output("等待唤醒");
 
-        /* Keep wake word detection running in sleep mode */
-        if (!xz_wakeword_is_enabled())
-        {
-            LOG_D("Starting wake word detection for sleep mode");
-            xz_wakeword_start();
-        }
+        xz_restore_idle_audio();
     }
 
     /* Optimize: if connected but state unknown, set to idle */
@@ -291,12 +299,7 @@ static void ensure_state_consistency(void)
         xiaozhi_ui_chat_status("   就绪");
         xiaozhi_ui_chat_output("就绪");
 
-        /* Ensure wake word detection is running when going to idle */
-        if (!xz_wakeword_is_enabled())
-        {
-            LOG_D("Starting wake word detection when entering idle state");
-            xz_wakeword_start();
-        }
+        xz_restore_idle_audio();
     }
 }
 
@@ -356,8 +359,17 @@ char *get_client_id(void)
 
 void xz_button_callback(void *arg)
 {
+    static rt_tick_t last_press_tick = 0;
+
     if (CYBSP_BTN_PRESSED == Cy_GPIO_Read(CYBSP_USER_BTN_PORT, CYBSP_USER_BTN_PIN))
     {
+        const rt_tick_t now = rt_tick_get();
+        if (last_press_tick != 0 &&
+            (rt_tick_t)(now - last_press_tick) < rt_tick_from_millisecond(500))
+        {
+            return;
+        }
+        last_press_tick = now;
         rt_event_send(g_app.button_event, BUTTON_EVENT_PRESSED);
     }
 #ifndef ExBoard_Voice
@@ -437,9 +449,16 @@ void xz_event_thread_entry(void *param)
                     }
 
                     /* Use auto-stop mode, let system detect speech end */
+                    xz_prepare_voice_input();
                     xz_mic(1);
-                    ws_send_listen_start(&g_app.ws.clnt, g_app.ws.session_id,
-                                         kListeningModeAutoStop);
+                    if (!ws_send_listen_start(&g_app.ws.clnt, g_app.ws.session_id,
+                                              kListeningModeAutoStop))
+                    {
+                        LOG_W("Listen start failed after user button press");
+                        g_app.state = kDeviceStateIdle;
+                        xz_mic(0);
+                        xz_restore_idle_audio();
+                    }
                 }
                 else
                 {
@@ -461,6 +480,7 @@ void xz_event_thread_entry(void *param)
             if (g_app.state == kDeviceStateSpeaking && g_app.multi_turn_conversation_enabled && g_app.ws.is_connected)
             {
                 g_app.state = kDeviceStateListening;
+                xz_prepare_voice_input();
                 xz_mic(1);
 
                 /* Try to send listen start */
@@ -476,6 +496,7 @@ void xz_event_thread_entry(void *param)
                     /* Reset state if failed */
                     g_app.state = kDeviceStateIdle;
                     xz_mic(0);
+                    xz_restore_idle_audio();
                 }
             }
             else if (!g_app.ws.is_connected)
@@ -586,12 +607,7 @@ void ws_send_listen_stop(void *ws, char *session_id)
                     g_app.state = kDeviceStateIdle;
                     LOG_D("State updated to Idle after successful send\n");
 
-                    /* Restart wake word detection after listen stop */
-                    if (!xz_wakeword_is_enabled())
-                    {
-                        LOG_D("Restarting wake word detection after listen stop");
-                        xz_wakeword_start();
-                    }
+                    xz_restore_idle_audio();
                 }
                 else
                 {
@@ -637,6 +653,433 @@ void ws_send_hello(void *ws)
     }
 }
 
+static const char *xz_find_emergency_phrase(const char *text)
+{
+    static const char *keywords[] = {
+        "救命",
+        "帮帮我",
+        "需要帮助",
+        "快来人",
+        "我不舒服",
+        "喘不过气",
+        "胸口痛",
+        "摔倒了",
+        "头晕",
+        "很难受",
+    };
+
+    if (!text)
+    {
+        return RT_NULL;
+    }
+
+    for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); ++i)
+    {
+        if (strstr(text, keywords[i]) != RT_NULL)
+        {
+            return keywords[i];
+        }
+    }
+
+    return RT_NULL;
+}
+
+static rt_thread_t g_emergency_alarm_tid = RT_NULL;
+static rt_tick_t g_emergency_alarm_last_tick = 0;
+static volatile rt_bool_t g_emergency_alarm_cancelled = RT_FALSE;
+static rt_thread_t g_care_alarm_tid = RT_NULL;
+static rt_tick_t g_care_alarm_last_tick = 0;
+static rt_thread_t g_alarm_clock_tid = RT_NULL;
+static volatile rt_bool_t g_alarm_clock_cancelled = RT_FALSE;
+
+static void xz_care_alarm_thread(void *parameter)
+{
+    (void)parameter;
+    const int previous_volume = wavplayer_volume_get();
+
+    xz_speaker(0);
+    audio_capture_hub_suppress_snore(RT_TRUE);
+    wavplayer_volume_set(35);
+
+    for (int repeat = 0; repeat < 2; ++repeat)
+    {
+        if (g_emergency_alarm_tid != RT_NULL)
+        {
+            break;
+        }
+
+        if (wavplayer_play((char *)"/webnet/ding.wav") != 0)
+        {
+            LOG_W("care alarm: failed to play alert sound");
+            break;
+        }
+
+        const rt_tick_t deadline = rt_tick_get() + rt_tick_from_millisecond(2500);
+        while (wavplayer_state_get() != PLAYER_STATE_STOPED &&
+               (rt_int32_t)(deadline - rt_tick_get()) > 0)
+        {
+            if (g_emergency_alarm_tid != RT_NULL)
+            {
+                wavplayer_stop();
+                break;
+            }
+            rt_thread_mdelay(20);
+        }
+
+        if (repeat == 0)
+        {
+            rt_thread_mdelay(1200);
+        }
+    }
+
+    if (g_emergency_alarm_tid == RT_NULL)
+    {
+        wavplayer_volume_set(previous_volume);
+    }
+    audio_capture_hub_suppress_snore(RT_FALSE);
+    LOG_I("care alarm: local audible reminder completed");
+    g_care_alarm_tid = RT_NULL;
+}
+
+void xz_trigger_care_alarm(void)
+{
+    const rt_tick_t now = rt_tick_get();
+    const rt_tick_t cooldown = rt_tick_from_millisecond(30000);
+
+    if (g_emergency_alarm_tid != RT_NULL || g_care_alarm_tid != RT_NULL)
+    {
+        LOG_I("care alarm: another alarm is already playing");
+        return;
+    }
+    if (g_care_alarm_last_tick != 0 &&
+        (rt_tick_t)(now - g_care_alarm_last_tick) < cooldown)
+    {
+        LOG_I("care alarm: duplicate trigger ignored");
+        return;
+    }
+
+    g_care_alarm_last_tick = now;
+    g_care_alarm_tid = rt_thread_create(
+        "carealm",
+        xz_care_alarm_thread,
+        RT_NULL,
+        2048,
+        18,
+        10);
+    if (g_care_alarm_tid == RT_NULL)
+    {
+        LOG_E("care alarm: thread create failed");
+        return;
+    }
+
+    rt_thread_startup(g_care_alarm_tid);
+}
+
+static void xz_emergency_alarm_thread(void *parameter)
+{
+    (void)parameter;
+    const int previous_volume = wavplayer_volume_get();
+
+    xz_speaker(0);
+    audio_capture_hub_suppress_snore(RT_TRUE);
+    wavplayer_volume_set(90);
+
+    for (int repeat = 0; repeat < 8; ++repeat)
+    {
+        if (g_emergency_alarm_cancelled)
+        {
+            break;
+        }
+
+        if (wavplayer_play((char *)"/webnet/ding.wav") != 0)
+        {
+            LOG_W("emergency alarm: failed to play alert sound");
+            break;
+        }
+
+        const rt_tick_t deadline = rt_tick_get() + rt_tick_from_millisecond(2500);
+        while (wavplayer_state_get() != PLAYER_STATE_STOPED &&
+               (rt_int32_t)(deadline - rt_tick_get()) > 0)
+        {
+            if (g_emergency_alarm_cancelled)
+            {
+                wavplayer_stop();
+                break;
+            }
+            rt_thread_mdelay(20);
+        }
+        rt_thread_mdelay(120);
+    }
+
+    wavplayer_volume_set(previous_volume);
+    audio_capture_hub_suppress_snore(RT_FALSE);
+    LOG_W("emergency alarm: local audible alert completed");
+    g_emergency_alarm_tid = RT_NULL;
+}
+
+static void xz_trigger_emergency_alarm(void)
+{
+    const rt_tick_t now = rt_tick_get();
+    const rt_tick_t cooldown = rt_tick_from_millisecond(8000);
+
+    if (g_care_alarm_tid != RT_NULL)
+    {
+        wavplayer_stop();
+    }
+    if (g_emergency_alarm_tid != RT_NULL)
+    {
+        LOG_I("emergency alarm: already playing");
+        return;
+    }
+    if (g_emergency_alarm_last_tick != 0 &&
+        (rt_tick_t)(now - g_emergency_alarm_last_tick) < cooldown)
+    {
+        LOG_I("emergency alarm: duplicate trigger ignored");
+        return;
+    }
+
+    g_emergency_alarm_last_tick = now;
+    g_emergency_alarm_cancelled = RT_FALSE;
+    g_emergency_alarm_tid = rt_thread_create(
+        "sosalm",
+        xz_emergency_alarm_thread,
+        RT_NULL,
+        2048,
+        17,
+        10);
+    if (g_emergency_alarm_tid == RT_NULL)
+    {
+        LOG_E("emergency alarm: thread create failed");
+        return;
+    }
+
+    rt_thread_startup(g_emergency_alarm_tid);
+}
+
+static void xz_alarm_clock_thread(void *parameter)
+{
+    (void)parameter;
+    const int previous_volume = wavplayer_volume_get();
+
+    xz_speaker(0);
+    audio_capture_hub_suppress_snore(RT_TRUE);
+    wavplayer_volume_set(96);
+    for (int repeat = 0; repeat < 24 && !g_alarm_clock_cancelled; ++repeat)
+    {
+        if (wavplayer_play((char *)"/webnet/ding.wav") != 0)
+        {
+            LOG_W("alarm clock: failed to play alert sound");
+            break;
+        }
+
+        const rt_tick_t deadline = rt_tick_get() + rt_tick_from_millisecond(2500);
+        while (wavplayer_state_get() != PLAYER_STATE_STOPED &&
+               (rt_int32_t)(deadline - rt_tick_get()) > 0)
+        {
+            if (g_alarm_clock_cancelled)
+            {
+                wavplayer_stop();
+                break;
+            }
+            rt_thread_mdelay(20);
+        }
+        rt_thread_mdelay(250);
+    }
+
+    wavplayer_volume_set(previous_volume);
+    audio_capture_hub_suppress_snore(RT_FALSE);
+    g_alarm_clock_tid = RT_NULL;
+    xiaozhi_ui_hide_alarm_ring();
+}
+
+void xz_trigger_alarm_clock(void)
+{
+    if (g_alarm_clock_tid != RT_NULL || g_emergency_alarm_tid != RT_NULL)
+    {
+        return;
+    }
+
+    g_alarm_clock_cancelled = RT_FALSE;
+    g_alarm_clock_tid = rt_thread_create(
+        "clockalm",
+        xz_alarm_clock_thread,
+        RT_NULL,
+        1536,
+        18,
+        10);
+    if (g_alarm_clock_tid != RT_NULL)
+    {
+        rt_thread_startup(g_alarm_clock_tid);
+    }
+}
+
+void xz_stop_alarm_clock(void)
+{
+    g_alarm_clock_cancelled = RT_TRUE;
+    if (g_alarm_clock_tid != RT_NULL)
+    {
+        wavplayer_stop();
+    }
+}
+
+static void xz_json_escape(char *dst, size_t dst_size, const char *src)
+{
+    if (!dst || dst_size == 0)
+    {
+        return;
+    }
+
+    size_t out = 0;
+    if (!src)
+    {
+        dst[0] = '\0';
+        return;
+    }
+
+    for (size_t i = 0; src[i] != '\0' && out + 1 < dst_size; ++i)
+    {
+        unsigned char ch = (unsigned char)src[i];
+        if ((ch == '"' || ch == '\\') && out + 2 < dst_size)
+        {
+            dst[out++] = '\\';
+            dst[out++] = (char)ch;
+        }
+        else if (ch < 0x20)
+        {
+            dst[out++] = ' ';
+        }
+        else
+        {
+            dst[out++] = (char)ch;
+        }
+    }
+    dst[out] = '\0';
+}
+
+static int xz_post_json_to_backend(const char *path, const char *json_body)
+{
+    if (!path || !json_body)
+    {
+        return -1;
+    }
+
+    char backend_host[BACKEND_TARGET_HOST_LEN] = {0};
+    int backend_port = DB_SEND_TARGET_PORT;
+    backend_target_get(DB_SEND_TARGET_IP, DB_SEND_TARGET_PORT,
+                       backend_host, sizeof(backend_host), &backend_port);
+
+    char url[128];
+    int url_len = snprintf(url, sizeof(url), "http://%s:%d%s", backend_host, backend_port, path);
+    if (url_len <= 0 || url_len >= (int)sizeof(url))
+    {
+        return -2;
+    }
+
+    const size_t body_len = strlen(json_body);
+    struct webclient_session *session = webclient_session_create(256);
+    if (!session)
+    {
+        return -3;
+    }
+
+    webclient_header_fields_add(session, "Content-Type: application/json\r\n");
+    webclient_header_fields_add(session, "Content-Length: %u\r\n", (unsigned)body_len);
+
+    int status = webclient_post(session, url, json_body, body_len);
+    webclient_close(session);
+    if (status < 200 || status >= 300)
+    {
+        LOG_W("emergency: post %s failed, status=%d", url, status);
+        return -4;
+    }
+
+    LOG_I("emergency: /emergency reported");
+    return 0;
+}
+
+static void xz_report_emergency_event(const char *source,
+                                      const char *phrase,
+                                      const char *transcript)
+{
+    char escaped_source[64];
+    char escaped_phrase[96];
+    char escaped_transcript[384];
+    char escaped_device[64];
+    xz_json_escape(escaped_source, sizeof(escaped_source),
+                   source ? source : "xiaozhi_voice_board");
+    xz_json_escape(escaped_phrase, sizeof(escaped_phrase), phrase);
+    xz_json_escape(escaped_transcript, sizeof(escaped_transcript), transcript);
+    xz_json_escape(escaped_device, sizeof(escaped_device), get_client_id());
+
+    char body[640];
+    int body_len = snprintf(body, sizeof(body),
+                            "{\"source\":\"%s\","
+                            "\"phrase\":\"%s\","
+                            "\"transcript\":\"%s\","
+                            "\"device_id\":\"%s\"}",
+                            escaped_source,
+                            escaped_phrase,
+                            escaped_transcript,
+                            escaped_device);
+    if (body_len <= 0 || body_len >= (int)sizeof(body))
+    {
+        LOG_W("emergency: body too long");
+        return;
+    }
+
+    if (xz_post_json_to_backend("/emergency", body) != 0)
+    {
+        LOG_W("emergency: report failed");
+    }
+}
+
+void xz_trigger_emergency_event(const char *source,
+                                const char *phrase,
+                                const char *transcript)
+{
+    const char *display_phrase = phrase ? phrase : "检测到异常情况";
+    const char *event_transcript = transcript ? transcript : display_phrase;
+
+    LOG_W("emergency event triggered: source=%s phrase=%s",
+          source ? source : "xiaozhi_voice_board",
+          display_phrase);
+    xiaozhi_ui_show_emergency(display_phrase);
+    xz_trigger_emergency_alarm();
+    xz_report_emergency_event(source, display_phrase, event_transcript);
+}
+
+static void xz_resolve_emergency_thread(void *parameter)
+{
+    (void)parameter;
+    const char *body =
+        "{\"source\":\"xiaozhi_voice_board\","
+        "\"resolution_note\":\"已在开发板确认并解除紧急状态\","
+        "\"resolved_by\":\"xiaozhi_voice_board\"}";
+    const int result = xz_post_json_to_backend("/emergency/resolve", body);
+    xiaozhi_ui_set_emergency_resolution(result == 0);
+}
+
+void xz_resolve_emergency_from_board(void)
+{
+    g_emergency_alarm_cancelled = RT_TRUE;
+    wavplayer_stop();
+    xiaozhi_ui_set_emergency_resolution(true);
+
+    rt_thread_t tid = rt_thread_create(
+        "sosresolve",
+        xz_resolve_emergency_thread,
+        RT_NULL,
+        3072,
+        18,
+        10);
+    if (tid == RT_NULL)
+    {
+        LOG_E("emergency resolve: thread create failed");
+        return;
+    }
+    rt_thread_startup(tid);
+}
+
 void xz_audio_send_using_websocket(uint8_t *data, int len)
 {
     if (g_app.ws.is_connected)
@@ -668,6 +1111,17 @@ void xz_audio_send_using_websocket(uint8_t *data, int len)
     }
 }
 
+static void xz_auto_start_snore_guard(void *parameter)
+{
+    (void)parameter;
+    rt_thread_mdelay(800);
+    if (g_app.ws.is_connected && !g_snore_guard_auto_started)
+    {
+        g_snore_guard_auto_started = RT_TRUE;
+        (void)xz_set_snore_guard_enabled(RT_TRUE);
+    }
+}
+
 err_t my_wsapp_fn(int code, char *buf, size_t len)
 {
     switch (code)
@@ -678,6 +1132,20 @@ err_t my_wsapp_fn(int code, char *buf, size_t len)
         {
             g_app.ws.is_connected = 1;
             rt_sem_release(g_app.ws.sem);
+            if (!g_snore_guard_auto_started)
+            {
+                rt_thread_t tid = rt_thread_create(
+                    "snoreauto",
+                    xz_auto_start_snore_guard,
+                    RT_NULL,
+                    1536,
+                    20,
+                    10);
+                if (tid != RT_NULL)
+                {
+                    rt_thread_startup(tid);
+                }
+            }
         }
         break;
     case WS_DISCONNECT:
@@ -722,6 +1190,7 @@ err_t my_wsapp_fn(int code, char *buf, size_t len)
 
         /* Ensure mic is closed when entering sleep */
         xz_mic(0);
+        xz_restore_idle_audio();
 
         /* Stop TTS sentence end timer if running */
         if (g_app.tts_sentence_end_timer)
@@ -741,7 +1210,7 @@ err_t my_wsapp_fn(int code, char *buf, size_t len)
         g_app.ws.is_connected = 0;
         g_app.state = kDeviceStateUnknown;
 
-        /* Ensure wake word detection is running in sleep mode */
+        /* Restore the configured idle audio owner. */
         if (!xz_wakeword_is_enabled())
         {
             LOG_I("Starting wake word detection after disconnection");
@@ -981,7 +1450,7 @@ extern "C" {
 
 void xz_voice_suspend(void)
 {
-    /* Stop microphone capture first to avoid conflicts on mic0 */
+    /* Disable voice upload while leaving the shared capture hub running. */
     xz_mic(0);
 
     if (xz_wakeword_is_enabled())
@@ -989,7 +1458,7 @@ void xz_voice_suspend(void)
         xz_wakeword_stop();
     }
 
-    LOG_I("voice: suspended (wakeword off, mic0 off)");
+    LOG_I("voice: subscriber off, wakeword off");
 }
 
 void xz_voice_resume(void)
@@ -1000,6 +1469,63 @@ void xz_voice_resume(void)
     }
 
     LOG_I("voice: resumed (wakeword on)");
+}
+
+} /* extern "C" */
+
+static void xz_prepare_voice_input(void)
+{
+    if (xz_wakeword_is_enabled())
+    {
+        xz_wakeword_stop();
+    }
+    LOG_I("audio hub: voice starting, snore subscriber unchanged");
+}
+
+static void xz_restore_idle_audio(void)
+{
+    xz_mic(0);
+    if (!xz_wakeword_is_enabled())
+    {
+        xz_wakeword_start();
+    }
+    xiaozhi_ui_set_snore_guard_state(g_snore_guard_enabled ? true : false);
+    LOG_I("audio hub: idle wakeword restored, snore subscriber unchanged");
+}
+
+extern "C" {
+
+int xz_set_snore_guard_enabled(rt_bool_t enabled)
+{
+    if (enabled)
+    {
+        if (g_snore_guard_enabled && snore_detect_is_running())
+        {
+            xiaozhi_ui_set_snore_guard_state(true);
+            return RT_EOK;
+        }
+
+        g_snore_guard_enabled = RT_TRUE;
+        if (snore_detect_start() != RT_EOK)
+        {
+            g_snore_guard_enabled = RT_FALSE;
+            xiaozhi_ui_set_snore_guard_state(false);
+            return -RT_ERROR;
+        }
+    }
+    else
+    {
+        g_snore_guard_enabled = RT_FALSE;
+        snore_detect_stop();
+    }
+
+    xiaozhi_ui_set_snore_guard_state(g_snore_guard_enabled ? true : false);
+    return RT_EOK;
+}
+
+rt_bool_t xz_is_snore_guard_enabled(void)
+{
+    return g_snore_guard_enabled;
 }
 
 } /* extern "C" */
@@ -1210,6 +1736,7 @@ void Message_handle(const uint8_t *data, uint16_t len)
             }
 
             g_app.state = kDeviceStateListening;
+            xz_prepare_voice_input();
             xz_mic(1);
             if (ws_send_listen_start(&g_app.ws.clnt, g_app.ws.session_id, kListeningModeAutoStop))
             {
@@ -1223,10 +1750,7 @@ void Message_handle(const uint8_t *data, uint16_t len)
                 xz_mic(0);
                 xiaozhi_ui_chat_status("   就绪");
                 xiaozhi_ui_chat_output("就绪");
-                if (!xz_wakeword_is_enabled())
-                {
-                    xz_wakeword_start();
-                }
+                xz_restore_idle_audio();
             }
         }
     }
@@ -1242,12 +1766,7 @@ void Message_handle(const uint8_t *data, uint16_t len)
 
         /* Reset the initialization flag for next session */
         g_app.wakeword_initialized_session = 0;
-        /* Keep wake word detection running in sleep mode for wake-up */
-        if (!xz_wakeword_is_enabled())
-        {
-            LOG_I("Starting wake word detection for sleep mode");
-            xz_wakeword_start();
-        }
+        xz_restore_idle_audio();
     }
     else if (strcmp(type, "tts") == 0)
     {
@@ -1315,6 +1834,7 @@ void Message_handle(const uint8_t *data, uint16_t len)
                     LOG_W("Delay timer not available, restarting listening immediately");
                     /* Fallback: restart immediately */
                     g_app.state = kDeviceStateListening;
+                    xz_prepare_voice_input();
                     xz_mic(1);
                     if (ws_send_listen_start(&g_app.ws.clnt, g_app.ws.session_id, kListeningModeAutoStop))
                     {
@@ -1328,24 +1848,13 @@ void Message_handle(const uint8_t *data, uint16_t len)
                         xz_mic(0);
                         xiaozhi_ui_chat_status("   就绪");
                         xiaozhi_ui_chat_output("就绪");
+                        xz_restore_idle_audio();
                     }
                 }
             }
             else
             {
-                /* Single-turn conversation: restart wake word detection after conversation ends */
-                if (!xz_wakeword_is_enabled())
-                {
-                    LOG_I("Restarting wake word detection after conversation ends");
-                    if (xz_wakeword_start() == 0)
-                    {
-                        LOG_I("Wake word detection re-enabled successfully after conversation");
-                    }
-                    else
-                    {
-                        LOG_E("Failed to re-enable wake word detection after conversation");
-                    }
-                }
+                xz_restore_idle_audio();
             }
         }
         else if (strcmp(state, "sentence_start") == 0)
@@ -1415,12 +1924,21 @@ void Message_handle(const uint8_t *data, uint16_t len)
         const char *text = (text_item && cJSON_IsString(text_item)) ? text_item->valuestring : RT_NULL;
         LOG_I("stt:%s", text ? text : "(null)");
 
+        const char *emergency_phrase = xz_find_emergency_phrase(text);
+        if (emergency_phrase)
+        {
+            LOG_W("stt emergency phrase detected: %s", emergency_phrase);
+            xz_trigger_emergency_event("xiaozhi_voice_board",
+                                       emergency_phrase,
+                                       text);
+        }
+
         /* 本地关键字：通过语音打开打鼾检测系统
          * 例如：”小智，请打开打鼾检测系统”、”打开打鼾检测”等。 */
         if (text && strstr(text, "打开打鼾检测") != RT_NULL)
         {
             LOG_I("stt command: open snore detector via voice");
-            xiaozhi_ui_enter_meow_mode_from_voice();
+            xiaozhi_ui_enter_snore_mode_from_voice();
         }
     }
     else if (strcmp(type, "iot") == 0)
@@ -1752,6 +2270,7 @@ rt_bool_t xz_is_multi_turn_conversation_enabled(void)
 void xz_play_power_on_sound(void)
 {
     LOG_I("Playing power-on sound");
+    audio_capture_hub_suppress_snore_for(5000);
     if (wavplayer_play("/webnet/power_on.wav") != 0)
     {
         LOG_W("Failed to play power-on sound");
@@ -1761,6 +2280,7 @@ void xz_play_power_on_sound(void)
 void xz_play_wake_sound(void)
 {
     LOG_D("Playing wake sound");
+    audio_capture_hub_suppress_snore_for(3000);
     if (wavplayer_play("/webnet/ding.wav") != 0)
     {
         LOG_W("Failed to play wake sound");

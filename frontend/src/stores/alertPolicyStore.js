@@ -6,6 +6,10 @@ const defaultPolicy = () => ({
   breathLow: 10,
   breathHigh: 24,
   snoreThreshold: 55,
+  temperatureLow: 18,
+  temperatureHigh: 28,
+  humidityLow: 40,
+  humidityHigh: 70,
   offlineSeconds: 8,
   acknowledgedKeys: []
 })

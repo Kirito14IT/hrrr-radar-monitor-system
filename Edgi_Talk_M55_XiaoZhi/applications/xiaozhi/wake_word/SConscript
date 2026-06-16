@@ -3,6 +3,7 @@ import os
 
 cwd = GetCurrentDir()
 xiaozhi_dir = os.path.dirname(cwd)
+app_dir = os.path.abspath(os.path.join(cwd, '..', '..'))
 
 # Edge Impulse SDK paths
 edge_impulse_dir = xiaozhi_dir + '/../../../edge-impulse'
@@ -12,6 +13,7 @@ EI_SDK_PATH = edge_impulse_dir + '/edge-impulse-sdk'
 path = []
 # xiaozhi paths
 path += [xiaozhi_dir, xiaozhi_dir + '/ui']
+path += [app_dir]
 # edge-impulse paths
 path += [edge_impulse_dir, edge_impulse_dir + '/model-parameters']
 path += [EI_SDK_PATH + '/classifier', EI_SDK_PATH + '/dsp', EI_SDK_PATH + '/porting']

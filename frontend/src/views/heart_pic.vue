@@ -12,11 +12,14 @@
         <span class="status-pill" :class="{ online: statusState.radar_board_online }">
           雷达开发板：{{ statusState.radar_board_online ? '在线' : '离线' }}
         </span>
-        <span class="status-pill" :class="{ online: statusState.snore_board_online }">
-          呼噜开发板：{{ statusState.snore_board_online ? '在线' : '离线' }}
+        <span class="status-pill" :class="{ online: edgiBoardOnline, warning: edgiBoardNeedsAttention }">
+          Edgi E84：{{ edgiBoardStatusText }}
         </span>
         <span class="status-pill" :class="{ warning: statusState.snore_detected }">
-          呼噜事件：{{ statusState.snore_detected ? '最近检测到' : '暂无' }}
+          呼噜：{{ statusState.snore_detected ? '检测到' : '正常' }}
+        </span>
+        <span v-if="statusState.emergency_active" class="status-pill emergency">
+          紧急求助
         </span>
       </div>
     </div>
@@ -25,30 +28,21 @@
       <div class="device-card care-glass-card" :class="{ online: statusState.radar_board_online }">
         <div class="device-title">毫米波雷达开发板</div>
         <div class="device-value">{{ radarDeviceValue }}</div>
-        <div class="device-meta">数据来源：心率、呼吸率、距离、相位波形</div>
         <div v-if="statusState.radar_board_online" class="device-meta">
           {{ radarDistanceText }}
         </div>
         <div class="device-meta">
-          帧号 {{ statusState.last_radar_frame_number || 0 }} · 最近 {{ formatAge(statusState.radar_age_seconds) }}
-        </div>
-        <div v-if="!statusState.radar_board_online" class="device-hint">
-          后端运行：python backend\realtime_radar_processing.py --port 9988 --api-port 8081 --no-presence
+          帧 {{ statusState.last_radar_frame_number || 0 }} · {{ formatAge(statusState.radar_age_seconds) }}
         </div>
       </div>
 
       <div class="device-card care-glass-card" :class="{ online: statusState.snore_board_online, warning: statusState.snore_detected }">
-        <div class="device-title">呼噜检测模拟板</div>
+        <div class="device-title">Edgi E84 呼噜检测开发板</div>
         <div class="device-value">
-          分数 {{ statusState.snore_score.toFixed(2) }} · 音频 {{ statusState.audio_upload_count || 0 }} 次
+          {{ snoreMonitorText }}
         </div>
-        <div class="device-meta">数据来源：每秒呼噜特征 + 每 10 秒一个 10 秒音频片段</div>
         <div class="device-meta">
-          当前音量 {{ formatDbfs(statusState.snore_dbfs) }} · 最近心跳 {{ formatAge(statusState.snore_age_seconds) }}
-        </div>
-        <div class="device-meta">最近音频 {{ formatAudioTime(statusState.last_audio_received_at) }}</div>
-        <div v-if="!statusState.snore_board_online" class="device-hint">
-          呼噜板上传：POST http://电脑IP:8081/audio
+          {{ formatDbfs(statusState.snore_dbfs) }} · {{ formatAge(statusState.snore_age_seconds) }}
         </div>
       </div>
     </div>
@@ -57,23 +51,28 @@
       <div class="snore-wave-info">
         <div class="device-title">呼噜声浪监测</div>
         <div class="snore-wave-value">{{ snorePercent.toFixed(0) }}%</div>
-        <div class="device-meta">
-          {{ statusState.snore_board_online ? '声浪随呼噜检测板每秒特征实时变化' : '呼噜检测板离线，声浪暂停' }}
+      </div>
+      <div class="snore-live-panel">
+        <div class="sound-bars" aria-label="snore sound bars">
+          <span
+            v-for="bar in snoreBars"
+            :key="bar.index"
+            class="sound-bar"
+            :class="{ hot: statusState.snore_detected }"
+            :style="{ height: `${bar.height}%`, opacity: bar.opacity }"
+          ></span>
+        </div>
+        <div class="snore-wave-readout">
+          <span>{{ formatDbfs(statusState.snore_dbfs) }}</span>
+          <span>分数 {{ statusState.snore_score.toFixed(2) }}</span>
+          <span>{{ statusState.snore_detected ? '检测到呼噜' : '未检测到明显呼噜' }}</span>
         </div>
       </div>
-      <div class="sound-bars" aria-label="snore sound bars">
-        <span
-          v-for="bar in snoreBars"
-          :key="bar.index"
-          class="sound-bar"
-          :class="{ hot: statusState.snore_detected }"
-          :style="{ height: `${bar.height}%`, opacity: bar.opacity }"
-        ></span>
-      </div>
-      <div class="snore-wave-readout">
-        <span>dbFS：{{ formatDbfs(statusState.snore_dbfs) }}</span>
-        <span>snore_score：{{ statusState.snore_score.toFixed(2) }}</span>
-        <span>{{ statusState.snore_detected ? '检测到呼噜' : '未检测到明显呼噜' }}</span>
+      <div class="snore-trend-panel">
+        <div class="snore-trend-title">
+          <span class="dot orange"></span> 呼噜强度趋势
+        </div>
+        <div id="snore-chart" class="snore-inline-chart"></div>
       </div>
     </div>
 
@@ -98,8 +97,7 @@
     <div class="charts-layout">
       <div class="module-card care-glass-card">
         <div class="chart-header">
-          <span class="dot red"></span> 心率趋势 (Heart Rate)
-          <span class="chart-subtitle">共享真实时间轴</span>
+          <span class="dot red"></span> 心率趋势
         </div>
         <div id="heart-chart" class="chart-box"></div>
         <div class="monitor-box">
@@ -109,8 +107,7 @@
 
       <div class="module-card care-glass-card">
         <div class="chart-header">
-          <span class="dot blue"></span> 呼吸趋势 (Breath Rate)
-          <span class="chart-subtitle">与心率逐秒对齐</span>
+          <span class="dot blue"></span> 呼吸趋势
         </div>
         <div id="breath-chart" class="chart-box"></div>
         <div class="monitor-box">
@@ -118,16 +115,6 @@
         </div>
       </div>
 
-      <div class="module-card snore-chart-card care-glass-card">
-        <div class="chart-header">
-          <span class="dot orange"></span> 呼噜强度趋势 (Snore Level)
-          <span class="chart-subtitle">与心率/呼吸同一时间轴</span>
-        </div>
-        <div id="snore-chart" class="chart-box compact"></div>
-        <div class="snore-note">
-          呼噜图使用 0-100% 强度，离线时断线；心率/呼吸率仍由雷达板独立提供。
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -152,6 +139,8 @@ const soundTick = ref(0)
 const statusState = reactive({
   radar_board_online: false,
   snore_board_online: false,
+  snore_monitoring: false,
+  snore_paused: false,
   audio_upload_count: 0,
   snore_detected: false,
   snore_score: 0,
@@ -161,16 +150,26 @@ const statusState = reactive({
   last_radar_frame_number: 0,
   radar_age_seconds: null,
   snore_age_seconds: null,
+  environment_board_online: false,
+  voice_board_online: false,
+  edgi_board_online: false,
+  emergency_active: false,
+  active_emergency: null,
+  environment_age_seconds: null,
+  temperature_c: null,
+  humidity_pct: null,
+  comfort_status: 'offline',
+  last_environment_heartbeat_at: null,
   target_distance: null,
   target_bin: null
 })
 
 const insight = reactive({
   sleepStage: '等待数据',
-  sleepReason: '启动模拟开发板后，这里会根据心率、呼吸率和呼噜分数估计状态。',
+  sleepReason: '启动真实开发板后，这里会根据心率、呼吸率和呼噜分数估计状态。',
   snoreLabel: '暂无事件',
   snoreImpact: '最近 3 分钟未检测到呼噜事件。',
-  summary: '等待雷达模拟板和呼噜检测模拟板上线。',
+  summary: '等待雷达开发板和 Edgi E84 开发板上线。',
   latestTime: ''
 })
 
@@ -200,6 +199,34 @@ const radarDistanceText = computed(() => {
   if (!isNumber(distance) || distance <= 0) return '目标距离：等待处理'
   const bin = statusState.target_bin === null || statusState.target_bin === undefined ? '--' : statusState.target_bin
   return `目标距离：${Number(distance).toFixed(2)} 米 · bin ${bin}`
+})
+
+const edgiBoardOnline = computed(() => (
+  statusState.edgi_board_online ||
+  statusState.environment_board_online ||
+  statusState.snore_board_online ||
+  statusState.voice_board_online
+))
+
+const edgiBoardNeedsAttention = computed(() => {
+  return Boolean(edgiBoardOnline.value && (
+    statusState.snore_detected ||
+    statusState.emergency_active
+  ))
+})
+
+const edgiBoardStatusText = computed(() => {
+  if (!edgiBoardOnline.value) return '离线'
+  if (statusState.emergency_active) return '紧急状态'
+  if (statusState.snore_monitoring || statusState.snore_board_online) return '在线 · 呼噜监测中'
+  return statusState.snore_paused ? '在线 · 呼噜已暂停' : '在线'
+})
+
+const snoreMonitorText = computed(() => {
+  if (statusState.snore_monitoring || statusState.snore_board_online) {
+    return `呼噜分数 ${statusState.snore_score.toFixed(2)}`
+  }
+  return edgiBoardOnline.value ? '监测已暂停' : '等待开发板'
 })
 
 const snoreBars = computed(() => {
@@ -238,7 +265,7 @@ const buildOption = (color, unit, yMax = null) => ({
     type: 'category',
     boundaryGap: false,
     data: [],
-    axisLabel: { color: readToken('--care-muted', '#8c8c8c'), fontSize: 11 },
+    axisLabel: { color: readToken('--care-muted', '#8c8c8c'), fontSize: 13 },
     axisLine: { lineStyle: { color: readToken('--care-border-soft', '#d9d9d9') } }
   },
   yAxis: {
@@ -247,7 +274,7 @@ const buildOption = (color, unit, yMax = null) => ({
     max: yMax,
     min: yMax === null ? null : 0,
     splitLine: { lineStyle: { color: readToken('--care-grid-line-soft', '#eee'), type: 'dashed' } },
-    axisLabel: { color: readToken('--care-muted', '#8c8c8c') }
+    axisLabel: { color: readToken('--care-muted', '#8c8c8c'), fontSize: 13 }
   },
   series: [{
     type: 'line',
@@ -349,6 +376,10 @@ const updateInsights = (rows) => {
   currentBreathRate.value = radarValid ? latest.breath_rate : null
   statusState.target_distance = isNumber(latest.target_distance) ? Number(latest.target_distance) : statusState.target_distance
   statusState.target_bin = latest.target_bin ?? statusState.target_bin
+  statusState.environment_board_online = !!latest.environment_online
+  statusState.temperature_c = isNumber(latest.temperature_c) ? Number(latest.temperature_c) : statusState.temperature_c
+  statusState.humidity_pct = isNumber(latest.humidity_pct) ? Number(latest.humidity_pct) : statusState.humidity_pct
+  statusState.comfort_status = latest.comfort_status || statusState.comfort_status
   isUserPresent.value = radarOnline
   insight.latestTime = formatTimeLabel(latest.timestamp)
   insight.sleepStage = latest.sleep_stage || '等待数据'
@@ -356,8 +387,8 @@ const updateInsights = (rows) => {
   if (!latest.radar_online) {
     insight.sleepReason = '雷达开发板离线或无人，心率/呼吸图表会断线，不再用 0 伪装成真实数据。'
     insight.summary = latest.snore_online
-      ? '雷达开发板未连接；呼噜板仍在线，所以声浪和呼噜强度趋势仍可继续显示。'
-      : '雷达开发板和呼噜检测板都未连接。'
+      ? '雷达开发板未连接；Edgi E84 仍在线，所以声浪和呼噜强度趋势仍可继续显示。'
+      : '雷达开发板和 Edgi E84 都未连接。'
   } else if (!radarValid) {
     const distanceText = isNumber(latest.target_distance) && latest.target_distance > 0
       ? `，目标距离 ${Number(latest.target_distance).toFixed(2)} 米`
@@ -369,7 +400,7 @@ const updateInsights = (rows) => {
     insight.summary = `当前心率 ${latest.heart_rate} BPM，呼吸 ${latest.breath_rate} RPM，伴随呼噜事件。`
   } else {
     insight.sleepReason = `基于当前心率 ${latest.heart_rate} BPM、呼吸 ${latest.breath_rate} RPM、呼噜分数 ${Number(latest.snore_score || 0).toFixed(2)} 估计。`
-    insight.summary = '心率、呼吸率、呼噜强度三张图共用同一批秒级时间戳，事件时间点对齐。'
+    insight.summary = '心率、呼吸率和呼噜强度共用同一批秒级时间戳；温湿度请在睡眠环境分析页面查看。'
   }
 
   let lastSnoreIndex = -1
@@ -379,8 +410,8 @@ const updateInsights = (rows) => {
   if (lastSnoreIndex < 0) {
     insight.snoreLabel = '暂无事件'
     insight.snoreImpact = latest.snore_online
-      ? '呼噜检测板在线，但最近时间窗内没有明显呼噜事件。'
-      : '呼噜检测板离线；雷达呼吸率仍可继续运行。'
+      ? 'Edgi E84 在线，但最近时间窗内没有明显呼噜事件。'
+      : 'Edgi E84 呼噜心跳离线；雷达呼吸率仍可继续运行。'
     return
   }
 
@@ -407,6 +438,8 @@ const loadStatus = async () => {
     const res = await request.get('/status')
     statusState.radar_board_online = !!res.radar_board_online
     statusState.snore_board_online = !!res.snore_board_online
+    statusState.snore_monitoring = !!res.snore_monitoring
+    statusState.snore_paused = !!res.snore_paused
     statusState.audio_upload_count = res.audio_upload_count || 0
     statusState.snore_detected = !!res.snore_detected
     statusState.snore_score = Number(res.snore_score || 0)
@@ -416,6 +449,16 @@ const loadStatus = async () => {
     statusState.last_radar_frame_number = res.last_radar_frame_number || 0
     statusState.radar_age_seconds = res.radar_age_seconds
     statusState.snore_age_seconds = res.snore_age_seconds
+    statusState.environment_board_online = !!res.environment_board_online
+    statusState.voice_board_online = !!res.voice_board_online
+    statusState.edgi_board_online = !!res.edgi_board_online
+    statusState.emergency_active = !!res.emergency_active
+    statusState.active_emergency = res.active_emergency || null
+    statusState.environment_age_seconds = res.environment_age_seconds
+    statusState.temperature_c = isNumber(res.temperature_c) ? Number(res.temperature_c) : null
+    statusState.humidity_pct = isNumber(res.humidity_pct) ? Number(res.humidity_pct) : null
+    statusState.comfort_status = res.comfort_status || 'offline'
+    statusState.last_environment_heartbeat_at = res.last_environment_heartbeat_at || null
     statusState.target_distance = isNumber(res.target_distance) ? Number(res.target_distance) : statusState.target_distance
     statusState.target_bin = res.target_bin ?? statusState.target_bin
   } catch (error) {
@@ -522,7 +565,8 @@ watch(() => themeStore.mode, () => {
 }
 .status-pill.online { background: var(--care-success-soft); color: var(--care-success); border-color: var(--care-success); }
 .status-pill.warning { background: var(--care-warning-soft); color: var(--care-warning); border-color: var(--care-warning); }
-.device-panel { display: grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.status-pill.emergency { background: var(--care-danger); color: #fff; border-color: var(--care-danger); }
+.device-panel { display: grid; grid-template-columns: minmax(280px, 0.95fr) minmax(360px, 1.35fr); gap: 14px; margin-bottom: 18px; }
 .device-card {
   border: 1px solid var(--care-border-soft);
   background: var(--care-surface-strong);
@@ -548,7 +592,7 @@ watch(() => themeStore.mode, () => {
 }
 .snore-wave-card {
   display: grid;
-  grid-template-columns: 220px 1fr 280px;
+  grid-template-columns: 170px minmax(300px, 0.9fr) minmax(380px, 1.2fr);
   align-items: center;
   gap: 18px;
   background: radial-gradient(circle at 10% 20%, var(--care-warning-soft), var(--care-surface-strong) 45%);
@@ -563,6 +607,11 @@ watch(() => themeStore.mode, () => {
 .snore-wave-card.active { border-color: var(--care-warning); }
 .snore-wave-card.warning { box-shadow: 0 0 0 1px var(--care-warning), 0 8px 28px var(--care-warning-soft); }
 .snore-wave-value { font-size: 34px; font-weight: 800; color: var(--care-warning); line-height: 1; margin-bottom: 8px; }
+.snore-live-panel {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
 .sound-bars {
   height: 96px;
   display: flex;
@@ -583,7 +632,24 @@ watch(() => themeStore.mode, () => {
   box-shadow: 0 0 12px var(--care-warning-soft);
 }
 .sound-bar.hot { background: linear-gradient(180deg, #ff1f1f, var(--care-warning), #ffc53d); box-shadow: 0 0 18px rgba(250, 84, 28, 0.6); }
-.snore-wave-readout { display: flex; flex-direction: column; gap: 8px; color: var(--care-muted-strong); font-size: 13px; }
+.snore-wave-readout { display: flex; justify-content: space-between; gap: 12px; color: var(--care-muted-strong); font-size: 15px; }
+.snore-trend-panel {
+  min-width: 0;
+  padding-left: 18px;
+  border-left: 1px solid var(--care-border-soft);
+}
+.snore-trend-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--care-text-strong);
+  font-size: 16px;
+  font-weight: 700;
+}
+.snore-inline-chart {
+  width: 100%;
+  height: 170px;
+}
 .insight-grid { display: grid; grid-template-columns: repeat(3, minmax(220px, 1fr)); gap: 14px; margin-bottom: 18px; }
 .insight-card {
   background: var(--care-surface-strong);
@@ -611,19 +677,25 @@ watch(() => themeStore.mode, () => {
   min-width: 0;
   transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
 }
-.snore-chart-card { grid-column: 1 / -1; }
 .chart-header { font-size: 18px; font-weight: bold; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; color: var(--care-text-strong); }
 .chart-subtitle { font-size: 12px; color: var(--care-muted); font-weight: 400; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.red { background: #ff5757; }
 .dot.blue { background: #1890ff; }
 .dot.orange { background: var(--care-warning); }
+.dot.green { background: var(--care-success); }
 .chart-box { width: 100%; height: 250px; margin-bottom: 20px; }
-.chart-box.compact { height: 220px; margin-bottom: 8px; }
 .monitor-box { height: 220px; }
 .snore-note { color: var(--care-muted); font-size: 13px; line-height: 1.7; }
 @media (max-width: 1200px) {
-  .snore-wave-card { grid-template-columns: 1fr; }
+  .snore-wave-card { grid-template-columns: 150px 1fr; }
+  .snore-trend-panel {
+    grid-column: 1 / -1;
+    padding-left: 0;
+    padding-top: 14px;
+    border-left: 0;
+    border-top: 1px solid var(--care-border-soft);
+  }
   .charts-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 1100px) {
@@ -631,5 +703,8 @@ watch(() => themeStore.mode, () => {
 }
 @media (max-width: 900px) {
   .device-panel { grid-template-columns: 1fr; }
+  .snore-wave-card { grid-template-columns: 1fr; }
+  .snore-trend-panel { grid-column: auto; }
+  .snore-wave-readout { flex-wrap: wrap; }
 }
 </style>

@@ -4,14 +4,14 @@
 
 ![项目框架图](项目框架图.png)
 
-本项目由两块前端嵌入式开发板 + 一个 FastAPI 后端 + 一个 Vue3 前端 Web App 构成，**默认支持无硬件模拟联调**（不需要真实开发板也能完整演示）。系统实时采集心率 / 呼吸率 / 目标距离 / 呼噜强度 / 音频片段，通过统一的秒级时间轴送入后端，前端将其转化为睡眠评分、扰动地图、事件流和 AI 健康报告。
+本项目由毫米波雷达板、Edgi-Talk 呼噜/温湿度板、一个 FastAPI 后端和一个 Vue3 前端 Web App 构成，**默认支持无硬件模拟联调**（不需要真实开发板也能完整演示）。系统实时采集心率 / 呼吸率 / 目标距离 / 呼噜强度 / 音频片段 / 温湿度，通过统一的秒级时间轴送入后端，前端将其转化为睡眠评分、扰动地图、环境舒适度事件流和 AI 健康报告。
 
 ---
 
 ## 目录
 
 1. [项目特色](#1-项目特色)
-2. [硬件层：双开发板](#2-硬件层双开发板)
+2. [硬件层：雷达 + Edgi-Talk](#2-硬件层雷达--edgi-talk)
    - [2.1 毫米波雷达开发板 (`radar_wifi`)](#21-毫米波雷达开发板-radar_wifi)
    - [2.2 呼噜检测开发板 (`Edgi_Talk_M55_XiaoZhi`)](#22-呼噜检测开发板-edgi_talk_m55_xiaozhi)
 3. [后端层：FastAPI 数据融合 (`backend/`)](#3-后端层fastapi-数据融合-backend)
@@ -28,7 +28,8 @@
 |---|---|
 | **非接触生命体征采集** | 毫米波雷达 60GHz 通过胸腔微动提取心率 / 呼吸率 / 目标距离，无需佩戴任何设备 |
 | **呼噜扰动识别** | 床旁声学板持续监听，输出呼噜分数 / dBFS / 呼噜事件 / 10 秒音频片段 |
-| **统一时间轴融合** | 后端将两路异构数据按秒合并到同一 `timeline`，前端三张图同时间轴展示 |
+| **卧室环境监测** | AHT20 温湿度数据接入同一时间轴，生成舒适、过热、过冷、过干、过湿状态 |
+| **统一时间轴融合** | 后端将雷达、呼噜、温湿度数据按秒合并到同一 `timeline`，前端多图同时间轴展示 |
 | **睡眠质量评分** | 0-100 分综合评分 + 扣分原因（心率 / 呼吸 / 呼噜 / 离床 / 设备） |
 | **夜间守护事件流** | 自动归因：呼噜事件、疑似离床、心率 / 呼吸异常、设备离线 / 恢复 |
 | **看护动作队列** | 阈值策略驱动，把异常翻译成可执行动作（"检查雷达距离"、"确认呼噜板在线"） |
@@ -38,7 +39,7 @@
 
 ---
 
-## 2. 硬件层：双开发板
+## 2. 硬件层：雷达 + Edgi-Talk
 
 ### 2.1 毫米波雷达开发板 (`radar_wifi/`)
 
@@ -70,10 +71,10 @@
 | **关键源文件** | [`Edgi_Talk_M55_XiaoZhi/applications/main.c`](Edgi_Talk_M55_XiaoZhi/applications/main.c)、[`Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/xiaozhi.cpp`](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/xiaozhi.cpp)、[`.../wake_word/meow_detect_once.cpp`](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/meow_detect_once.cpp) |
 | **核心子系统** | LVGL UI 表情动画 + Wi-Fi 配网（AP 模式 `192.168.169.1`）+ WebSocket 语音交互（基于小智云） + Edge Impulse 唤醒词检测 + 音频上行 |
 | **音频能力** | mic0 PCM 采集 + Opus 编码 + 16kHz 单声道 + 60ms 帧长；唤醒阈值 80% 置信度 |
-| **本项目用途** | 改造为**床旁呼噜检测**：拾取夜间环境音，通过 `xz_audio_send_using_websocket` 或 HTTP POST 上传 10 秒音频到 PC 后端（`http://电脑IP:8081/audio`） |
+| **本项目用途** | 改造为**床旁呼噜检测 + 温湿度上报**：拾取夜间环境音，通过 HTTP POST 上传 10 秒音频到 PC 后端（`http://电脑IP:8081/audio`）；M33 读取 AHT20，M55 通过共享内存读取温湿度并上报 |
 | **状态机** | Unknown → Starting → WifiConfiguring → Idle → Connecting → Listening → Speaking → Sleep |
 
-**前端展示对应：** 实时监测页 → 呼噜声浪条（条形跳动）、呼噜强度趋势图、呼噜事件状态、设备状态胶囊中的"呼噜开发板在线/离线"。
+**前端展示对应：** 实时监测页 → 呼噜声浪条（条形跳动）、呼噜强度趋势图、温湿度趋势图、呼噜事件状态、设备状态胶囊中的"呼噜开发板在线/离线"和"温湿度板在线/离线"。
 
 > 详细启动流程与多核烧写顺序参见 [`Edgi_Talk_M55_XiaoZhi/README_zh.md`](Edgi_Talk_M55_XiaoZhi/README_zh.md)。
 
@@ -81,7 +82,7 @@
 
 ## 3. 后端层：FastAPI 数据融合 (`backend/`)
 
-后端是系统的"中枢神经"，负责**接收双开发板数据、维护共享时间轴、计算睡眠指标、生成 AI 报告**。
+后端是系统的"中枢神经"，负责**接收雷达、呼噜和温湿度数据、维护共享时间轴、计算睡眠指标、生成 AI 报告**。
 
 | 入口文件 | 用途 | 推荐场景 |
 |---|---|---|
@@ -94,7 +95,7 @@
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| GET | `/status` | 设备在线状态、当前心率/呼吸/呼噜分数、音频上传次数 |
+| GET | `/status` | 设备在线状态、当前心率/呼吸/呼噜分数、音频上传次数、温湿度与舒适度 |
 | GET | `/timeline?seconds=180` | **共享秒级时间轴**（三图对齐的根源） |
 | GET | `/sleep/overview?mode=live&seconds=1800` | 睡眠质量评分、扰动热力、事件流 |
 | GET | `/heartdata/selectPage` | 分页查询历史生命体征 |
@@ -103,12 +104,14 @@
 | POST | `/audio` | 接收呼噜板上传的 10 秒音频片段 |
 | POST | `/mock/radar-frame` | 接收模拟雷达板帧 |
 | POST | `/mock/snore-heartbeat` | 接收模拟呼噜板每秒特征 |
+| POST | `/mock/environment-heartbeat` | 接收温湿度板心跳 |
 | POST | `/ai/analyze-vitals` | 代理 DeepSeek 分析；未配置 key 时降级本地规则 |
 
 ### 3.2 关键特性
 
 - **共享时间轴**：见第 5 节，时间戳对齐是本系统的核心。
 - **离线优雅降级**：`heart_rate` / `breath_rate` / `snore_level` 在对应板离线时变为 `null`，前端断线不伪装数据。
+- **环境舒适度**：温度 `18-28 C`、湿度 `40-70 %RH` 为默认舒适区，过热/过冷/过干/过湿会进入睡眠评分和告警中心。
 - **DeepSeek 代理**：`backend/.env` 配置 `DEEPSEEK_API_KEY`，未配置时自动本地规则兜底，**不向浏览器暴露 key**。
 - **SQLite 持久化**：用户、历史生命体征、睡眠事件全部落库。
 - **音频入库**：收到的 10 秒音频保存到 `backend/mock_audio_uploads/`，可追溯。
@@ -142,9 +145,9 @@
 | 模块 | 说明 |
 |---|---|
 | 顶部项目介绍 | 项目名 "毫米波雷达睡眠看护与呼噜扰动监测系统"、项目目标、两个 CTA 按钮（进入实时监测 / 查看睡眠驾驶舱） |
-| 双开发板数据流示意 | 左侧 Radar Board、右侧 Acoustic Board、中间 Edge + Web App 融合核（玻璃卡片） |
+| 多设备数据流示意 | 左侧 Radar Board、右侧 Edgi-Talk，中间 Edge + Web App 融合核（玻璃卡片） |
 | 4 张价值卡片 | 01 非接触生命体征 / 02 呼噜扰动识别 / 03 睡眠看护闭环 / 04 展示级 Web App |
-| 4 步工作流 | 双开发板采集 → 边缘侧上报 → 融合分析 → 看护决策 |
+| 4 步工作流 | 多设备采集 → 边缘侧上报 → 融合分析 → 看护决策 |
 | 开发板实拍图 | 毫米波雷达开发板（`hardware-radar-board.jpg`） + 呼噜检测开发板（`snore-detect-board.jpg`），带深色渐变说明标签 |
 | 页面入口 | LIVE / SLEEP / ALERT / DATA 四个跳转按钮 |
 
@@ -156,7 +159,7 @@
 
 ![生命体征监测](docs/screenshots/03-heart-pic-full.png)
 
-**作用**：系统最直观的**实时监测主页面**，向使用者、调试者、演示者展示两路传感器在同一时间轴上的同步效果。
+**作用**：系统最直观的**实时监测主页面**，向使用者、调试者、演示者展示雷达、呼噜、温湿度在同一时间轴上的同步效果。
 
 **核心组件**：
 
@@ -164,7 +167,7 @@
 |---|---|---|
 | 开始/停止实时监测按钮 | — | 控制前端轮询，红色 = 监测中 |
 | **双板在线状态胶囊** | `/status` | 雷达 / 呼噜 / 呼噜事件三色徽标 |
-| **设备卡片 × 2** | `/status` | 雷达板：帧号、最近接收时间；呼噜板：分数、音频次数、最近音量 |
+| **设备卡片 × 3** | `/status` | 雷达板：帧号、最近接收时间；呼噜板：分数、音频次数、最近音量；温湿度板：温度、湿度、舒适度 |
 | **呼噜声浪监测** | `/status.snore_level` | 条形声浪，每秒跳动；事件时高亮红色 |
 | **睡眠分期卡** | `/timeline` 启发式规则 | 清醒 / 浅睡 / 深睡 / 疑似呼噜扰动 |
 | **呼噜-生命体征关联** | 最近呼噜事件 + 心率/呼吸 | 显示事件前后生命体征变化 |
@@ -341,7 +344,7 @@ async function refreshTimeline() {
   const res = await request.get('/timeline', { params: { seconds: 180 } });
   // res.data 是 [{ timestamp, heart_rate, breath_rate, snore_level, ... }, ...]
 
-  // 关键：三张图共用同一份 xAxis (timestamp)
+  // 关键：多张趋势图共用同一份 xAxis (timestamp)
   heartRateChart.setOption({
     xAxis: { data: res.data.map(d => d.timestamp) },
     series: [{ data: res.data.map(d => d.heart_rate) }]

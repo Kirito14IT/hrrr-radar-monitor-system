@@ -2,11 +2,7 @@
   <div class="sleep-page care-page-shell">
     <div class="hero-panel care-glass-card">
       <div>
-        <div class="eyebrow">Night Guardian Command Center</div>
         <h1>睡眠看护驾驶舱</h1>
-        <p class="hero-copy">
-          基于毫米波雷达生命体征、呼噜检测板音频特征和设备在线状态，实时评估睡眠稳定性与扰动风险。
-        </p>
       </div>
       <div class="control-strip">
         <button :class="{ active: mode === 'live' }" @click="switchMode('live')">实时看护</button>
@@ -28,9 +24,12 @@
         <span class="pulse"></span>
         雷达板 {{ deviceText(devices.radar_board_online) }}
       </div>
-      <div class="device-pill" :class="{ online: devices.snore_board_online }">
+      <div class="device-pill" :class="{ online: edgiBoardOnline, warning: edgiBoardNeedsAttention }">
         <span class="pulse"></span>
-        呼噜板 {{ deviceText(devices.snore_board_online) }}
+        Edgi E84 {{ edgiDeviceText }}
+      </div>
+      <div v-if="devices.emergency_active" class="device-pill emergency">
+        紧急求助
       </div>
       <div class="device-pill muted">音频片段 {{ devices.audio_upload_count ?? '--' }} 次</div>
       <div class="device-pill muted">数据点 {{ overview.stats?.points ?? 0 }}</div>
@@ -38,7 +37,7 @@
 
     <div class="dashboard-grid">
       <section class="score-card care-glass-card">
-        <div class="section-title">Sleep Quality Score</div>
+        <div class="section-title">睡眠评分</div>
         <div class="score-layout">
           <div class="score-ring" :style="scoreStyle">
             <div class="score-core">
@@ -66,24 +65,31 @@
             <option value="all">全部</option>
             <option value="abnormal">只看异常</option>
             <option value="snore">只看呼噜</option>
+            <option value="environment">只看环境</option>
             <option value="device">只看设备</option>
           </select>
         </div>
         <div class="event-list">
           <div v-if="filteredEvents.length === 0" class="empty-state">
-            当前窗口没有异常事件。模拟板运行越久，这里越像夜间看护日志。
+            暂无事件
           </div>
           <div
             v-for="event in filteredEvents"
             :key="`${event.eventID}-${event.timestamp}`"
             class="event-item"
-            :class="event.severity"
+            :class="[event.severity, { resolved: event.status === 'resolved' }]"
           >
             <div class="event-dot"></div>
             <div>
               <div class="event-meta">{{ formatTime(event.timestamp) }} · {{ sourceLabel(event.source) }}</div>
-              <div class="event-title">{{ event.title }}</div>
+              <div class="event-title">
+                {{ event.title }}
+                <span v-if="event.status === 'resolved'" class="resolved-badge">已处理</span>
+              </div>
               <div class="event-message">{{ event.message }}</div>
+              <div v-if="event.status === 'resolved'" class="event-resolution">
+                {{ event.resolved_by || '看护人员' }}：{{ event.resolution_note || '已确认并解除紧急状态' }}
+              </div>
             </div>
           </div>
         </div>
@@ -93,7 +99,6 @@
         <div class="section-header">
           <div>
             <div class="section-title">呼噜扰动地图</div>
-            <p class="section-subtitle">每分钟聚合呼噜强度，并标记呼噜前后心率/呼吸变化。</p>
           </div>
           <div class="worst-box">
             <span>最强扰动</span>
@@ -112,7 +117,7 @@
             <span>{{ cell.label }}</span>
           </div>
           <div v-if="heatmap.length === 0" class="empty-state wide">
-            暂无呼噜热力数据。启动呼噜检测模拟板后，这里会出现蓝紫橙红的时间热力条。
+            暂无呼噜数据
           </div>
         </div>
       </section>
@@ -123,7 +128,6 @@
         <div class="mini-title">{{ card.title }}</div>
         <div class="mini-value">{{ card.value }}<span>{{ card.unit }}</span></div>
         <div class="mini-bar"><i :style="{ width: `${card.value}%` }"></i></div>
-        <p>{{ card.detail }}</p>
       </div>
     </div>
   </div>
@@ -159,6 +163,62 @@ const heatmap = computed(() => overview.heatmap || [])
 const stabilityCards = computed(() => overview.stability_cards || [])
 const topPenalties = computed(() => (score.value.penalties || []).slice(0, 4))
 
+const comfortLabelMap = {
+  comfortable: '舒适',
+  cold: '偏冷',
+  hot: '偏热',
+  dry: '偏干',
+  humid: '偏湿',
+  cold_dry: '偏冷偏干',
+  cold_humid: '偏冷偏湿',
+  hot_dry: '偏热偏干',
+  hot_humid: '偏热偏湿',
+  cold_critical: '过冷',
+  hot_critical: '过热',
+  dry_critical: '过干',
+  humid_critical: '过湿',
+  cold_dry_critical: '过冷过干',
+  cold_humid_critical: '过冷过湿',
+  hot_dry_critical: '过热过干',
+  hot_humid_critical: '过热过湿',
+  sensor_error: '传感器异常',
+  no_data: '暂无数据',
+  offline: '离线'
+}
+
+const environmentNeedsAttention = computed(() => {
+  return devices.value.environment_board_online && devices.value.comfort_status !== 'comfortable'
+})
+
+const edgiBoardOnline = computed(() => (
+  devices.value.edgi_board_online ||
+  devices.value.snore_board_online ||
+  devices.value.environment_board_online ||
+  devices.value.voice_board_online
+))
+
+const edgiBoardNeedsAttention = computed(() => {
+  return Boolean(edgiBoardOnline.value && (
+    environmentNeedsAttention.value ||
+    devices.value.emergency_active
+  ))
+})
+
+const environmentDeviceText = computed(() => {
+  if (!devices.value.environment_board_online) return '暂无温湿度'
+  const temp = numberText(devices.value.temperature_c, 'C')
+  const humidity = numberText(devices.value.humidity_pct, '%RH')
+  const status = comfortLabelMap[devices.value.comfort_status] || devices.value.comfort_status || '状态未知'
+  return `${temp} / ${humidity}，${status}`
+})
+
+const edgiDeviceText = computed(() => {
+  if (!edgiBoardOnline.value) return '离线'
+  if (devices.value.emergency_active) return '紧急状态'
+  if (devices.value.snore_monitoring || devices.value.snore_board_online) return '在线 · 呼噜监测中'
+  return devices.value.snore_paused ? '在线 · 呼噜已暂停' : '在线'
+})
+
 const scoreStyle = computed(() => {
   const value = Math.max(0, Math.min(100, Number(score.value.score || 0)))
   const color = value >= 86 ? '#16a34a' : value >= 68 ? '#f59e0b' : '#ef4444'
@@ -184,6 +244,9 @@ const filteredEvents = computed(() => {
   }
   if (eventFilter.value === 'snore') {
     return events.filter(event => event.type === 'snore')
+  }
+  if (eventFilter.value === 'environment') {
+    return events.filter(event => event.type === 'environment' || event.source === 'environment_board')
   }
   return events.filter(event => event.type === 'device_offline')
 })
@@ -256,6 +319,11 @@ function deviceText(value) {
   return value ? '在线' : '离线'
 }
 
+function numberText(value, unit) {
+  const number = Number(value)
+  return Number.isFinite(number) ? `${number.toFixed(1)} ${unit}` : `-- ${unit}`
+}
+
 function formatTime(value) {
   if (!value) return '--:--'
   const dateValue = new Date(value)
@@ -266,7 +334,9 @@ function formatTime(value) {
 function sourceLabel(source) {
   const map = {
     radar_board: '雷达板',
-    snore_board: '呼噜板',
+    snore_board: 'Edgi E84',
+    environment_board: 'Edgi E84',
+    xiaozhi_voice_board: '小智语音板',
     mock_api: '模拟后端'
   }
   return map[source] || source || '系统'
@@ -293,18 +363,18 @@ onBeforeUnmount(() => {
 .sleep-page {
   min-height: calc(100vh - 90px);
   margin: -20px;
-  padding: 22px;
+  padding: 14px;
   color: var(--care-text);
 }
 
 .hero-panel {
   display: flex;
   justify-content: space-between;
-  gap: 20px;
+  gap: 14px;
   align-items: center;
-  border-radius: 22px;
-  padding: 24px 26px;
-  margin-bottom: 16px;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
 }
 
 .eyebrow {
@@ -317,7 +387,7 @@ onBeforeUnmount(() => {
 
 h1 {
   margin: 0;
-  font-size: 34px;
+  font-size: 25px;
   letter-spacing: 0.04em;
   color: var(--care-text-strong);
 }
@@ -332,7 +402,7 @@ h1 {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 6px;
 }
 
 .control-strip button,
@@ -343,7 +413,9 @@ h1 {
   border-radius: 999px;
   color: var(--care-text);
   background: var(--care-surface-strong);
-  padding: 9px 14px;
+  min-height: 36px;
+  padding: 6px 11px;
+  font-size: 14px;
   outline: none;
   transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
@@ -371,13 +443,14 @@ h1 {
 .device-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 16px;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
 .device-pill {
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: 5px 10px;
+  font-size: 13px;
   border: 1px solid var(--care-border);
   background: var(--care-surface-strong);
   color: var(--care-muted);
@@ -388,6 +461,18 @@ h1 {
   color: var(--care-success);
   border-color: var(--care-success);
   background: var(--care-success-soft);
+}
+
+.device-pill.warning {
+  color: var(--care-warning);
+  border-color: var(--care-warning);
+  background: var(--care-warning-soft);
+}
+
+.device-pill.emergency {
+  color: #fff;
+  border-color: var(--care-danger);
+  background: var(--care-danger);
 }
 
 .device-pill.muted {
@@ -410,8 +495,15 @@ h1 {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(420px, 1fr) minmax(360px, 0.8fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1.12fr) minmax(310px, 0.88fr);
+  grid-template-rows: 184px 210px;
+  gap: 10px;
+}
+
+.dashboard-grid > .care-glass-card {
+  min-width: 0;
+  border-radius: 12px;
+  padding: 14px;
 }
 
 .neon-card {
@@ -420,14 +512,15 @@ h1 {
 }
 
 .score-card {
-  min-height: 310px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .section-title {
   color: var(--care-text-strong);
   font-weight: 800;
   letter-spacing: 0.04em;
-  font-size: 17px;
+  font-size: 16px;
 }
 
 .section-header {
@@ -435,7 +528,7 @@ h1 {
   justify-content: space-between;
   gap: 12px;
   align-items: flex-start;
-  margin-bottom: 14px;
+  margin-bottom: 8px;
 }
 
 .section-subtitle {
@@ -446,23 +539,23 @@ h1 {
 
 .score-layout {
   display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: 28px;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 18px;
   align-items: center;
-  margin-top: 20px;
+  margin-top: 8px;
 }
 
 .score-ring {
-  width: 210px;
-  height: 210px;
+  width: 126px;
+  height: 126px;
   border-radius: 50%;
   display: grid;
   place-items: center;
 }
 
 .score-core {
-  width: 150px;
-  height: 150px;
+  width: 90px;
+  height: 90px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -472,38 +565,45 @@ h1 {
 }
 
 .score-core strong {
-  font-size: 52px;
+  font-size: 38px;
   line-height: 1;
 }
 
 .score-core span {
-  margin-top: -24px;
+  margin-top: -18px;
+  font-size: 12px;
   color: var(--care-muted);
 }
 
 .score-text h2 {
-  font-size: 32px;
-  margin: 0 0 10px;
+  font-size: 24px;
+  margin: 0 0 4px;
   color: var(--care-text-strong);
 }
 
 .score-text p {
   color: var(--care-muted-strong);
-  line-height: 1.8;
+  line-height: 1.45;
+  font-size: 13px;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .penalty-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 16px;
+  gap: 5px;
+  margin-top: 8px;
 }
 
 .penalty-tag,
 .good-tag {
   border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 3px 7px;
+  font-size: 11px;
 }
 
 .penalty-tag {
@@ -520,27 +620,27 @@ h1 {
 
 .event-card {
   grid-row: span 2;
-  max-height: 676px;
+  max-height: none;
   overflow: hidden;
 }
 
 .event-list {
-  max-height: 596px;
+  height: calc(100% - 38px);
   overflow: auto;
-  padding-right: 5px;
+  padding-right: 4px;
 }
 
 .event-item {
   display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 12px;
-  padding: 14px 0;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 0;
   border-bottom: 1px solid var(--care-divider);
 }
 
 .event-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   margin-top: 6px;
   background: var(--care-accent);
@@ -562,25 +662,61 @@ h1 {
   box-shadow: 0 0 16px var(--care-success);
 }
 
+.event-item.resolved {
+  opacity: 0.72;
+}
+
+.event-item.resolved .event-dot {
+  background: var(--care-success);
+  box-shadow: none;
+}
+
 .event-meta {
   color: var(--care-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .event-title {
   font-weight: 800;
-  margin: 4px 0;
+  margin: 2px 0;
   color: var(--care-text-strong);
+  font-size: 14px;
 }
 
 .event-message {
   color: var(--care-muted-strong);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resolved-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid var(--care-success);
+  border-radius: 4px;
+  color: var(--care-success);
+  font-size: 11px;
+  font-weight: 800;
+  vertical-align: 2px;
+}
+
+.event-resolution {
+  margin-top: 3px;
+  color: var(--care-success);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .heat-card {
-  min-height: 350px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .worst-box {
@@ -590,27 +726,29 @@ h1 {
 }
 
 .worst-box strong {
-  display: block;
-  margin-top: 4px;
+  display: inline;
+  margin-left: 5px;
   color: var(--care-warning);
-  font-size: 18px;
+  font-size: 15px;
 }
 
 .heatmap {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(54px, 1fr));
-  gap: 8px;
-  margin-top: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+  gap: 5px;
+  margin-top: 6px;
+  max-height: 156px;
+  overflow: auto;
 }
 
 .heat-cell {
-  min-height: 48px;
-  border-radius: 12px;
+  min-height: 34px;
+  border-radius: 6px;
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: 6px;
-  font-size: 11px;
+  padding: 4px;
+  font-size: 10px;
   color: var(--care-text-strong);
   background: linear-gradient(180deg, rgba(56, 189, 248, calc(.18 + var(--level) * .3)), var(--care-surface-2));
   border: 1px solid var(--care-border-soft);
@@ -630,25 +768,34 @@ h1 {
 
 .stability-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(200px, 1fr));
-  gap: 16px;
-  margin-top: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .stability-card {
-  border-radius: 18px;
-  padding: 18px;
+  border-radius: 12px;
+  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) auto;
+  grid-template-areas:
+    "title value"
+    "bar bar";
+  align-items: center;
+  column-gap: 12px;
 }
 
 .mini-title {
+  grid-area: title;
   color: var(--care-muted);
   font-size: 13px;
 }
 
 .mini-value {
-  font-size: 32px;
+  grid-area: value;
+  font-size: 21px;
   font-weight: 900;
-  margin: 8px 0;
+  margin: 0;
   color: var(--care-text-strong);
 }
 
@@ -659,7 +806,9 @@ h1 {
 }
 
 .mini-bar {
-  height: 8px;
+  grid-area: bar;
+  height: 5px;
+  margin-top: 6px;
   background: var(--care-surface-muted);
   border-radius: 999px;
   overflow: hidden;
@@ -680,33 +829,74 @@ h1 {
 
 .empty-state {
   color: var(--care-muted);
-  line-height: 1.8;
-  padding: 24px 0;
+  line-height: 1.5;
+  padding: 14px 0;
 }
 
 .empty-state.wide {
   grid-column: 1 / -1;
 }
 
-@media (max-width: 1280px) {
-  .hero-panel,
-  .score-layout {
-    grid-template-columns: 1fr;
-    display: block;
+@media (max-width: 1040px) {
+  .hero-panel {
+    align-items: flex-start;
   }
 
   .control-strip {
     justify-content: flex-start;
-    margin-top: 16px;
+    margin-top: 10px;
   }
 
-  .dashboard-grid,
-  .stability-grid {
+  .dashboard-grid {
     grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .score-card,
+  .heat-card {
+    min-height: 210px;
   }
 
   .event-card {
     grid-row: auto;
+    height: 320px;
+  }
+
+  .stability-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .sleep-page {
+    padding: 10px;
+  }
+
+  .hero-panel {
+    display: block;
+  }
+
+  .score-layout {
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .score-ring {
+    width: 108px;
+    height: 108px;
+  }
+
+  .score-core {
+    width: 78px;
+    height: 78px;
+  }
+
+  .score-core strong {
+    font-size: 30px;
+  }
+
+  .stability-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

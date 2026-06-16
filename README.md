@@ -2,21 +2,22 @@
 
 ![alt text](项目框架图.png)
 
-这个项目现在可以在**没有毫米波雷达开发板、没有呼噜检测开发板**的情况下跑通完整演示。
+这个项目现在可以在**没有毫米波雷达开发板、没有呼噜检测开发板、没有温湿度板**的情况下跑通完整演示。
 
-模拟模式包含两块“虚拟开发板”：
+模拟模式包含三类“虚拟/手动注入开发板数据”：
 
 1. **毫米波雷达模拟板**：持续发送心率、呼吸率、目标距离、相位波形。
 2. **呼噜检测模拟板**：每秒发送呼噜特征，并每 10 秒上传一个 10 秒音频片段。
+3. **温湿度板数据**：通过 `POST /mock/environment-heartbeat` 注入温度、湿度、传感器状态。
 
 关闭某个模拟板终端，就等于把对应开发板关掉；前端大约 5 秒后会显示离线。
 
-> ⚠️ **后端启动方式务必看清**：本项目提供 3 个后端入口文件，**只有 `backend/mock_hardware_api.py`（监听 8081）能提供完整的 sleep overview / 历史数据 / 告警中心接口**。
-> - ❌ `backend/mock_server.py`（端口 8000）—— 早期版本，没有 sleep overview 等新接口。
-> - ❌ `backend/realtime_radar_processing.py`（默认 8081）—— 没有 `/sleep/overview`，且会与 `mock_hardware_api.py` 抢占 8081 端口。
-> - ✅ `backend/mock_hardware_api.py`（端口 8081）—— 前端 `baseURL` 默认指向它，sleep dashboard 唯一可用的后端。
+> ⚠️ **后端启动方式务必看清**：本项目提供 3 个后端入口文件，现在 `backend/mock_hardware_api.py` 和 `backend/realtime_radar_processing.py` 都支持 sleep overview、温湿度、告警中心接口。
+> - ❌ `backend/mock_server.py`（端口 8000）—— 早期简化示例，不作为主入口。
+> - ✅ `backend/mock_hardware_api.py`（端口 8081）—— 无硬件演示、前端联调的推荐入口。
+> - ✅ `backend/realtime_radar_processing.py`（默认 API 端口 8081）—— 接真实毫米波雷达时使用，也支持温湿度和睡眠概览。
 >
-> 如果在睡眠看护驾驶舱、历史数据或告警中心页面看到 404，请确认你启动的是 `mock_hardware_api.py` 而不是另外两个文件。
+> 如果看到 404，请先确认没有启动旧的 `mock_server.py`，且 8081 端口没有被另一个后端占用。
 
 ---
 
@@ -26,7 +27,9 @@
 
 - 雷达开发板在线/离线状态。
 - 呼噜开发板在线/离线状态。
+- 温湿度板在线/离线状态、温度、湿度、舒适度。
 - 心率、呼吸率、呼噜强度三张曲线，使用同一条真实时间横坐标。
+- 温度、湿度趋势图，支持舒适、过热、过冷、过干、过湿告警。
 - 呼噜声浪条：会随着呼噜分数和音量 dBFS 实时变高变低。
 - 雷达离线或无人时，曲线断开并显示 `--`，不会再用 `0` 假装真实数据。
 - 睡眠分期：清醒/浅睡/深睡/疑似呼噜扰动。
@@ -39,6 +42,7 @@
 
 - **心率、呼吸率、距离**来自毫米波雷达模拟板。
 - **呼噜分数、音量 dBFS、声浪条、呼噜事件、音频次数**来自呼噜检测模拟板。
+- **温度、湿度、环境舒适度**来自温湿度板；真实硬件上由 M33 读取 AHT20，M55 通过共享内存读取并上报。
 - 所以只关闭呼噜模拟板时，呼吸监测继续运行是正常的。
 
 ---
@@ -127,6 +131,7 @@ curl http://localhost:8081/status
 curl http://localhost:8081/target
 curl http://localhost:8081/timeline?seconds=180
 curl http://localhost:8081/heartrate
+curl -Method POST http://localhost:8081/mock/environment-heartbeat -ContentType "application/json" -Body '{"temperature_c":24.5,"humidity_pct":52.0,"sensor_ok":true,"source":"manual_check"}'
 ```
 
 如果开发板正在向 `9988` 发送 UDP 数据，`/status` 中的 `radar_board_online` 应为 `true`，`/timeline` 应返回 `200`。
@@ -144,6 +149,8 @@ http://你的电脑IP:8081/mock/snore-heartbeat
 ```
 
 收到呼噜板数据后，`/status` 中的 `snore_board_online` 应为 `true`，并会更新 `audio_upload_count`、`snore_score`、`snore_dbfs`、`snore_detected`。
+
+收到温湿度数据后，`/status` 中的 `environment_board_online` 应为 `true`，并会更新 `temperature_c`、`humidity_pct`、`comfort_status`。默认舒适范围是温度 `18-28 C`、湿度 `40-70 %RH`；温度 `<15` 或 `>32 C`、湿度 `<30` 或 `>80 %RH` 会进入更严重的环境告警。
 
 ---
 
@@ -173,6 +180,7 @@ python backend\mock_hardware_api.py
 - 保存历史生命体征。
 - 接收雷达模拟数据。
 - 接收呼噜音频。
+- 接收温湿度板心跳。
 - 代理 DeepSeek AI 分析。
 
 ### 终端 2：启动前端
@@ -247,6 +255,24 @@ python backend\mock_device_sender.py --snore-board
 - 音频上传次数不再增加。
 - 心率和呼吸率仍然继续运行，因为它们来自雷达模拟板。
 
+### 手动注入温湿度板数据
+
+另开一个 PowerShell，在项目根目录执行：
+
+```powershell
+curl -Method POST http://localhost:8081/mock/environment-heartbeat -ContentType "application/json" -Body '{"temperature_c":24.5,"humidity_pct":52.0,"sensor_ok":true,"source":"manual_check"}'
+curl http://localhost:8081/status
+curl "http://localhost:8081/timeline?seconds=60"
+curl "http://localhost:8081/sleep/overview?mode=live&seconds=300"
+```
+
+预期效果：
+
+- `/status` 里 `environment_board_online` 为 `true`。
+- `/timeline` 最近点包含 `temperature_c`、`humidity_pct`、`comfort_status`。
+- 前端实时页出现 “AHT20 温湿度板” 设备卡和温湿度趋势图。
+- 睡眠驾驶舱会把环境不舒适计入评分，告警中心会出现温湿度策略。
+
 ---
 
 ## 5. 注册、登录和查看页面
@@ -262,6 +288,7 @@ python backend\mock_device_sender.py --snore-board
 
 - `雷达开发板：在线`
 - `呼噜开发板：在线`
+- `温湿度板：舒适`
 - 心率和呼吸率每秒/每两秒刷新。
 - 横坐标显示真实时间，例如 `01:23:45`。
 - “呼噜声浪监测”的条状声浪会随着呼噜强度跳动。
@@ -276,11 +303,109 @@ python backend\mock_device_sender.py --snore-board
 - 呼噜扰动地图：按分钟显示呼噜强度热力条，颜色越偏橙红表示扰动越强。
 - 夜间守护事件流：记录呼噜事件、疑似离床、心率/呼吸异常、设备离线和恢复正常。
 - 底部稳定性卡片：心率稳定性、呼吸稳定性、呼噜安静度。
+- 环境舒适度卡片：温湿度板离线、过热、过冷、过干、过湿都会扣分并生成事件。
 - 页面支持“实时看护 / 历史回放”切换；历史事件会保存到后端 SQLite 的 `sleep_events` 表。
 
 ---
 
-## 6. DeepSeek AI 分析配置
+## 6. Edgi-Talk 固件编译、烧录和检查
+
+### 功能说明
+
+本项目的 Edgi-Talk 温湿度链路是：
+
+```text
+AHT20 -> M33(i2c1/SCL75/SDA74) -> shared/env_shared_memory -> M55 -> 屏幕 + 后端
+```
+
+M33 每 2 秒读取 AHT20 并写入共享内存；M55 每 2 秒读取共享内存，在待机主屏显示温湿度，WiFi 连接后每 5 秒向后端 `POST /mock/environment-heartbeat`。通信不使用 IPC。
+
+WiFi 配置保存在 M55 工程的 `/flash/wifi_config.json`。保存前会确认 `/flash` 可写、可读回；保存时先写临时文件并校验，再替换正式文件。普通应用烧录不应清除该文件；如果使用整片擦除或外部 Flash 全擦除，WiFi 配置会被清掉，需要重新配一次。
+
+### 编译
+
+在项目根目录分别执行：
+
+```powershell
+cd Edgi_Talk_M33_AHT20
+scons -j8
+cd ..
+cd Edgi_Talk_M55_XiaoZhi
+scons -j8
+cd ..
+```
+
+如果电脑没有配置 ARM 工具链，`scons` 会报找不到编译器，需要先按 Edgi-Talk/RT-Thread 工程文档配置工具链。
+
+### 烧录顺序
+
+按这个顺序烧录：
+
+1. Secure M33 固件。
+2. M33 NS 固件，也就是 `Edgi_Talk_M33_AHT20`，保持启用 CM55 Core。
+3. M55 固件，也就是 `Edgi_Talk_M55_XiaoZhi`。
+
+### 首次联网
+
+第一次上电仍然使用 AP 配网：
+
+1. 手机或电脑连接热点 `RT-Thread-AP`，密码 `123456789`。
+2. 浏览器打开 `http://192.168.169.1`。
+3. 选择路由器 WiFi，输入密码。
+4. 配网成功后开发板会保存 `/flash/wifi_config.json`，然后自动切到 STA。
+
+### 重启检查
+
+按 reset 或重新上电后，预期不需要再打开 `192.168.169.1` 配网：
+
+- M55 串口出现 `Config loaded: SSID=...`、`Connected to ... successfully`。
+- M55 串口可运行 `wifi_cfg_status`，应看到 `storage_ready=1` 和已保存 SSID。
+- M55 串口可运行 `env_status`，查看共享内存温湿度。
+- M33 串口出现 `AHT20 initialized` 和 `AHT20 sample: ... C, ... %RH`。
+- 屏幕待机时显示类似 `Env 24.5C  52.0%RH  OK`。
+
+如果要手动清掉保存的 WiFi，在 M55 串口执行：
+
+```text
+wifi_cfg_clear
+```
+
+### 后端地址
+
+M33 不需要配置电脑 IP。M33 只负责 AHT20 采样和共享内存写入。
+
+M55 负责把呼噜和温湿度数据上传到电脑后端。为了适配电脑 IP 经常变化的情况，M55 支持把后端地址保存到 `/flash/backend_config.json`，以后换 WiFi 只需要在 M55 串口改一次，不需要改代码重新烧录。
+
+在 M55 串口执行：
+
+```text
+backend_cfg_set 你的电脑IP 8081
+backend_cfg_status
+```
+
+示例：
+
+```text
+backend_cfg_set 192.168.0.104 8081
+backend_cfg_status
+```
+
+预期看到：
+
+```text
+backend_cfg_set: saved 192.168.0.104:8081
+backend_cfg_status: saved target 192.168.0.104:8081 (/flash/backend_config.json)
+```
+
+如果想恢复代码里的默认地址，执行：
+
+```text
+backend_cfg_clear
+```
+
+---
+
+## 7. DeepSeek AI 分析配置
 
 历史数据页的“AI分析”现在不再把 API key 写在前端，而是由后端代理调用 DeepSeek。
 
@@ -315,7 +440,7 @@ DEEPSEEK_API_KEY=你的DeepSeek_API_Key
 
 ---
 
-## 7. 可选命令
+## 8. 可选命令
 
 只上传一次 10 秒呼噜音频：
 
@@ -337,7 +462,7 @@ python backend\mock_device_sender.py --demo
 
 ---
 
-## 8. 手动验证清单
+## 9. 手动验证清单
 
 ### 验证雷达模拟板
 
@@ -357,6 +482,15 @@ python backend\mock_device_sender.py --demo
 6. 关闭终端 4。
 7. 等待约 5 秒，呼噜板离线，呼噜强度图断线，但心率/呼吸继续运行。
 
+### 验证温湿度板
+
+1. 启动终端 1 和 2。
+2. 执行 `POST /mock/environment-heartbeat` 手动注入温湿度。
+3. 前端实时页应显示温湿度板在线、温度、湿度、舒适度。
+4. 修改 POST 为 `{"temperature_c":34,"humidity_pct":85,"sensor_ok":true,"source":"manual_check"}`。
+5. 告警中心应显示环境风险，睡眠驾驶舱评分应出现环境扣分。
+6. 停止发送温湿度心跳约 15 秒后，温湿度板应显示离线。
+
 ### 验证历史页和 AI
 
 1. 登录后保持雷达板运行 30 秒以上。
@@ -369,7 +503,7 @@ python backend\mock_device_sender.py --demo
 
 ---
 
-## 9. 常见问题
+## 10. 常见问题
 
 ### 前端显示离线
 
@@ -393,7 +527,7 @@ python backend\mock_device_sender.py --demo
 
 ### AI 分析显示本地规则
 
-通常是因为没有填写 `backend\.env`，或 DeepSeek key/网络不可用。先按第 5 节配置并重启后端。
+通常是因为没有填写 `backend\.env`，或 DeepSeek key/网络不可用。先按第 7 节配置并重启后端。
 
 ### 本机 IP 变了怎么办？
 

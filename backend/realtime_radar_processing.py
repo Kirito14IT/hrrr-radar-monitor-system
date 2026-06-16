@@ -11,6 +11,7 @@ import socket
 import threading
 import math
 import wave
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from scipy import signal
@@ -119,13 +120,57 @@ ENABLE_PRESENCE_DETECTION = True              # 是否启用存在检测
 PRESENCE_HISTORY_LENGTH = 5                   # 存在检测历史长度
 PRESENCE_COUNT_THRESHOLD = 2                  # 存在检测计数阈值
 BOARD_TIMEOUT_SECONDS = 5.0                   # 开发板离线判定超时
+ENVIRONMENT_BOARD_TIMEOUT_SECONDS = 15.0       # 温湿度板离线判定超时
 SNORE_BOARD_TIMEOUT_SECONDS = 15.0             # 呼噜板离线判定超时（10 秒一包音频，宽松一些）
+VOICE_BOARD_TIMEOUT_SECONDS = 30.0             # 语音事件到达后暂时标记小智语音链路在线
+EDGI_BOARD_TIMEOUT_SECONDS = 60.0              # 任一 Edgi 模块心跳后的整板在线宽限期
 SNORE_SESSION_GRACE_SECONDS = 30.0             # 呼噜板按下 Snore detect 后保持在线的最长静默期
 TIMELINE_RETENTION_SECONDS = 7200             # 时间轴保留时长
 SAMPLE_RATE = 16000                           # 呼噜板音频采样率
 SAMPLE_WIDTH = 2                              # int16 PCM
 NUM_CHANNELS = 2                              # 呼噜板音频双声道
 SNORE_EVENT_HOLD_SECONDS = 180.0              # 呼噜事件状态保持时间
+
+def comfort_status_for(temperature_c, humidity_pct, sensor_ok=True, online=True):
+    if not online:
+        return "offline"
+    if not sensor_ok:
+        return "sensor_error"
+    if temperature_c is None or humidity_pct is None:
+        return "no_data"
+
+    temp_status = None
+    humidity_status = None
+    critical = False
+
+    if temperature_c < 15.0:
+        temp_status = "cold"
+        critical = True
+    elif temperature_c < 18.0:
+        temp_status = "cold"
+    elif temperature_c > 32.0:
+        temp_status = "hot"
+        critical = True
+    elif temperature_c > 28.0:
+        temp_status = "hot"
+
+    if humidity_pct < 30.0:
+        humidity_status = "dry"
+        critical = True
+    elif humidity_pct < 40.0:
+        humidity_status = "dry"
+    elif humidity_pct > 80.0:
+        humidity_status = "humid"
+        critical = True
+    elif humidity_pct > 70.0:
+        humidity_status = "humid"
+
+    parts = [part for part in (temp_status, humidity_status) if part]
+    if not parts:
+        return "comfortable"
+    status = "_".join(parts)
+    return f"{status}_critical" if critical else status
+
 
 def estimate_breath_rate_fft(phase_signal, fs=FRAME_RATE, breath_band=(0.1, 0.5)):
     """
@@ -244,6 +289,15 @@ class RealtimeRadarProcessor:
         self.last_radar_received_at = None
         self.last_snore_heartbeat_time = None
         self.last_snore_heartbeat_at = None
+        self.last_environment_heartbeat_time = None
+        self.last_environment_heartbeat_at = None
+        self.last_voice_received_time = None
+        self.last_voice_received_at = None
+        self.last_edgi_heartbeat_time = None
+        self.last_edgi_heartbeat_at = None
+        self.temperature_c = None
+        self.humidity_pct = None
+        self.environment_sensor_ok = False
         self.last_audio_received_time = None
         self.last_audio_received_at = None
         self.snore_session_active = False
@@ -262,6 +316,7 @@ class RealtimeRadarProcessor:
         self.last_snore_time = None
         self.last_snore_at = None
         self.timeline = []
+        self.emergency_events = []
         self.radar_debug = {
             "sample_format": "float16",
             "packet_len": 0,
@@ -358,17 +413,56 @@ class RealtimeRadarProcessor:
             self.snore_session_active = False
 
         # 用户已经按下 back（或者从未开始过 session 之前的旧路径），
-        # 退回到心跳 / 音频最近活动时间判断。
+        # 退回到真实呼噜心跳时间判断。/audio 只做原始音频存档，不再驱动呼噜状态。
         if self.snore_session_stopped:
             # 显式 back 后立刻离线，不再被 5/15 秒内的心跳“复活”
             return False
 
         heartbeat_age = self._seconds_since(self.last_snore_heartbeat_time)
-        audio_age = self._seconds_since(self.last_audio_received_time)
-        return bool(
-            (heartbeat_age is not None and heartbeat_age <= SNORE_BOARD_TIMEOUT_SECONDS)
-            or (audio_age is not None and audio_age <= SNORE_BOARD_TIMEOUT_SECONDS)
-        )
+        return bool(heartbeat_age is not None and heartbeat_age <= SNORE_BOARD_TIMEOUT_SECONDS)
+
+    def _environment_board_online(self):
+        age = self._seconds_since(self.last_environment_heartbeat_time)
+        return bool(age is not None and age <= ENVIRONMENT_BOARD_TIMEOUT_SECONDS)
+
+    def _voice_board_online(self):
+        age = self._seconds_since(self.last_voice_received_time)
+        return bool(age is not None and age <= VOICE_BOARD_TIMEOUT_SECONDS)
+
+    def _edgi_board_online(self):
+        age = self._seconds_since(self.last_edgi_heartbeat_time)
+        return bool(age is not None and age <= EDGI_BOARD_TIMEOUT_SECONDS)
+
+    def _active_emergency_event(self):
+        with self.state_lock:
+            active = [
+                event for event in self.emergency_events
+                if event.get("type") == "emergency_voice"
+                and event.get("status", "active") == "active"
+            ]
+        return max(active, key=lambda item: item.get("timestamp", ""), default=None)
+
+    def _environment_snapshot(self):
+        environment_age = self._seconds_since(self.last_environment_heartbeat_time)
+        environment_board_online = self._environment_board_online()
+        environment_online = bool(environment_board_online and self.environment_sensor_ok)
+        temperature = round(float(self.temperature_c), 1) if environment_online and self.temperature_c is not None else None
+        humidity = round(float(self.humidity_pct), 1) if environment_online and self.humidity_pct is not None else None
+        return {
+            "environment_board_online": environment_board_online,
+            "environment_online": environment_online,
+            "environment_sensor_ok": bool(self.environment_sensor_ok),
+            "last_environment_heartbeat_at": self.last_environment_heartbeat_at,
+            "environment_age_seconds": round(environment_age, 2) if environment_age is not None else None,
+            "temperature_c": temperature,
+            "humidity_pct": humidity,
+            "comfort_status": comfort_status_for(
+                temperature,
+                humidity,
+                sensor_ok=bool(self.environment_sensor_ok),
+                online=environment_online,
+            ),
+        }
 
     def _sleep_stage_for_latest(self, radar_online, heart_rate, breath_rate):
         if not radar_online:
@@ -416,6 +510,7 @@ class RealtimeRadarProcessor:
         snore_dbfs = self.snore_dbfs if snore_online else None
         snore_level = self._snore_level_from_dbfs(snore_dbfs, snore_score) if snore_online else None
         snore_detected = bool(self.snore_detected) if snore_online else False
+        env = self._environment_snapshot()
         return {
             "timestamp": timestamp or self._now_iso(),
             "heart_rate": heart_rate if radar_online else None,
@@ -428,6 +523,11 @@ class RealtimeRadarProcessor:
             "snore_dbfs": snore_dbfs,
             "snore_level": snore_level,
             "snore_detected": snore_detected,
+            "environment_online": env["environment_online"],
+            "environment_board_online": env["environment_board_online"],
+            "temperature_c": env["temperature_c"],
+            "humidity_pct": env["humidity_pct"],
+            "comfort_status": env["comfort_status"],
             "sleep_stage": self._sleep_stage_for_latest(radar_online, heart_rate, breath_rate),
         }
 
@@ -462,17 +562,23 @@ class RealtimeRadarProcessor:
         valid_br = [row["breath_rate"] for row in rows if isinstance(row.get("breath_rate"), (int, float))]
         snore_levels = [row["snore_level"] for row in rows if isinstance(row.get("snore_level"), (int, float))]
         snore_rows = [row for row in rows if row.get("snore_detected")]
+        temperatures = [row["temperature_c"] for row in rows if isinstance(row.get("temperature_c"), (int, float))]
+        humidities = [row["humidity_pct"] for row in rows if isinstance(row.get("humidity_pct"), (int, float))]
         latest = rows[-1] if rows else {}
         return {
             "points": len(rows),
             "valid_heart_points": len(valid_hr),
             "valid_breath_points": len(valid_br),
+            "valid_environment_points": len(temperatures),
             "snore_event_count": len(snore_rows),
             "avg_snore_level": round(float(np.mean(snore_levels)), 3) if snore_levels else None,
             "latest_sleep_stage": latest.get("sleep_stage", "等待数据"),
             "latest_timestamp": latest.get("timestamp"),
             "avg_heart_rate": round(float(np.mean(valid_hr)), 2) if valid_hr else None,
             "avg_breath_rate": round(float(np.mean(valid_br)), 2) if valid_br else None,
+            "avg_temperature_c": round(float(np.mean(temperatures)), 2) if temperatures else None,
+            "avg_humidity_pct": round(float(np.mean(humidities)), 2) if humidities else None,
+            "latest_comfort_status": latest.get("comfort_status", "offline"),
         }
 
     # ===== sleep overview 辅助方法（移植自 mock_hardware_api.py） =====
@@ -518,6 +624,96 @@ class RealtimeRadarProcessor:
             row
             for row in rows
             if (self._parse_iso_seconds(row.get("timestamp", "")) or 0.0) >= start_ts
+        ]
+
+    def _record_emergency_event(self, payload):
+        timestamp = payload.timestamp or self._now_iso()
+        phrase = (payload.phrase or "").strip()
+        transcript = (payload.transcript or "").strip()
+        source = (payload.source or "xiaozhi_voice_board").strip() or "xiaozhi_voice_board"
+        display_text = transcript or phrase or "未提供文本"
+        fingerprint_seed = f"{timestamp}:{source}:{phrase}:{transcript}:{payload.device_id or ''}"
+        fingerprint = "emergency_voice:" + hashlib.sha1(fingerprint_seed.encode("utf-8")).hexdigest()[:16]
+        event = {
+            "eventID": int(time.time() * 1000),
+            "userID": None,
+            "type": "emergency_voice",
+            "severity": "critical",
+            "title": "语音紧急求助",
+            "message": f"小智检测到求助语音：“{display_text}”",
+            "timestamp": timestamp,
+            "source": source,
+            "score_delta": -30,
+            "details": {
+                "phrase": phrase or None,
+                "transcript": transcript or None,
+                "device_id": payload.device_id,
+            },
+            "fingerprint": fingerprint,
+            "status": "active",
+            "resolved_at": None,
+            "resolution_note": None,
+            "resolved_by": None,
+        }
+        with self.state_lock:
+            if not any(item.get("fingerprint") == fingerprint for item in self.emergency_events):
+                self.emergency_events.append(event)
+                self.emergency_events = self.emergency_events[-120:]
+            self.last_voice_received_time = time.time()
+            self.last_voice_received_at = timestamp
+            self.last_edgi_heartbeat_time = time.time()
+            self.last_edgi_heartbeat_at = timestamp
+        return {
+            "status": "success",
+            "event_id": event["eventID"],
+            "event_type": "emergency_voice",
+            "severity": "critical",
+            "timestamp": timestamp,
+        }
+
+    def _resolve_emergency_event(self, payload):
+        source = (payload.source or "xiaozhi_voice_board").strip() or "xiaozhi_voice_board"
+        resolved_at = self._now_iso()
+        note = (payload.resolution_note or "已在开发板确认并解除紧急状态").strip()
+        resolved_by = (payload.resolved_by or source).strip() or source
+
+        with self.state_lock:
+            candidates = [
+                event
+                for event in self.emergency_events
+                if event.get("type") == "emergency_voice"
+                and event.get("status", "active") == "active"
+                and (
+                    event.get("eventID") == payload.event_id
+                    if payload.event_id is not None
+                    else event.get("source") == source
+                )
+            ]
+            if not candidates:
+                return {"status": "not_found", "message": "没有待处理的紧急事件"}
+            event = max(candidates, key=lambda item: item.get("timestamp", ""))
+            event["status"] = "resolved"
+            event["resolved_at"] = resolved_at
+            event["resolution_note"] = note
+            event["resolved_by"] = resolved_by
+
+        return {
+            "status": "success",
+            "event_id": event["eventID"],
+            "event_status": "resolved",
+            "resolved_at": resolved_at,
+        }
+
+    def _emergency_events_between(self, start_ts=None):
+        with self.state_lock:
+            events = list(self.emergency_events)
+        if start_ts is None:
+            return events
+        return [
+            event
+            for event in events
+            if (self._parse_iso_seconds(event.get("timestamp", "")) or 0.0) >= start_ts
+            or event.get("status", "active") == "active"
         ]
 
     def _build_snore_heatmap(self, rows, events):
@@ -604,7 +800,9 @@ class RealtimeRadarProcessor:
         events: list = []
         seen = set()
         radar_age = self._seconds_since(self.last_radar_received_at)
-        snore_age = self._seconds_since(self.last_snore_heartbeat_at)
+        environment_age = self._seconds_since(self.last_environment_heartbeat_time)
+        edgi_age = self._seconds_since(self.last_edgi_heartbeat_time)
+        edgi_online = self._edgi_board_online()
 
         def add(event_type, severity, title, message, timestamp, source, score_delta, details, fingerprint):
             if fingerprint in seen:
@@ -634,9 +832,11 @@ class RealtimeRadarProcessor:
             heart_rate = row.get("heart_rate")
             breath_rate = row.get("breath_rate")
             snore_level = row.get("snore_level")
+            comfort_status = row.get("comfort_status")
             target_distance = float(row.get("target_distance") or 0.0)
             radar_online_flag = bool(row.get("radar_online"))
-            snore_online_flag = bool(row.get("snore_online"))
+            environment_online_flag = bool(row.get("environment_online"))
+            environment_board_online = bool(row.get("environment_board_online"))
             radar_has_target = radar_online_flag and target_distance > 0
 
             condition = "normal"
@@ -659,15 +859,41 @@ class RealtimeRadarProcessor:
                     f"no_person:{minute}",
                 )
 
-            if not snore_online_flag:
+            if not edgi_online:
                 if condition == "normal":
-                    condition = "snore_offline"
+                    condition = "edgi_offline"
                 add(
-                    "device_offline", "warning", "呼噜检测板离线",
-                    "呼噜检测板超过 5 秒未发送特征或音频片段。",
-                    timestamp, "snore_board", -8,
-                    {"snore_age_seconds": snore_age},
-                    f"device_offline:snore:{minute}",
+                    "device_offline", "warning", "Edgi E84 离线",
+                    "开发板心跳中断，呼噜、语音与环境数据暂不可用。",
+                    timestamp, "edgi_board", -10,
+                    {"edgi_age_seconds": edgi_age},
+                    f"device_offline:edgi:{minute}",
+                )
+
+            if edgi_online and environment_board_online and not environment_online_flag:
+                if condition == "normal":
+                    condition = "environment_sensor_error"
+                add(
+                    "sensor_error", "warning", "温湿度传感器异常",
+                    "Edgi E84 在线，但 AHT20 当前没有提供有效读数。",
+                    timestamp, "environment_board", -4,
+                    {"environment_age_seconds": environment_age},
+                    f"sensor_error:environment:{minute}",
+                )
+            elif comfort_status and comfort_status not in {"comfortable", "offline", "no_data", "sensor_error"}:
+                severity = "critical" if str(comfort_status).endswith("_critical") else "warning"
+                condition = "environment_uncomfortable"
+                add(
+                    "environment", severity, "睡眠环境不舒适",
+                    f"当前温湿度状态为 {comfort_status}，建议检查房间温度、湿度或通风。",
+                    timestamp, "environment_board",
+                    -12 if severity == "critical" else -6,
+                    {
+                        "temperature_c": row.get("temperature_c"),
+                        "humidity_pct": row.get("humidity_pct"),
+                        "comfort_status": comfort_status,
+                    },
+                    f"environment:{minute}",
                 )
 
             if isinstance(snore_level, (int, float)) and (row.get("snore_detected") or snore_level >= 0.62):
@@ -726,9 +952,13 @@ class RealtimeRadarProcessor:
         heart_values = self._numeric_values(rows, "heart_rate")
         breath_values = self._numeric_values(rows, "breath_rate")
         snore_levels = self._numeric_values(rows, "snore_level")
+        comfort_statuses = [row.get("comfort_status") for row in rows if row.get("comfort_status")]
         total_rows = max(len(rows), 1)
         radar_offline_ratio = sum(1 for row in rows if row.get("radar_online") is False) / total_rows if rows else 0.0
-        snore_offline_ratio = sum(1 for row in rows if row.get("snore_online") is False) / total_rows if rows else 0.0
+        uncomfortable_ratio = (
+            sum(1 for status in comfort_statuses if status not in {"comfortable", "offline"}) / total_rows
+            if rows else 0.0
+        )
         no_person_ratio = (
             sum(1 for row in rows if row.get("radar_online") is False or float(row.get("target_distance") or 0) <= 0) / total_rows
             if rows else 0.0
@@ -756,13 +986,17 @@ class RealtimeRadarProcessor:
                 penalties.append({"name": "呼噜扰动", "value": round(penalty, 1), "reason": f"平均呼噜强度 {avg_snore * 100:.0f}%，事件点 {snore_event_count} 个"})
         if radar_offline_ratio > 0:
             penalties.append({"name": "雷达掉线", "value": round(min(22.0, radar_offline_ratio * 34.0), 1), "reason": f"雷达断线占比 {radar_offline_ratio * 100:.0f}%"})
-        if snore_offline_ratio > 0:
-            penalties.append({"name": "呼噜板掉线", "value": round(min(14.0, snore_offline_ratio * 24.0), 1), "reason": f"呼噜板断线占比 {snore_offline_ratio * 100:.0f}%"})
+        if uncomfortable_ratio > 0:
+            penalties.append({"name": "环境舒适度", "value": round(min(16.0, uncomfortable_ratio * 24.0), 1), "reason": f"温湿度不舒适占比 {uncomfortable_ratio * 100:.0f}%"})
         if no_person_ratio > 0.08:
             penalties.append({"name": "疑似离床", "value": round(min(24.0, no_person_ratio * 32.0), 1), "reason": f"未检测到人体占比 {no_person_ratio * 100:.0f}%"})
 
         score = max(0, min(100, round(100.0 - sum(float(item["value"]) for item in penalties))))
-        event_severities = [event.get("severity", "info") for event in events]
+        event_severities = [
+            event.get("severity", "info")
+            for event in events
+            if event.get("status", "active") == "active"
+        ]
         worst_event = max(event_severities, key=self._severity_rank) if event_severities else "info"
         if radar_offline_ratio > 0.25 or worst_event == "critical":
             label = "设备异常" if radar_offline_ratio > 0.25 else "呼噜频繁"
@@ -787,6 +1021,10 @@ class RealtimeRadarProcessor:
         heart_values = self._numeric_values(rows, "heart_rate")
         breath_values = self._numeric_values(rows, "breath_rate")
         snore_levels = self._numeric_values(rows, "snore_level")
+        environment_rows = [row for row in rows if row.get("environment_online")]
+        comfortable_rows = [row for row in environment_rows if row.get("comfort_status") == "comfortable"]
+        temperatures = self._numeric_values(rows, "temperature_c")
+        humidities = self._numeric_values(rows, "humidity_pct")
         return [
             {
                 "key": "heart",
@@ -809,9 +1047,23 @@ class RealtimeRadarProcessor:
                 "unit": "%",
                 "detail": f"平均强度 {round((self._average(snore_levels) or 0) * 100)}%，样本 {len(snore_levels)}",
             },
+            {
+                "key": "environment",
+                "title": "环境舒适度",
+                "value": round(len(comfortable_rows) / len(environment_rows) * 100) if environment_rows else 0,
+                "unit": "%",
+                "detail": f"温度 {self._average(temperatures) or '--'} C，湿度 {self._average(humidities) or '--'} %RH",
+            },
         ]
 
     def _build_sleep_overview(self, rows, events, mode, seconds, date, user_id, devices=None):
+        events = [
+            event for event in events
+            if not (
+                event.get("type") == "device_offline"
+                and event.get("source") in {"snore_board", "environment_board"}
+            )
+        ]
         events_sorted = sorted(events, key=lambda item: item.get("timestamp", ""), reverse=True)
         heatmap = self._build_snore_heatmap(rows, events_sorted)
         score = self._compute_sleep_score(rows, events_sorted)
@@ -829,8 +1081,14 @@ class RealtimeRadarProcessor:
             "stats": {
                 **stats,
                 "event_count": len(events_sorted),
-                "critical_event_count": sum(1 for event in events_sorted if event.get("severity") == "critical"),
-                "warning_event_count": sum(1 for event in events_sorted if event.get("severity") == "warning"),
+                "critical_event_count": sum(
+                    1 for event in events_sorted
+                    if event.get("severity") == "critical" and event.get("status", "active") == "active"
+                ),
+                "warning_event_count": sum(
+                    1 for event in events_sorted
+                    if event.get("severity") == "warning" and event.get("status", "active") == "active"
+                ),
             },
             "devices": devices or {},
             "heatmap": heatmap,
@@ -883,14 +1141,23 @@ class RealtimeRadarProcessor:
     def _status_snapshot(self):
         radar_age = self._seconds_since(self.last_radar_received_time)
         snore_age = self._seconds_since(self.last_snore_heartbeat_time)
+        voice_age = self._seconds_since(self.last_voice_received_time)
         radar_online = self._radar_board_online()
         snore_online = self._snore_board_online()
+        env = self._environment_snapshot()
+        active_emergency = self._active_emergency_event()
         snore_level = self._snore_level_from_dbfs(self.snore_dbfs, self.snore_score)
         return {
             "running": self.running,
             "radar_online": radar_online,
             "radar_board_online": radar_online,
             "snore_board_online": snore_online,
+            "snore_monitoring": bool(self.snore_session_active and snore_online),
+            "snore_paused": bool(self.snore_session_stopped and self._edgi_board_online()),
+            "environment_board_online": env["environment_board_online"],
+            "environment_sensor_ok": env["environment_sensor_ok"],
+            "voice_board_online": self._voice_board_online(),
+            "edgi_board_online": self._edgi_board_online(),
             "snore_session_active": bool(self.snore_session_active),
             "snore_session_started_at": self.snore_session_started_text,
             "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
@@ -904,8 +1171,16 @@ class RealtimeRadarProcessor:
             "last_radar_frame_number": self.last_frame_number,
             "last_radar_received_at": self.last_radar_received_at,
             "last_snore_heartbeat_at": self.last_snore_heartbeat_at,
+            "last_environment_heartbeat_at": env["last_environment_heartbeat_at"],
+            "last_voice_received_at": self.last_voice_received_at,
+            "last_edgi_heartbeat_at": self.last_edgi_heartbeat_at,
             "radar_age_seconds": round(radar_age, 2) if radar_age is not None else None,
             "snore_age_seconds": round(snore_age, 2) if snore_age is not None else None,
+            "environment_age_seconds": env["environment_age_seconds"],
+            "voice_age_seconds": round(voice_age, 2) if voice_age is not None else None,
+            "edgi_age_seconds": self._seconds_since(self.last_edgi_heartbeat_time),
+            "emergency_active": active_emergency is not None,
+            "active_emergency": active_emergency,
             "audio_upload_count": self.audio_upload_count,
             "last_audio_received_at": self.last_audio_received_at,
             "last_audio_file": self.last_audio_file,
@@ -917,6 +1192,9 @@ class RealtimeRadarProcessor:
             "snore_detected": bool(self.snore_detected) if snore_online else False,
             "snore_event_count": self.snore_event_count,
             "last_snore_at": self.last_snore_at,
+            "temperature_c": env["temperature_c"],
+            "humidity_pct": env["humidity_pct"],
+            "comfort_status": env["comfort_status"],
             "sleep_stage": self._sleep_stage_for_latest(
                 radar_online,
                 self.heart_rate,
@@ -956,6 +1234,37 @@ class RealtimeRadarProcessor:
             dbfs: Optional[float] = None
             source: str = "real_snore_board"
 
+
+        class EnvironmentHeartbeat(BaseModel):
+            temperature_c: float
+            humidity_pct: float
+            sensor_ok: bool = True
+            source: str = "real_edgi_talk_m33_aht20"
+
+
+        class EmergencyRequest(BaseModel):
+            source: str = "xiaozhi_voice_board"
+            phrase: Optional[str] = None
+            transcript: Optional[str] = None
+            device_id: Optional[str] = None
+            timestamp: Optional[str] = None
+
+
+        class EmergencyResolveRequest(BaseModel):
+            event_id: Optional[int] = None
+            source: str = "xiaozhi_voice_board"
+            resolution_note: Optional[str] = None
+            resolved_by: Optional[str] = None
+
+
+        @self.app.post("/emergency")
+        async def receive_emergency(payload: EmergencyRequest):
+            return self._record_emergency_event(payload)
+
+
+        @self.app.post("/emergency/resolve")
+        async def resolve_emergency(payload: EmergencyResolveRequest):
+            return self._resolve_emergency_event(payload)
 
 
         @self.app.post("/register")
@@ -1047,6 +1356,7 @@ class RealtimeRadarProcessor:
             """同时获取目标距离和心率数据"""
             target_distance = self.target_bin * RANGE_RESOLUTION if self.target_bin is not None else None
             radar_online = self._radar_board_online()
+            env = self._environment_snapshot()
             return {
                 "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
                 "breath_rate": float(self.breath_rate) if self.breath_rate is not None else None,
@@ -1054,6 +1364,12 @@ class RealtimeRadarProcessor:
                 "target_bin": int(self.target_bin) if self.target_bin is not None else None,
                 "radar_online": radar_online,
                 "radar_board_online": radar_online,
+                "environment_board_online": env["environment_board_online"],
+                "last_environment_heartbeat_at": env["last_environment_heartbeat_at"],
+                "environment_age_seconds": env["environment_age_seconds"],
+                "temperature_c": env["temperature_c"],
+                "humidity_pct": env["humidity_pct"],
+                "comfort_status": env["comfort_status"],
                 "timestamp": time.time(),
                 "status": "ok" if (self.heart_rate is not None or target_distance is not None) else "no_data"
             }
@@ -1077,6 +1393,8 @@ class RealtimeRadarProcessor:
             with self.state_lock:
                 self.last_snore_heartbeat_time = now
                 self.last_snore_heartbeat_at = now_text
+                self.last_edgi_heartbeat_time = now
+                self.last_edgi_heartbeat_at = now_text
                 self.snore_session_last_seen_at = now
                 self.snore_score = round(score, 3)
                 if heartbeat.dbfs is not None:
@@ -1101,6 +1419,34 @@ class RealtimeRadarProcessor:
                 "snore_detected": self._status_snapshot()["snore_detected"],
             }
 
+        @self.app.post("/mock/environment-heartbeat")
+        async def receive_environment_heartbeat(heartbeat: EnvironmentHeartbeat):
+            """接收 M55 从 M33 AHT20 共享内存读取后转发的温湿度心跳。"""
+            sensor_ok = bool(heartbeat.sensor_ok)
+            temperature = round(float(heartbeat.temperature_c), 1)
+            humidity = round(max(0.0, min(100.0, float(heartbeat.humidity_pct))), 1)
+            comfort_status = comfort_status_for(temperature, humidity, sensor_ok=sensor_ok, online=sensor_ok)
+            now = time.time()
+            now_text = self._now_iso()
+            with self.state_lock:
+                self.last_environment_heartbeat_time = now
+                self.last_environment_heartbeat_at = now_text
+                self.last_edgi_heartbeat_time = now
+                self.last_edgi_heartbeat_at = now_text
+                self.environment_sensor_ok = sensor_ok
+                self.temperature_c = temperature if sensor_ok else None
+                self.humidity_pct = humidity if sensor_ok else None
+            self._upsert_timeline()
+            return {
+                "code": 200,
+                "status": "success",
+                "message": "温湿度心跳已接收",
+                "temperature_c": temperature if sensor_ok else None,
+                "humidity_pct": humidity if sensor_ok else None,
+                "sensor_ok": sensor_ok,
+                "comfort_status": comfort_status,
+            }
+
         @self.app.post("/mock/snore-session/start")
         async def start_snore_session():
             """呼噜检测板按下 Snore detect 时调用，前端从此刻开始一直显示在线。"""
@@ -1114,22 +1460,30 @@ class RealtimeRadarProcessor:
                 self.snore_session_last_seen_at = now
                 self.last_snore_heartbeat_time = now
                 self.last_snore_heartbeat_at = now_text
+                self.last_edgi_heartbeat_time = now
+                self.last_edgi_heartbeat_at = now_text
             self._upsert_timeline()
             return {
                 "code": 200,
                 "status": "success",
                 "message": "呼噜检测板 Snore detect 已按下",
                 "snore_board_online": self._snore_board_online(),
+                "snore_monitoring": True,
+                "snore_paused": False,
                 "started_at": now_text,
             }
 
         @self.app.post("/mock/snore-session/stop")
         async def stop_snore_session():
-            """呼噜检测板按下 back 时调用，前端立刻显示离线。"""
+            """呼噜监测暂停时调用；Edgi E84 仍保持在线。"""
+            now = time.time()
+            now_text = self._now_iso()
             with self.state_lock:
                 self.snore_session_active = False
                 self.snore_session_stopped = True
-                self.snore_session_last_seen_at = time.time()
+                self.snore_session_last_seen_at = now
+                self.last_edgi_heartbeat_time = now
+                self.last_edgi_heartbeat_at = now_text
                 # 让“最近心跳/音频”不再被 5/15 秒窗口认作在线依据
                 self.last_snore_heartbeat_time = None
                 self.last_audio_received_time = None
@@ -1137,8 +1491,10 @@ class RealtimeRadarProcessor:
             return {
                 "code": 200,
                 "status": "success",
-                "message": "呼噜检测板 back 已按下",
+                "message": "呼噜监测已暂停",
                 "snore_board_online": self._snore_board_online(),
+                "snore_monitoring": False,
+                "snore_paused": True,
             }
 
         @self.app.post("/audio")
@@ -1167,8 +1523,6 @@ class RealtimeRadarProcessor:
                 raw_for_db = body
 
             dbfs = self._estimate_dbfs(raw_for_db)
-            snore_score = 0.0 if dbfs is None else max(0.0, min(1.0, (dbfs + 45.0) / 35.0))
-            snore_detected = snore_score >= 0.55 or seconds >= 8.0
             now = time.time()
             now_text = self._now_iso()
 
@@ -1176,19 +1530,10 @@ class RealtimeRadarProcessor:
                 self.audio_upload_count += 1
                 self.last_audio_received_time = now
                 self.last_audio_received_at = now_text
-                self.last_snore_heartbeat_time = now
-                self.last_snore_heartbeat_at = now_text
                 self.snore_session_last_seen_at = now
                 self.last_audio_file = str(output_file)
                 self.last_audio_seconds = round(seconds, 2)
                 self.last_audio_dbfs = dbfs
-                self.snore_dbfs = dbfs
-                self.snore_score = round(snore_score, 3)
-                self.snore_detected = bool(snore_detected)
-                if snore_detected:
-                    self.snore_event_count += 1
-                    self.last_snore_time = now
-                    self.last_snore_at = now_text
             self._upsert_timeline()
 
             return {
@@ -1198,15 +1543,16 @@ class RealtimeRadarProcessor:
                 "file": str(output_file),
                 "seconds": round(seconds, 2),
                 "dbfs": dbfs,
-                "snore_score": round(snore_score, 3),
-                "snore_level": self._snore_level_from_dbfs(dbfs, snore_score),
-                "snore_detected": snore_detected,
+                "snore_score": round(float(self.snore_score or 0.0), 3),
+                "snore_level": self._snore_level_from_dbfs(self.snore_dbfs, self.snore_score),
+                "snore_detected": bool(self.snore_detected),
             }
 
         @self.app.get("/detailed")
         async def get_detailed_data():
             """获取详细的处理结果数据"""
             results = self.get_latest_results()
+            results.update(self._environment_snapshot())
             # 移除大型数据结构以减少响应大小
             if "cwt_results" in results and results["cwt_results"]:
                 results["cwt_results"] = {"available": True}
@@ -1274,24 +1620,53 @@ class RealtimeRadarProcessor:
                     devices = {
                         "radar_board_online": self._radar_board_online(),
                         "snore_board_online": self._snore_board_online(),
+                        "snore_monitoring": bool(self.snore_session_active and self._snore_board_online()),
+                        "snore_paused": bool(self.snore_session_stopped and self._edgi_board_online()),
+                        "environment_board_online": self._environment_snapshot()["environment_board_online"],
+                        "environment_sensor_ok": self._environment_snapshot()["environment_sensor_ok"],
+                        "voice_board_online": self._voice_board_online(),
+                        "edgi_board_online": self._edgi_board_online(),
                         "radar_age_seconds": self._seconds_since(self.last_radar_received_at),
                         "snore_age_seconds": self._seconds_since(self.last_snore_heartbeat_at),
+                        "environment_age_seconds": self._environment_snapshot()["environment_age_seconds"],
+                        "voice_age_seconds": self._seconds_since(self.last_voice_received_time),
+                        "edgi_age_seconds": self._seconds_since(self.last_edgi_heartbeat_time),
                         "audio_upload_count": self.audio_upload_count,
                         "last_audio_received_at": self.last_audio_received_at,
+                        "last_environment_heartbeat_at": self.last_environment_heartbeat_at,
+                        "temperature_c": self._environment_snapshot()["temperature_c"],
+                        "humidity_pct": self._environment_snapshot()["humidity_pct"],
+                        "comfort_status": self._environment_snapshot()["comfort_status"],
+                        "emergency_active": self._active_emergency_event() is not None,
                     }
-                events = self._synthesize_sleep_events(rows)
+                events = self._synthesize_sleep_events(rows) + self._emergency_events_between(cutoff)
                 return self._build_sleep_overview(rows, events, "live", seconds, date, userID, devices)
 
             with self.state_lock:
+                env = self._environment_snapshot()
                 devices = {
                     "radar_board_online": self._radar_board_online(),
                     "snore_board_online": self._snore_board_online(),
+                    "snore_monitoring": bool(self.snore_session_active and self._snore_board_online()),
+                    "snore_paused": bool(self.snore_session_stopped and self._edgi_board_online()),
+                    "environment_board_online": env["environment_board_online"],
+                    "environment_sensor_ok": env["environment_sensor_ok"],
+                    "voice_board_online": self._voice_board_online(),
+                    "edgi_board_online": self._edgi_board_online(),
                     "radar_age_seconds": self._seconds_since(self.last_radar_received_at),
                     "snore_age_seconds": self._seconds_since(self.last_snore_heartbeat_at),
+                    "environment_age_seconds": env["environment_age_seconds"],
+                    "voice_age_seconds": self._seconds_since(self.last_voice_received_time),
+                    "edgi_age_seconds": self._seconds_since(self.last_edgi_heartbeat_time),
                     "audio_upload_count": self.audio_upload_count,
                     "last_audio_received_at": self.last_audio_received_at,
+                    "last_environment_heartbeat_at": self.last_environment_heartbeat_at,
+                    "temperature_c": env["temperature_c"],
+                    "humidity_pct": env["humidity_pct"],
+                    "comfort_status": env["comfort_status"],
+                    "emergency_active": self._active_emergency_event() is not None,
                 }
-            events = self._synthesize_sleep_events(rows)
+            events = self._synthesize_sleep_events(rows) + self._emergency_events_between()
             return self._build_sleep_overview(rows, events, "history", seconds, date, userID, devices)
 
         @self.app.get("/heartdata/selectPage")

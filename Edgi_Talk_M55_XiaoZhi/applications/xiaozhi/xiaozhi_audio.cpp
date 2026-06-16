@@ -14,6 +14,7 @@
 #include "lwip/dns.h"
 #include "lwip/tcpip.h"
 #include "xiaozhi.h"
+#include "audio_capture_hub.h"
 
 /* Device name configurations */
 #ifndef BSP_XIAOZHI_SOUND_DEVICE_NAME
@@ -71,11 +72,23 @@ int xz_mic_init(void)
     thiz->rt_mic_dev = rt_device_find(BSP_XIAOZHI_MIC_DEVICE_NAME);
     thiz->is_rx_enable = 0;  /* Initialize as disabled */
 
+    if (!thiz->rt_mic_dev)
+    {
+        LOG_E("cannot find shared microphone device");
+        return -RT_ERROR;
+    }
+
     struct rt_audio_caps mic_dev_arg;
     mic_dev_arg.main_type = AUDIO_TYPE_MIXER;
     mic_dev_arg.sub_type = AUDIO_MIXER_VOLUME;
     mic_dev_arg.udata.value = 30;
     rt_device_control(thiz->rt_mic_dev, AUDIO_CTL_CONFIGURE, &mic_dev_arg);
+
+    if (audio_capture_hub_init() != RT_EOK)
+    {
+        LOG_E("shared microphone hub initialization failed");
+        return -RT_ERROR;
+    }
 
     mic_event = rt_event_create("mic_evt", RT_IPC_FLAG_FIFO);
     RT_ASSERT(mic_event != RT_NULL);
@@ -94,15 +107,16 @@ void xz_mic_open(xz_audio_t *thiz)
 {
     if (!thiz->is_rx_enable)
     {
-        if (rt_device_open(thiz->rt_mic_dev, RT_DEVICE_OFLAG_RDONLY) == RT_EOK)
+        if (audio_capture_hub_set_enabled(AUDIO_CAPTURE_VOICE,
+                                          RT_TRUE) == RT_EOK)
         {
             rt_event_send(mic_event, MIC_EVENT_OPEN);
-            LOG_I("Audio: Microphone opened successfully");
+            LOG_I("Audio: voice subscriber enabled");
             thiz->is_rx_enable = 1;
         }
         else
         {
-            LOG_E("Audio: Failed to open microphone device");
+            LOG_E("Audio: failed to enable voice subscriber");
         }
     }
     else
@@ -116,8 +130,8 @@ void xz_mic_close(xz_audio_t *thiz)
     if (thiz->is_rx_enable)
     {
         rt_event_send(mic_event, MIC_EVENT_CLOSE);
-        rt_device_close(thiz->rt_mic_dev);
-        LOG_I("Audio: Microphone closed");
+        audio_capture_hub_set_enabled(AUDIO_CAPTURE_VOICE, RT_FALSE);
+        LOG_I("Audio: voice subscriber disabled");
         thiz->is_rx_enable = 0;
     }
     else
@@ -148,6 +162,7 @@ int xz_mic_is_enabled(void)
 /* Speaker Functions */
 void xz_speaker_open(xz_audio_t *thiz)
 {
+    audio_capture_hub_suppress_snore(RT_TRUE);
     thiz->is_tx_enable = 1;
 }
 
@@ -156,6 +171,7 @@ void xz_speaker_close(xz_audio_t *thiz)
     LOG_D("speaker off");
     LOG_D("\u5f85\u547d\u4e2d...");
     thiz->is_tx_enable = 0;
+    audio_capture_hub_suppress_snore(RT_FALSE);
     rt_slist_t *idle;
     rt_enter_critical();
     while (1)
@@ -202,6 +218,7 @@ void mic_thread_entry(void *param)
         {
             while (1)
             {
+                evt = 0;
                 rt_event_recv(mic_event, MIC_EVENT_CLOSE,
                               RT_EVENT_FLAG_OR | RT_EVENT_FLAG_CLEAR,
                               RT_WAITING_NO, &evt);
@@ -209,17 +226,21 @@ void mic_thread_entry(void *param)
                 {
                     break;
                 }
-                length = rt_device_read(xz_audio.rt_mic_dev, 0, buffer, 1024);
+                length = (int)audio_capture_hub_read(
+                    AUDIO_CAPTURE_VOICE,
+                    buffer,
+                    sizeof(buffer),
+                    rt_tick_from_millisecond(100));
                 if (length > 0)
                 {
-
-                    total_length += length;
-                    rt_ringbuffer_put(xz_audio.rb_opus_encode_input, (uint8_t *)buffer, length);
+                    rt_ringbuffer_put_force(xz_audio.rb_opus_encode_input,
+                                            (uint8_t *)buffer, length);
+                    total_length = (int)rt_ringbuffer_data_len(
+                        xz_audio.rb_opus_encode_input);
                 }
                 if (total_length >= XZ_MIC_FRAME_LEN)
                 {
                     rt_event_send(xz_audio.event, XZ_EVENT_MIC_RX);
-                    total_length = 0;
                 }
             }
         }
@@ -258,15 +279,25 @@ void xz_opus_thread_entry(void *p)
 
         if ((evt & XZ_EVENT_MIC_RX) && thiz->is_rx_enable)
         {
-            rt_ringbuffer_get(thiz->rb_opus_encode_input, (uint8_t *)&thiz->encode_in[0], XZ_MIC_FRAME_LEN);
-            opus_int32 len = opus_encode(thiz->encoder, (const opus_int16 *)thiz->encode_in,
-                                         XZ_MIC_FRAME_LEN / 2, thiz->encode_out, XZ_MIC_FRAME_LEN);
-            if (len < 0 || len > XZ_MIC_FRAME_LEN)
+            while (rt_ringbuffer_data_len(thiz->rb_opus_encode_input) >=
+                   XZ_MIC_FRAME_LEN)
             {
-                LOG_E("opus_encode len=%d", len);
-                RT_ASSERT(0);
+                rt_ringbuffer_get(thiz->rb_opus_encode_input,
+                                  (uint8_t *)&thiz->encode_in[0],
+                                  XZ_MIC_FRAME_LEN);
+                opus_int32 len = opus_encode(
+                    thiz->encoder,
+                    (const opus_int16 *)thiz->encode_in,
+                    XZ_MIC_FRAME_LEN / sizeof(opus_int16) / 2,
+                    thiz->encode_out,
+                    XZ_MIC_FRAME_LEN);
+                if (len < 0 || len > XZ_MIC_FRAME_LEN)
+                {
+                    LOG_E("opus_encode len=%d", len);
+                    RT_ASSERT(0);
+                }
+                xz_audio_send_using_websocket(thiz->encode_out, len);
             }
-            xz_audio_send_using_websocket(thiz->encode_out, len);
         }
 
         if ((evt & XZ_EVENT_DOWNLINK) && thiz->is_tx_enable)

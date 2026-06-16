@@ -4,6 +4,7 @@ from building import *
 cwd  = GetCurrentDir()
 path = []
 path += [cwd]
+path += [os.path.abspath(os.path.join(cwd, '..', '..'))]
 # Add source code
 src = Glob('*.c')
 

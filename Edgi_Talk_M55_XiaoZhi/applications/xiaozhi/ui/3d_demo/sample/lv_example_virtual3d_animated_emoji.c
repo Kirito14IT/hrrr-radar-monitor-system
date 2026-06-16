@@ -5,8 +5,10 @@
 
 #include "lvgl.h"
 #include <stdio.h>  
+#include <math.h>
 #include "lx_resource.h"
 #include "lv_example_virtual3d_animated_emoji.h"   
+#include "lv_virtual3d.h"
 
 #include "lv_font.h"
 
@@ -131,7 +133,9 @@ static bool emoji_popup_mode = false;
 static lv_obj_t** emoji_visible_obj_list = NULL;
 static uint32_t emoji_visible_obj_count = 0;
 static lv_obj_t *emoji_snapshot_img = NULL;
-static lv_img_dsc_t *emoji_snapshot_dsc = NULL;
+#if LV_USE_SNAPSHOT
+static lv_draw_buf_t *emoji_snapshot_dsc = NULL;
+#endif
 
 static lx_vglite_model_t CURR_MODEL = { 0 };
 
@@ -1297,6 +1301,7 @@ static void emoji_restore_screen_visible_objs(void)
  */
 static void emoji_screenshot_replace_popup_bg(void)
 {
+#if LV_USE_SNAPSHOT
     lv_obj_t *scr = lv_screen_active();
 
     emoji_save_screen_visible_objs();
@@ -1338,7 +1343,7 @@ static void emoji_screenshot_replace_popup_bg(void)
     emoji_hide_screen_visible_objs();
 
     if(!emoji_snapshot_dsc) {
-        LOG_E_WARN("Failed to take screenshot");
+        LOG_W("Failed to take screenshot");
         return;
     }
 
@@ -1348,6 +1353,9 @@ static void emoji_screenshot_replace_popup_bg(void)
     lv_image_set_src(emoji_snapshot_img, emoji_snapshot_dsc);
     lv_obj_set_size(emoji_snapshot_img, lv_obj_get_width(scr), lv_obj_get_height(scr));
     lv_obj_center(emoji_snapshot_img);
+#else
+    LOG_D("Snapshot background disabled because LV_USE_SNAPSHOT=0");
+#endif
 }
 
 /**
@@ -1355,6 +1363,7 @@ static void emoji_screenshot_replace_popup_bg(void)
  */
 static void emoji_screen_restore(void)
 {
+#if LV_USE_SNAPSHOT
     emoji_restore_screen_visible_objs();
 
     if(emoji_snapshot_img) {
@@ -1366,6 +1375,7 @@ static void emoji_screen_restore(void)
         lv_draw_buf_destroy(emoji_snapshot_dsc);
         emoji_snapshot_dsc = NULL;
     }
+#endif
 }
 
 static void touch_event_handler(lv_event_t *e) {
@@ -1532,7 +1542,7 @@ static uint32_t virtual3d_user_callback(uint16_t cmd, uint32_t param, uint32_t u
         case LX_CMD_ID_GET_MODEL:    
 
             LOG_D(" LX_VGWIDGET_INS_EMOJI_ANIMATION ->LX_CMD_ID_GET_MODEL  (uint16_t)param:%d",(uint16_t)param);
-            return get_model((uint16_t)param);
+            return (uint32_t)(uintptr_t)get_model((uint16_t)param);
 
         case LX_CMD_ID_FREE_MODEL:
             LOG_D(" LX_VGWIDGET_INS_EMOJI_ANIMATION ->LX_CMD_ID_FREE_MODEL  (uint16_t)param:%d",(uint16_t)param);

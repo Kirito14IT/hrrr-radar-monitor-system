@@ -2,13 +2,10 @@
   <div class="alert-workspace care-page-shell">
     <section class="alert-hero">
       <div class="risk-card care-glass-card" :class="overallRisk.level">
-        <div class="care-kicker">Care Alert Center</div>
         <h1>看护预警中心</h1>
-        <p>基于实时生命体征、呼噜扰动、设备心跳和睡眠事件，生成夜间看护的异常归因与动作队列。</p>
         <div class="risk-summary">
           <span>{{ overallRisk.label }}</span>
           <strong>{{ overallRisk.score }}</strong>
-          <small>{{ overallRisk.reason }}</small>
         </div>
       </div>
 
@@ -16,17 +13,81 @@
         <div class="status-card care-glass-card" :class="{ online: status.radar_board_online }">
           <span>雷达板</span>
           <strong>{{ status.radar_board_online ? '在线' : '离线' }}</strong>
-          <small>{{ formatAge(status.radar_age_seconds) }}</small>
         </div>
-        <div class="status-card care-glass-card" :class="{ online: status.snore_board_online }">
-          <span>呼噜板</span>
-          <strong>{{ status.snore_board_online ? '在线' : '离线' }}</strong>
-          <small>{{ formatAge(status.snore_age_seconds) }}</small>
+        <div class="status-card care-glass-card" :class="{ online: edgiBoardOnline, warning: edgiBoardNeedsAttention }">
+          <span>Edgi E84</span>
+          <strong>{{ edgiStatusText }}</strong>
         </div>
         <div class="status-card care-glass-card">
           <span>音频片段</span>
           <strong>{{ status.audio_upload_count ?? 0 }}</strong>
-          <small>{{ status.snore_detected ? '最近检测到呼噜' : '暂无呼噜事件' }}</small>
+        </div>
+      </div>
+    </section>
+
+    <section
+      v-if="latestEmergencyEvent"
+      class="emergency-workspace"
+      aria-live="assertive"
+    >
+      <div class="emergency-heading">
+        <div class="sos-mark">SOS</div>
+        <div>
+          <span>待处理紧急事件</span>
+          <h2>请立即确认床旁情况</h2>
+          <p>{{ emergencyPhrase }}</p>
+        </div>
+        <el-tag type="danger" effect="dark">最高优先级</el-tag>
+      </div>
+
+      <div class="emergency-meta">
+        <div>
+          <span>触发时间</span>
+          <strong>{{ formatDateTime(latestEmergencyEvent.timestamp) }}</strong>
+        </div>
+        <div>
+          <span>触发话术</span>
+          <strong>{{ emergencyPhrase }}</strong>
+        </div>
+        <div>
+          <span>事件来源</span>
+          <strong>小智语音开发板</strong>
+        </div>
+      </div>
+
+      <div class="emergency-process">
+        <div class="response-steps">
+          <strong>处理顺序</strong>
+          <ol>
+            <li>确认床旁情况</li>
+            <li>检查呼吸与意识</li>
+            <li>必要时联系急救</li>
+          </ol>
+        </div>
+        <div class="resolution-form">
+          <label>
+            处理人
+            <el-input v-model="resolvedBy" maxlength="30" placeholder="例如：夜班看护员" />
+          </label>
+          <label>
+            处理说明
+            <el-input
+              v-model="resolutionNote"
+              type="textarea"
+              :rows="3"
+              maxlength="160"
+              show-word-limit
+              placeholder="记录现场确认结果和采取的措施"
+            />
+          </label>
+          <el-button
+            type="danger"
+            size="large"
+            :loading="handlingEmergency"
+            @click="resolveEmergency"
+          >
+            确认已处理并解除紧急状态
+          </el-button>
         </div>
       </div>
     </section>
@@ -34,10 +95,13 @@
     <section class="control-row care-glass-card">
       <div>
         <strong>实时策略窗口</strong>
-        <span>最近 30 分钟 · {{ overview.stats?.points || timelineRows.length }} 个数据点</span>
+        <span>30 分钟 · {{ overview.stats?.points || timelineRows.length }} 点</span>
       </div>
       <div class="control-actions">
         <el-button type="primary" :loading="loading" @click="loadData">刷新</el-button>
+        <el-button @click="policyVisible = !policyVisible">
+          {{ policyVisible ? '收起阈值' : '阈值设置' }}
+        </el-button>
         <el-button @click="policy.clearAcknowledged">恢复已处理动作</el-button>
       </div>
       <p v-if="error" class="inline-error">{{ error }}</p>
@@ -48,7 +112,6 @@
         <div class="section-title">
           <div>
             <h2>异常归因矩阵</h2>
-            <p>状态徽标、颜色和文字同时表达风险，避免只依赖颜色判断。</p>
           </div>
         </div>
         <div class="matrix-list">
@@ -57,7 +120,6 @@
             <div>
               <strong>{{ item.title }}</strong>
               <span>{{ item.status }}</span>
-              <small>{{ item.detail }}</small>
             </div>
           </div>
         </div>
@@ -67,7 +129,6 @@
         <div class="section-title">
           <div>
             <h2>照护动作队列</h2>
-            <p>按风险优先级生成当前最值得执行的检查项。</p>
           </div>
           <el-tag :type="activeActions.length ? 'warning' : 'success'">
             {{ activeActions.length ? `${activeActions.length} 项待处理` : '无待处理' }}
@@ -81,18 +142,16 @@
           <div v-for="action in activeActions" :key="action.key" class="action-item" :class="action.level">
             <div>
               <strong>{{ action.title }}</strong>
-              <p>{{ action.detail }}</p>
             </div>
             <el-button size="small" @click="policy.acknowledge(action.key)">标记已处理</el-button>
           </div>
         </div>
       </article>
 
-      <article class="policy-card care-glass-card">
+      <article v-if="policyVisible" class="policy-card care-glass-card">
         <div class="section-title">
           <div>
             <h2>阈值策略</h2>
-            <p>本地持久化，刷新页面后仍保留。</p>
           </div>
           <el-button size="small" @click="policy.resetPolicy">恢复默认</el-button>
         </div>
@@ -119,6 +178,22 @@
             <el-input-number v-model="policy.snoreThreshold" :min="5" :max="100" />
           </label>
           <label>
+            温度下限 C
+            <el-input-number v-model="policy.temperatureLow" :min="10" :max="25" />
+          </label>
+          <label>
+            温度上限 C
+            <el-input-number v-model="policy.temperatureHigh" :min="22" :max="38" />
+          </label>
+          <label>
+            湿度下限 %RH
+            <el-input-number v-model="policy.humidityLow" :min="20" :max="60" />
+          </label>
+          <label>
+            湿度上限 %RH
+            <el-input-number v-model="policy.humidityHigh" :min="50" :max="90" />
+          </label>
+          <label>
             离线秒数
             <el-input-number v-model="policy.offlineSeconds" :min="3" :max="60" />
           </label>
@@ -129,7 +204,6 @@
         <div class="section-title">
           <div>
             <h2>趋势小窗</h2>
-            <p>{{ chartSummary }}</p>
           </div>
         </div>
         <div ref="trendChartEl" class="trend-chart" role="img" :aria-label="chartSummary"></div>
@@ -141,6 +215,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
 import request from '@/utils/request'
 import { useAlertPolicyStore } from '@/stores/alertPolicyStore'
 import { useThemeStore } from '@/stores/themeStore'
@@ -150,6 +225,10 @@ const themeStore = useThemeStore()
 
 const loading = ref(false)
 const error = ref('')
+const handlingEmergency = ref(false)
+const resolvedBy = ref('')
+const resolutionNote = ref('')
+const policyVisible = ref(false)
 const overview = reactive({
   stats: {},
   score: {},
@@ -160,8 +239,21 @@ const timelineRows = ref([])
 const status = reactive({
   radar_board_online: false,
   snore_board_online: false,
+  snore_monitoring: false,
+  snore_paused: false,
+  environment_board_online: false,
+  environment_sensor_ok: false,
+  voice_board_online: false,
+  edgi_board_online: false,
+  emergency_active: false,
+  active_emergency: null,
   radar_age_seconds: null,
   snore_age_seconds: null,
+  environment_age_seconds: null,
+  voice_age_seconds: null,
+  temperature_c: null,
+  humidity_pct: null,
+  comfort_status: 'offline',
   audio_upload_count: 0,
   snore_detected: false
 })
@@ -180,22 +272,98 @@ const latestSnore = computed(() => {
   const score = numberOrNull(latestRow.value.snore_score)
   return score === null ? null : Math.round(score * 100)
 })
+const latestTemperature = computed(() => numberOrNull(latestRow.value.temperature_c ?? status.temperature_c))
+const latestHumidity = computed(() => numberOrNull(latestRow.value.humidity_pct ?? status.humidity_pct))
+
+const comfortLabelMap = {
+  comfortable: '舒适',
+  cold: '偏冷',
+  hot: '偏热',
+  dry: '偏干',
+  humid: '偏湿',
+  cold_dry: '偏冷偏干',
+  cold_humid: '偏冷偏湿',
+  hot_dry: '偏热偏干',
+  hot_humid: '偏热偏湿',
+  cold_critical: '过冷',
+  hot_critical: '过热',
+  dry_critical: '过干',
+  humid_critical: '过湿',
+  cold_dry_critical: '过冷过干',
+  cold_humid_critical: '过冷过湿',
+  hot_dry_critical: '过热过干',
+  hot_humid_critical: '过热过湿',
+  sensor_error: '传感器异常',
+  no_data: '暂无数据',
+  offline: '离线'
+}
+
+const comfortStatusLabel = computed(() => comfortLabelMap[status.comfort_status] || status.comfort_status || '离线')
+
+const environmentNeedsAttention = computed(() => {
+  return status.environment_board_online && status.comfort_status !== 'comfortable'
+})
+
+const edgiBoardOnline = computed(() => (
+  status.edgi_board_online ||
+  status.snore_board_online ||
+  status.environment_board_online ||
+  status.voice_board_online
+))
+
+const edgiBoardNeedsAttention = computed(() => {
+  return Boolean(edgiBoardOnline.value && (
+    status.snore_detected ||
+    environmentNeedsAttention.value ||
+    status.emergency_active
+  ))
+})
+
+const edgiStatusText = computed(() => {
+  if (!edgiBoardOnline.value) return '离线'
+  if (status.emergency_active) return '紧急状态'
+  if (status.snore_monitoring || status.snore_board_online) return '在线 · 呼噜监测中'
+  return status.snore_paused ? '在线 · 呼噜已暂停' : '在线'
+})
+
+const environmentStatusText = computed(() => {
+  if (!status.environment_board_online) return formatAge(status.environment_age_seconds)
+  const temp = latestTemperature.value === null ? '-- C' : `${latestTemperature.value.toFixed(1)} C`
+  const humidity = latestHumidity.value === null ? '-- %RH' : `${latestHumidity.value.toFixed(1)} %RH`
+  return `${temp} · ${humidity}`
+})
 
 const eventPressure = computed(() => {
-  const events = overview.events || []
+  const events = (overview.events || []).filter(event => (event.status || 'active') === 'active')
   return {
     critical: events.filter(event => event.severity === 'critical').length,
     warning: events.filter(event => event.severity === 'warning').length
   }
 })
 
+const latestEmergencyEvent = computed(() => {
+  const events = overview.events || []
+  return events.find(event =>
+    event.type === 'emergency_voice' &&
+    event.severity === 'critical' &&
+    (event.status || 'active') === 'active'
+  ) || status.active_emergency || null
+})
+
+const emergencyPhrase = computed(() => {
+  const event = latestEmergencyEvent.value
+  return event?.details?.transcript || event?.details?.phrase || '求助语音'
+})
+
 const riskItems = computed(() => {
+  const emergency = buildEmergencyRisk()
   const heart = buildHeartRisk()
   const breath = buildBreathRisk()
   const snore = buildSnoreRisk()
+  const environment = buildEnvironmentRisk()
   const presence = buildPresenceRisk()
   const devices = buildDeviceRisk()
-  return [heart, breath, snore, presence, devices]
+  return [emergency, heart, breath, snore, environment, presence, devices]
 })
 
 const overallRisk = computed(() => {
@@ -211,7 +379,7 @@ const overallRisk = computed(() => {
       level: 'critical',
       label: '立即关注',
       score: Math.min(100, score + 40),
-      reason: '存在设备离线、离床或生命体征越界风险。'
+      reason: '存在设备离线、离床、环境或生命体征越界风险。'
     }
   }
   if (maxLevel === 'warning') {
@@ -247,10 +415,14 @@ const chartSummary = computed(() => {
   const heart = latestHeart.value === null ? '心率无数据' : `心率 ${latestHeart.value.toFixed(1)} BPM`
   const breath = latestBreath.value === null ? '呼吸无数据' : `呼吸 ${latestBreath.value.toFixed(1)} RPM`
   const snore = latestSnore.value === null ? '呼噜无数据' : `呼噜强度 ${latestSnore.value}%`
-  return `最新状态：${heart}，${breath}，${snore}。`
+  const environment = latestTemperature.value === null || latestHumidity.value === null
+    ? '环境无数据'
+    : `环境 ${latestTemperature.value.toFixed(1)} C / ${latestHumidity.value.toFixed(1)} %RH`
+  return `最新状态：${heart}，${breath}，${snore}，${environment}。`
 })
 
 function numberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null
   const number = Number(value)
   return Number.isFinite(number) ? number : null
 }
@@ -259,6 +431,24 @@ function riskWeight(level) {
   if (level === 'critical') return 24
   if (level === 'warning') return 10
   return 0
+}
+
+function buildEmergencyRisk() {
+  const event = latestEmergencyEvent.value
+  if (!event) {
+    return risk('emergency_voice', '语音求助', 'normal', '暂无求助', '当前窗口内未检测到小智语音求助。', '无需处理', '未触发语音求助。', 'SOS')
+  }
+  const phrase = event.details?.phrase || event.details?.transcript || '求助语音'
+  return risk(
+    'emergency_voice',
+    '语音求助',
+    'critical',
+    '紧急触发',
+    `小智检测到“${phrase}”。`,
+    '立即确认床旁情况',
+    '优先到现场或联系看护人员确认用户状态；情况紧急时联系当地急救电话。',
+    'SOS'
+  )
 }
 
 function formatAge(value) {
@@ -294,12 +484,85 @@ function buildSnoreRisk() {
   const snoreValue = latestSnore.value
   const hasSnoreEvent = Boolean(status.snore_detected)
   if (snoreValue === null) {
-    return risk('snore', '呼噜', 'warning', '暂无呼噜特征', '呼噜板尚未提供有效特征。', '确认呼噜板在线', '检查呼噜检测模拟板是否在持续发送 heartbeat。', 'SN')
+    if (edgiBoardOnline.value && !status.snore_board_online) {
+      return risk('snore', '呼噜', 'normal', '已暂停', '小智连接正常，呼噜监测当前暂停。', '无需处理', '可在开发板主页继续呼噜监测。', 'SN')
+    }
+    return risk('snore', '呼噜', 'warning', '暂无数据', '暂无呼噜特征。', '检查开发板', '确认 Edgi E84 在线。', 'SN')
   }
   if (snoreValue >= policy.snoreThreshold || hasSnoreEvent) {
     return risk('snore', '呼噜', 'warning', `${snoreValue}%`, `达到策略阈值 ${policy.snoreThreshold}% 或最近检测到呼噜。`, '观察呼噜扰动', '查看驾驶舱呼噜扰动地图，确认是否伴随心率/呼吸波动。', 'SN')
   }
   return risk('snore', '呼噜', 'normal', `${snoreValue}%`, '低于当前呼噜阈值。', '无需处理', '呼噜扰动较低。', 'SN')
+}
+
+function formatDateTime(value) {
+  if (!value) return '--'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+}
+
+async function resolveEmergency() {
+  const event = latestEmergencyEvent.value
+  if (!event) return
+  if (!resolvedBy.value.trim()) {
+    ElMessage.warning('请填写处理人')
+    return
+  }
+  if (!resolutionNote.value.trim()) {
+    ElMessage.warning('请填写现场处理说明')
+    return
+  }
+
+  handlingEmergency.value = true
+  try {
+    const response = await request.post('/emergency/resolve', {
+      event_id: event.eventID,
+      source: event.source || 'xiaozhi_voice_board',
+      resolved_by: resolvedBy.value.trim(),
+      resolution_note: resolutionNote.value.trim()
+    })
+    if (response.status !== 'success' && response.status !== 'not_found') {
+      throw new Error(response.message || '解除紧急状态失败')
+    }
+    ElMessage.success(response.status === 'not_found' ? '该事件已由其他终端处理' : '紧急状态已解除并留存记录')
+    resolutionNote.value = ''
+    await loadData()
+  } catch (err) {
+    console.error('解除紧急状态失败:', err)
+    ElMessage.error(err.message || '解除失败，请检查后端连接')
+  } finally {
+    handlingEmergency.value = false
+  }
+}
+
+function buildEnvironmentRisk() {
+  if (!status.environment_board_online) {
+    const level = edgiBoardOnline.value ? 'normal' : 'warning'
+    return risk('environment', '睡眠环境', level, '等待采样', 'Edgi E84 已连接，当前暂无环境心跳。', '检查环境采集', '确认 AHT20 与环境上报线程运行。', 'EV')
+  }
+  const temperature = latestTemperature.value
+  const humidity = latestHumidity.value
+  if (temperature === null || humidity === null) {
+    return risk('environment', '睡眠环境', 'warning', '暂无温湿度', 'Edgi E84 在线，但当前窗口没有有效温湿度数值。', '复核环境数据', '查看实时页温湿度趋势是否断线，确认 AHT20 读数有效。', 'EV')
+  }
+  const outOfPolicy = temperature < policy.temperatureLow ||
+    temperature > policy.temperatureHigh ||
+    humidity < policy.humidityLow ||
+    humidity > policy.humidityHigh
+  const critical = status.comfort_status?.endsWith('_critical')
+  if (outOfPolicy || critical) {
+    return risk(
+      'environment',
+      '睡眠环境',
+      critical ? 'critical' : 'warning',
+      `${temperature.toFixed(1)} C / ${humidity.toFixed(1)} %RH`,
+      `策略范围 ${policy.temperatureLow}-${policy.temperatureHigh} C，${policy.humidityLow}-${policy.humidityHigh} %RH。`,
+      '调整房间环境',
+      '检查空调、加湿器、通风和传感器摆放，避免温湿度持续影响睡眠稳定性。',
+      'EV'
+    )
+  }
+  return risk('environment', '睡眠环境', 'normal', `${temperature.toFixed(1)} C / ${humidity.toFixed(1)} %RH`, '处于当前温湿度策略范围。', '无需处理', '睡眠环境舒适。', 'EV')
 }
 
 function buildPresenceRisk() {
@@ -316,11 +579,14 @@ function buildPresenceRisk() {
 
 function buildDeviceRisk() {
   const radarOffline = !status.radar_board_online || Number(status.radar_age_seconds) > policy.offlineSeconds
-  const snoreOffline = !status.snore_board_online || Number(status.snore_age_seconds) > policy.offlineSeconds
-  if (radarOffline || snoreOffline) {
-    return risk('device', '设备链路', 'critical', '存在离线', `离线判定阈值 ${policy.offlineSeconds} 秒。`, '恢复设备链路', '检查雷达板和呼噜板终端是否仍在运行，必要时重启模拟发送器。', 'DV')
+  const edgiOffline = !status.snore_board_online &&
+    !status.environment_board_online &&
+    !status.voice_board_online &&
+    !status.edgi_board_online
+  if (radarOffline || edgiOffline) {
+    return risk('device', '设备链路', 'critical', '存在离线', `离线判定阈值 ${policy.offlineSeconds} 秒。`, '恢复设备链路', '检查雷达板和 Edgi E84 是否仍在运行，必要时重启对应端。', 'DV')
   }
-  return risk('device', '设备链路', 'normal', '双板在线', '雷达板与呼噜板心跳正常。', '无需处理', '设备链路稳定。', 'DV')
+  return risk('device', '设备链路', 'normal', '两块开发板在线', '雷达板与 Edgi E84 心跳正常。', '无需处理', '设备链路稳定。', 'DV')
 }
 
 function risk(key, title, level, statusText, detail, actionTitle, actionDetail, icon) {
@@ -386,12 +652,12 @@ function renderChart() {
   const strongText = readToken('--care-muted-strong', '#41576b')
   trendChart.setOption({
     backgroundColor: 'transparent',
-    color: ['#ef4444', '#38bdf8', '#f59e0b'],
+    color: ['#ef4444', '#38bdf8', '#f59e0b', '#16a34a', '#0ea5e9'],
     tooltip: { trigger: 'axis' },
     legend: {
       top: 0,
       textStyle: { color: strongText },
-      data: ['心率', '呼吸率', '呼噜强度']
+      data: ['心率', '呼吸率', '呼噜强度', '温度', '湿度']
     },
     grid: { left: 42, right: 24, top: 42, bottom: 34 },
     xAxis: {
@@ -432,6 +698,22 @@ function renderChart() {
           const level = numberOrNull(row.snore_level)
           return level === null ? null : Math.round(level * 100)
         })
+      },
+      {
+        name: '温度',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        connectNulls: false,
+        data: rows.map(row => row.environment_online ? numberOrNull(row.temperature_c) : null)
+      },
+      {
+        name: '湿度',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        connectNulls: false,
+        data: rows.map(row => row.environment_online ? numberOrNull(row.humidity_pct) : null)
       }
     ]
   })
@@ -456,6 +738,10 @@ function resizeChart() {
 
 watch(timelineRows, () => nextTick(renderChart))
 watch(() => themeStore.mode, () => nextTick(renderChart))
+watch(policyVisible, () => nextTick(() => {
+  renderChart()
+  resizeChart()
+}))
 
 onMounted(() => {
   loadData()
@@ -573,6 +859,10 @@ onBeforeUnmount(() => {
   border-left-color: var(--care-success);
 }
 
+.status-card.warning {
+  border-left-color: var(--care-warning);
+}
+
 .status-card span {
   color: var(--care-muted);
   font-size: 13px;
@@ -608,6 +898,102 @@ onBeforeUnmount(() => {
   flex-basis: 100%;
   margin: 0;
   color: var(--care-danger);
+}
+
+.emergency-workspace {
+  overflow: hidden;
+  border: 1px solid rgba(239, 68, 68, 0.72);
+  border-left: 8px solid #ef4444;
+  border-radius: 8px;
+  background: var(--care-surface);
+  box-shadow: 0 18px 42px rgba(127, 29, 29, 0.18);
+}
+
+.emergency-heading {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 22px 24px;
+  border-bottom: 1px solid rgba(239, 68, 68, 0.28);
+}
+
+.sos-mark {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: #dc2626;
+  font-size: 22px;
+  font-weight: 900;
+  box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.12);
+}
+
+.emergency-heading span,
+.emergency-meta span {
+  color: var(--care-danger);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.emergency-heading h2 {
+  margin: 4px 0 6px;
+  font-size: 26px;
+}
+
+.emergency-heading p {
+  margin: 0;
+  color: var(--care-muted);
+}
+
+.emergency-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--care-border-soft);
+}
+
+.emergency-meta > div {
+  display: grid;
+  gap: 6px;
+  padding: 16px 24px;
+  border-right: 1px solid var(--care-border-soft);
+}
+
+.emergency-meta > div:last-child {
+  border-right: 0;
+}
+
+.emergency-meta strong {
+  overflow-wrap: anywhere;
+}
+
+.emergency-process {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(340px, 1.2fr);
+  gap: 28px;
+  padding: 22px 24px 26px;
+}
+
+.response-steps ol {
+  margin: 14px 0 0;
+  padding-left: 24px;
+  color: var(--care-muted);
+  line-height: 1.9;
+}
+
+.resolution-form {
+  display: grid;
+  gap: 14px;
+}
+
+.resolution-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--care-muted);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .alert-grid {
@@ -743,6 +1129,11 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 
+.policy-card,
+.trend-card {
+  grid-column: 1 / -1;
+}
+
 .trend-card {
   min-height: 360px;
 }
@@ -755,7 +1146,8 @@ onBeforeUnmount(() => {
 @media (max-width: 1180px) {
   .alert-hero,
   .alert-grid,
-  .policy-grid {
+  .policy-grid,
+  .emergency-process {
     grid-template-columns: 1fr;
   }
 }
@@ -769,6 +1161,35 @@ onBeforeUnmount(() => {
   .action-item {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .emergency-heading {
+    grid-template-columns: 56px minmax(0, 1fr);
+    padding: 18px;
+  }
+
+  .emergency-heading .el-tag {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .sos-mark {
+    width: 56px;
+    height: 56px;
+    font-size: 17px;
+  }
+
+  .emergency-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .emergency-meta > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--care-border-soft);
+  }
+
+  .emergency-process {
+    padding: 18px;
   }
 }
 </style>

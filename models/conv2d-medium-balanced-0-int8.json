@@ -1,0 +1,38 @@
+{
+  "model_bytes": 34592,
+  "input_shape": [
+    1,
+    60,
+    20
+  ],
+  "input_scale": 0.03960784524679184,
+  "input_zero_point": 77,
+  "output_shape": [
+    1,
+    2
+  ],
+  "output_scale": 0.00390625,
+  "output_zero_point": -128,
+  "operators": [
+    "SHAPE",
+    "STRIDED_SLICE",
+    "PACK",
+    "RESHAPE",
+    "CONV_2D",
+    "CONV_2D",
+    "CONV_2D",
+    "MAX_POOL_2D",
+    "CONV_2D",
+    "CONV_2D",
+    "MEAN",
+    "FULLY_CONNECTED",
+    "SOFTMAX"
+  ],
+  "mean_absolute_error": 0.001950626028701663,
+  "max_absolute_error": 0.00390625,
+  "class_agreement": 1.0,
+  "source_model": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\conv2d-medium-balanced-0.h5",
+  "source_sha256": "5aa73cf6e25d9cd24ff0aefc199919a5573e2d88afa8ed282af02bfe907d96ca",
+  "runtime_acceleration": "CMSIS-NN/Helium on Cortex-M55",
+  "nnlite_status": "not applicable: NNLite is only available on Cortex-M33"
+}

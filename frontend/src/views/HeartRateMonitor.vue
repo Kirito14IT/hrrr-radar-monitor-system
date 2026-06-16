@@ -5,7 +5,6 @@
       <span class="title-text">心率监测</span>
     </div>
 
-    <div class="monitor-subtitle">实时心率数据</div>
 
     <div class="heart-rate-data">
       <div class="rate-display">

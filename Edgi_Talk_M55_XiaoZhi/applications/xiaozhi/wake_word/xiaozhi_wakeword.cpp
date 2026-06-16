@@ -14,6 +14,7 @@
 #include <string.h>
 #include <rtconfig.h>
 #include "xiaozhi.h"  /* Include for xz_audio_t definition */
+#include "audio_capture_hub.h"
 
 // Edge Impulse SDK headers
 #include "edge-impulse-sdk/classifier/ei_run_classifier.h"
@@ -24,18 +25,11 @@
 #define DBG_LVL DBG_LOG
 #include <rtdbg.h>
 
-/* Audio device name */
-#ifndef BSP_XIAOZHI_MIC_DEVICE_NAME
-#define BSP_XIAOZHI_MIC_DEVICE_NAME "mic0"
-#endif
-#define AUDIO_DEVICE_NAME BSP_XIAOZHI_MIC_DEVICE_NAME
-
 /* Wake word detection configuration */
 #define WAKE_WORD_CONFIDENCE_THRESHOLD 0.80f /* 80% confidence threshold */
 #define WAKE_WORD_COOLDOWN_MS 1000           /* 1 seconds cooldown between detections */
 
 /* Global variables */
-static rt_device_t audio_device = RT_NULL;
 static int16_t audio_buffer[EI_CLASSIFIER_RAW_SAMPLE_COUNT];
 static volatile rt_bool_t wakeword_enabled = RT_FALSE;
 static rt_bool_t wakeword_initialized = RT_FALSE;
@@ -70,20 +64,6 @@ static int get_audio_signal_data(size_t offset, size_t length, float *out_ptr)
     return 0;
 }
 
-/*
- * PDM driver configuration:
- */
-#ifdef ENABLE_STEREO_INPUT_FEED
-    #define PDM_FRAME_SAMPLES 320
-    #define PDM_MONO_FRAME_SAMPLES (PDM_FRAME_SAMPLES / 2)
-    #define PDM_IS_STEREO 1
-#else
-    #define PDM_FRAME_SAMPLES 160
-    #define PDM_MONO_FRAME_SAMPLES PDM_FRAME_SAMPLES
-    #define PDM_IS_STEREO 0
-#endif
-#define PDM_FRAME_SIZE (PDM_FRAME_SAMPLES * sizeof(int16_t))
-
 #ifdef RT_USING_AUDIO
 /**
  * @brief Wake word detection thread
@@ -108,9 +88,6 @@ static void xz_wakeword_thread(void *parameter)
     signal_t signal;
     signal.total_length = EI_CLASSIFIER_RAW_SAMPLE_COUNT;
     signal.get_data = &get_audio_signal_data;
-
-    /* Temporary buffer for PDM frame */
-    int16_t pdm_frame[PDM_FRAME_SAMPLES];
 
     /* Main thread loop - permanent */
     while (RT_TRUE)
@@ -139,41 +116,13 @@ static void xz_wakeword_thread(void *parameter)
         {
             LOG_I("Starting wake word detection loop");
 
-            /* Open audio device if needed */
-            if (audio_device == RT_NULL)
-            {
-                audio_device = rt_device_find(AUDIO_DEVICE_NAME);
-                if (audio_device == RT_NULL)
-                {
-                    LOG_E("Cannot find audio device '%s'", AUDIO_DEVICE_NAME);
-                    continue;
-                }
-
-                if (rt_device_open(audio_device, RT_DEVICE_FLAG_RDONLY) != RT_EOK)
-                {
-                    LOG_E("Cannot open audio device");
-                    audio_device = RT_NULL;
-                    continue;
-                }
-
-                LOG_I("Wakeword: Audio device opened successfully");
-            }
-
             LOG_I("Model requires %d mono samples (%d ms)",
                   EI_CLASSIFIER_RAW_SAMPLE_COUNT,
                   EI_CLASSIFIER_RAW_SAMPLE_COUNT * 1000 / EI_CLASSIFIER_FREQUENCY);
-
-#if PDM_IS_STEREO
-            LOG_I("PDM driver: STEREO mode (dual mic), %d samples/frame -> %d mono samples",
-                  PDM_FRAME_SAMPLES, PDM_MONO_FRAME_SAMPLES);
-#else
-            LOG_I("PDM driver: MONO mode (single mic), %d samples/frame", PDM_FRAME_SAMPLES);
-#endif
-            LOG_I("Listening for wake words...");
+            LOG_I("Listening for wake words through shared audio hub...");
 
             /* Initialize audio buffer before starting */
             audio_buffer_init();
-            wakeword_enabled = RT_TRUE;
 
             /* Detection loop */
             while (wakeword_enabled)
@@ -209,38 +158,19 @@ static void xz_wakeword_thread(void *parameter)
                         }
                     }
 
-                    /* Read one PDM frame */
-                    rt_size_t read_size = rt_device_read(audio_device, 0,
-                                                         pdm_frame, PDM_FRAME_SIZE);
+                    rt_size_t remaining =
+                        EI_CLASSIFIER_RAW_SAMPLE_COUNT - samples_collected;
+                    rt_size_t read_size = audio_capture_hub_read(
+                        AUDIO_CAPTURE_WAKEWORD,
+                        &audio_buffer[samples_collected],
+                        remaining * sizeof(int16_t),
+                        rt_tick_from_millisecond(100));
 
                     if (read_size == 0)
                     {
-                        /* No data available yet, brief delay */
-                        rt_thread_mdelay(1);
                         continue;
                     }
-
-                    /* Calculate how many samples we got */
-                    rt_size_t total_samples = read_size / sizeof(int16_t);
-
-#if PDM_IS_STEREO
-                    /* Stereo mode: extract mono channel from interleaved stereo data */
-                    rt_size_t mono_samples = total_samples / 2;
-
-                    /* Extract right channel from stereo data (use right channel - index 1, 3, 5...) */
-                    /* The right channel typically has better audio in this hardware */
-                    for (rt_size_t i = 0; i < mono_samples && samples_collected < EI_CLASSIFIER_RAW_SAMPLE_COUNT; i++)
-                    {
-                        /* Extract right channel: samples at odd indices (1, 3, 5, ...) */
-                        audio_buffer[samples_collected++] = pdm_frame[i * 2 + 1];
-                    }
-#else
-                    /* Mono mode: directly copy samples */
-                    for (rt_size_t i = 0; i < total_samples && samples_collected < EI_CLASSIFIER_RAW_SAMPLE_COUNT; i++)
-                    {
-                        audio_buffer[samples_collected++] = pdm_frame[i];
-                    }
-#endif
+                    samples_collected += read_size / sizeof(int16_t);
                 }
 
                 /* Check if we should continue */
@@ -307,14 +237,7 @@ static void xz_wakeword_thread(void *parameter)
                 }
             }
 
-            /* Close audio device when stopping detection */
-            if (audio_device != RT_NULL)
-            {
-                LOG_I("Wakeword: Closing audio device after detection loop exit");
-                rt_device_close(audio_device);
-                audio_device = RT_NULL;
-                LOG_I("Wakeword: Audio device closed after detection");
-            }
+            audio_capture_hub_set_enabled(AUDIO_CAPTURE_WAKEWORD, RT_FALSE);
         }
     }
 
@@ -342,6 +265,14 @@ int xz_wakeword_init(void)
     {
         LOG_E("Failed to create wake word event");
         return -RT_ENOMEM;
+    }
+
+    if (audio_capture_hub_init() != RT_EOK)
+    {
+        LOG_E("Shared microphone hub is unavailable");
+        rt_event_delete(wakeword_event);
+        wakeword_event = RT_NULL;
+        return -RT_ERROR;
     }
 
     /* Create permanent thread */
@@ -413,8 +344,6 @@ int xz_wakeword_deinit(void)
 
     wakeword_initialized = RT_FALSE;
     wakeword_tid = RT_NULL;
-    audio_device = RT_NULL;
-
     LOG_I("Wake word detection deinitialized");
     return 0;
 }
@@ -436,6 +365,14 @@ int xz_wakeword_start(void)
         return 0;
     }
 
+    if (audio_capture_hub_set_enabled(AUDIO_CAPTURE_WAKEWORD,
+                                      RT_TRUE) != RT_EOK)
+    {
+        LOG_E("Failed to enable wake word audio subscriber");
+        return -RT_ERROR;
+    }
+
+    wakeword_enabled = RT_TRUE;
     if (wakeword_event != RT_NULL)
     {
         /* Clear any pending events first */
@@ -443,7 +380,12 @@ int xz_wakeword_start(void)
         rt_event_recv(wakeword_event, 0xFFFFFFFF, RT_EVENT_FLAG_OR | RT_EVENT_FLAG_CLEAR, RT_WAITING_NO, &recv_event);
 
         /* Now send START event */
-        rt_event_send(wakeword_event, XZ_WAKEWORD_EVENT_START);
+        if (rt_event_send(wakeword_event, XZ_WAKEWORD_EVENT_START) != RT_EOK)
+        {
+            wakeword_enabled = RT_FALSE;
+            audio_capture_hub_set_enabled(AUDIO_CAPTURE_WAKEWORD, RT_FALSE);
+            return -RT_ERROR;
+        }
     }
 
     return 0;
@@ -454,30 +396,23 @@ int xz_wakeword_start(void)
  */
 int xz_wakeword_stop(void)
 {
-    if (!wakeword_initialized || !wakeword_enabled)
+    if (!wakeword_initialized)
     {
-        LOG_D("Wake word already stopped or not initialized");
+        LOG_D("Wake word not initialized");
         return 0;
     }
 
-    LOG_I("Stopping wake word detection...");
+    if (wakeword_enabled)
+    {
+        LOG_I("Stopping wake word detection...");
+    }
 
     wakeword_enabled = RT_FALSE;
+    audio_capture_hub_set_enabled(AUDIO_CAPTURE_WAKEWORD, RT_FALSE);
 
     if (wakeword_event != RT_NULL)
     {
         rt_event_send(wakeword_event, XZ_WAKEWORD_EVENT_STOP);
-    }
-
-    /* Wait a bit for thread to respond to STOP event before closing device */
-    rt_thread_mdelay(50);
-
-    /* Close audio device - thread should have already closed it, but ensure it's closed */
-    if (audio_device != RT_NULL)
-    {
-        LOG_D("Closing audio device in stop function");
-        rt_device_close(audio_device);
-        audio_device = RT_NULL;
     }
 
     LOG_I("Wake word detection stopped");

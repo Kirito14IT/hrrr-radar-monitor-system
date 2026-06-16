@@ -53,6 +53,9 @@ SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
 NUM_CHANNELS = 2
 BOARD_TIMEOUT_SECONDS = 5.0
+ENVIRONMENT_BOARD_TIMEOUT_SECONDS = 15.0
+VOICE_BOARD_TIMEOUT_SECONDS = 30.0
+EDGI_BOARD_TIMEOUT_SECONDS = 60.0
 SNORE_EVENT_HOLD_SECONDS = 12.0
 TIMELINE_RETENTION_SECONDS = 7200
 DEEPSEEK_TIMEOUT_SECONDS = 40
@@ -73,9 +76,21 @@ state: dict[str, Any] = {
     "radar_online": False,
     "radar_board_online": False,
     "snore_board_online": False,
+    "snore_session_active": False,
+    "snore_session_stopped": False,
+    "environment_board_online": False,
+    "voice_board_online": False,
+    "edgi_board_online": False,
     "last_radar_received_at": None,
     "last_snore_heartbeat_at": None,
+    "last_environment_heartbeat_at": None,
+    "last_voice_received_at": None,
+    "last_edgi_heartbeat_at": None,
     "last_radar_frame_number": 0,
+    "temperature_c": None,
+    "humidity_pct": None,
+    "comfort_status": "offline",
+    "environment_sensor_ok": False,
     "snore_score": 0.0,
     "snore_dbfs": None,
     "snore_detected": False,
@@ -150,6 +165,28 @@ class SnoreHeartbeat(BaseModel):
     source: str = "mock_snore_board"
 
 
+class EnvironmentHeartbeat(BaseModel):
+    temperature_c: float
+    humidity_pct: float
+    sensor_ok: bool = True
+    source: str = "mock_environment_board"
+
+
+class EmergencyRequest(BaseModel):
+    source: str = "xiaozhi_voice_board"
+    phrase: Optional[str] = None
+    transcript: Optional[str] = None
+    device_id: Optional[str] = None
+    timestamp: Optional[str] = None
+
+
+class EmergencyResolveRequest(BaseModel):
+    event_id: Optional[int] = None
+    source: str = "xiaozhi_voice_board"
+    resolution_note: Optional[str] = None
+    resolved_by: Optional[str] = None
+
+
 class AiAnalysisRequest(BaseModel):
     rows: list[dict[str, Any]] = []
     date: Optional[str] = None
@@ -172,6 +209,102 @@ def seconds_since(value: Optional[str]) -> Optional[float]:
         return time.time() - datetime.fromisoformat(value).timestamp()
     except ValueError:
         return None
+
+
+def comfort_status_for(
+    temperature_c: Optional[float],
+    humidity_pct: Optional[float],
+    sensor_ok: bool = True,
+    online: bool = True,
+) -> str:
+    if not online:
+        return "offline"
+    if not sensor_ok:
+        return "sensor_error"
+    if temperature_c is None or humidity_pct is None:
+        return "no_data"
+
+    temp_status: Optional[str] = None
+    humidity_status: Optional[str] = None
+    critical = False
+
+    if temperature_c < 15.0:
+        temp_status = "cold"
+        critical = True
+    elif temperature_c < 18.0:
+        temp_status = "cold"
+    elif temperature_c > 32.0:
+        temp_status = "hot"
+        critical = True
+    elif temperature_c > 28.0:
+        temp_status = "hot"
+
+    if humidity_pct < 30.0:
+        humidity_status = "dry"
+        critical = True
+    elif humidity_pct < 40.0:
+        humidity_status = "dry"
+    elif humidity_pct > 80.0:
+        humidity_status = "humid"
+        critical = True
+    elif humidity_pct > 70.0:
+        humidity_status = "humid"
+
+    parts = [part for part in (temp_status, humidity_status) if part]
+    if not parts:
+        return "comfortable"
+    status = "_".join(parts)
+    return f"{status}_critical" if critical else status
+
+
+def environment_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    age = seconds_since(snapshot.get("last_environment_heartbeat_at"))
+    sensor_ok = bool(snapshot.get("environment_sensor_ok"))
+    board_online = bool(age is not None and age <= ENVIRONMENT_BOARD_TIMEOUT_SECONDS)
+    online = bool(sensor_ok and board_online)
+    temperature = snapshot.get("temperature_c")
+    humidity = snapshot.get("humidity_pct")
+    if online:
+        temperature = round(float(temperature), 1) if temperature is not None else None
+        humidity = round(float(humidity), 1) if humidity is not None else None
+    else:
+        temperature = None
+        humidity = None
+    return {
+        "environment_board_online": board_online,
+        "environment_online": online,
+        "environment_sensor_ok": sensor_ok,
+        "temperature_c": temperature,
+        "humidity_pct": humidity,
+        "comfort_status": comfort_status_for(temperature, humidity, sensor_ok=sensor_ok, online=online),
+        "last_environment_heartbeat_at": snapshot.get("last_environment_heartbeat_at"),
+        "environment_age_seconds": round(age, 2) if age is not None else None,
+    }
+
+
+def edgi_board_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    age = seconds_since(snapshot.get("last_edgi_heartbeat_at"))
+    return {
+        "edgi_board_online": bool(age is not None and age <= EDGI_BOARD_TIMEOUT_SECONDS),
+        "last_edgi_heartbeat_at": snapshot.get("last_edgi_heartbeat_at"),
+        "edgi_age_seconds": round(age, 2) if age is not None else None,
+    }
+
+
+def latest_active_emergency_event() -> Optional[dict[str, Any]]:
+    with db_connect() as conn:
+        ensure_sleep_event_status_columns(conn)
+        row = conn.execute(
+            """
+            SELECT eventID, userID, event_type, severity, title, message, timestamp,
+                   source, score_delta, details, status, resolved_at, resolution_note, resolved_by
+            FROM sleep_events
+            WHERE event_type = 'emergency_voice' AND status = 'active'
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return sleep_event_to_dict(row) if row else None
 
 
 def parse_iso_seconds(value: str) -> Optional[float]:
@@ -207,6 +340,22 @@ def db_connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def ensure_sleep_event_status_columns(conn: sqlite3.Connection) -> None:
+    existing_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(sleep_events)").fetchall()
+    }
+    if not existing_columns:
+        return
+    for column, definition in (
+        ("status", "TEXT NOT NULL DEFAULT 'active'"),
+        ("resolved_at", "TEXT"),
+        ("resolution_note", "TEXT"),
+        ("resolved_by", "TEXT"),
+    ):
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE sleep_events ADD COLUMN {column} {definition}")
 
 
 def init_db() -> None:
@@ -247,10 +396,15 @@ def init_db() -> None:
                 source TEXT NOT NULL,
                 score_delta REAL NOT NULL DEFAULT 0,
                 details TEXT,
-                fingerprint TEXT NOT NULL UNIQUE
+                fingerprint TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL DEFAULT 'active',
+                resolved_at TEXT,
+                resolution_note TEXT,
+                resolved_by TEXT
             )
             """
         )
+        ensure_sleep_event_status_columns(conn)
         conn.commit()
 
 
@@ -304,17 +458,35 @@ def update_mock_state_loop() -> None:
         with STATE_LOCK:
             radar_age = seconds_since(state["last_radar_received_at"])
             snore_heartbeat_age = seconds_since(state["last_snore_heartbeat_at"])
-            audio_age = seconds_since(state["last_audio_received_at"])
+            environment_age = seconds_since(state["last_environment_heartbeat_at"])
+            voice_age = seconds_since(state["last_voice_received_at"])
+            edgi_age = seconds_since(state["last_edgi_heartbeat_at"])
             snore_event_age = seconds_since(state["last_snore_at"])
 
             radar_online = radar_age is not None and radar_age <= BOARD_TIMEOUT_SECONDS
             snore_online = (
                 snore_heartbeat_age is not None and snore_heartbeat_age <= BOARD_TIMEOUT_SECONDS
-            ) or (audio_age is not None and audio_age <= BOARD_TIMEOUT_SECONDS)
+            )
+            environment_board_online = (
+                environment_age is not None
+                and environment_age <= ENVIRONMENT_BOARD_TIMEOUT_SECONDS
+            )
+            environment_online = bool(state["environment_sensor_ok"]) and environment_board_online
+            voice_online = voice_age is not None and voice_age <= VOICE_BOARD_TIMEOUT_SECONDS
+            edgi_online = edgi_age is not None and edgi_age <= EDGI_BOARD_TIMEOUT_SECONDS
 
             state["radar_board_online"] = radar_online
             state["radar_online"] = radar_online
             state["snore_board_online"] = snore_online
+            state["environment_board_online"] = environment_board_online
+            state["voice_board_online"] = voice_online
+            state["edgi_board_online"] = edgi_online
+            state["comfort_status"] = comfort_status_for(
+                state["temperature_c"] if environment_online else None,
+                state["humidity_pct"] if environment_online else None,
+                sensor_ok=bool(state["environment_sensor_ok"]),
+                online=environment_online,
+            )
 
             if not radar_online:
                 state["heart_rate"] = 0.0
@@ -422,6 +594,7 @@ def timeline_entry_locked(timestamp: Optional[str] = None) -> dict[str, Any]:
     ts = timestamp or iso_second()
     radar_online = bool(state["radar_online"]) and float(state["target_distance"] or 0) > 0.0
     snore_online = bool(state["snore_board_online"])
+    env = environment_snapshot(state)
     heart_rate = round(float(state["heart_rate"]), 2) if radar_online and state["heart_rate"] else None
     breath_rate = round(float(state["breath_rate"]), 2) if radar_online and state["breath_rate"] else None
     target_distance = round(float(state["target_distance"] or 0.0), 3) if radar_online else 0.0
@@ -440,6 +613,11 @@ def timeline_entry_locked(timestamp: Optional[str] = None) -> dict[str, Any]:
         "snore_detected": snore_detected,
         "radar_online": radar_online,
         "snore_online": snore_online,
+        "environment_online": env["environment_online"],
+        "environment_board_online": env["environment_board_online"],
+        "temperature_c": env["temperature_c"],
+        "humidity_pct": env["humidity_pct"],
+        "comfort_status": env["comfort_status"],
         "sleep_stage": sleep_stage_for(
             heart_rate,
             breath_rate,
@@ -476,15 +654,21 @@ def timeline_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     valid_br = [row["breath_rate"] for row in rows if isinstance(row.get("breath_rate"), (int, float))]
     snore_rows = [row for row in rows if row.get("snore_detected")]
     snore_levels = [row["snore_level"] for row in rows if isinstance(row.get("snore_level"), (int, float))]
+    temperatures = [row["temperature_c"] for row in rows if isinstance(row.get("temperature_c"), (int, float))]
+    humidities = [row["humidity_pct"] for row in rows if isinstance(row.get("humidity_pct"), (int, float))]
     latest = rows[-1] if rows else None
     return {
         "points": len(rows),
         "valid_heart_points": len(valid_hr),
         "valid_breath_points": len(valid_br),
+        "valid_environment_points": len(temperatures),
         "snore_events": len(snore_rows),
         "avg_snore_level": round(sum(snore_levels) / len(snore_levels), 3) if snore_levels else None,
         "avg_heart_rate": round(sum(valid_hr) / len(valid_hr), 2) if valid_hr else None,
         "avg_breath_rate": round(sum(valid_br) / len(valid_br), 2) if valid_br else None,
+        "avg_temperature_c": round(sum(temperatures) / len(temperatures), 2) if temperatures else None,
+        "avg_humidity_pct": round(sum(humidities) / len(humidities), 2) if humidities else None,
+        "latest_comfort_status": latest.get("comfort_status") if latest else "offline",
         "latest_sleep_stage": latest.get("sleep_stage") if latest else "等待数据",
         "latest_timestamp": latest.get("timestamp") if latest else None,
     }
@@ -528,7 +712,7 @@ def insert_sleep_event(
     details: Optional[dict[str, Any]] = None,
     user_id: Optional[int] = None,
     fingerprint: Optional[str] = None,
-) -> None:
+) -> Optional[int]:
     event_fingerprint = fingerprint or f"{event_type}:{minute_key(timestamp)}"
     try:
         with db_connect() as conn:
@@ -551,9 +735,104 @@ def insert_sleep_event(
                     event_fingerprint,
                 ),
             )
+            row = conn.execute(
+                "SELECT eventID FROM sleep_events WHERE fingerprint = ?",
+                (event_fingerprint,),
+            ).fetchone()
             conn.commit()
+            return int(row["eventID"]) if row else None
     except sqlite3.Error as exc:
         print(f"[sleep-events] 写入事件失败: {exc}")
+        return None
+
+
+def record_emergency_event(payload: EmergencyRequest) -> dict[str, Any]:
+    timestamp = payload.timestamp or now_iso()
+    phrase = (payload.phrase or "").strip()
+    transcript = (payload.transcript or "").strip()
+    source = (payload.source or "xiaozhi_voice_board").strip() or "xiaozhi_voice_board"
+    display_text = transcript or phrase or "未提供文本"
+    fingerprint_seed = f"{timestamp}:{source}:{phrase}:{transcript}:{payload.device_id or ''}"
+    fingerprint = "emergency_voice:" + hashlib.sha1(fingerprint_seed.encode("utf-8")).hexdigest()[:16]
+
+    event_id = insert_sleep_event(
+        "emergency_voice",
+        "critical",
+        "语音紧急求助",
+        f"小智检测到求助语音：“{display_text}”",
+        timestamp,
+        source,
+        -30,
+        {
+            "phrase": phrase or None,
+            "transcript": transcript or None,
+            "device_id": payload.device_id,
+        },
+        fingerprint=fingerprint,
+    )
+
+    with STATE_LOCK:
+        state["last_device_message"] = f"emergency voice event from {source}"
+        state["last_voice_received_at"] = timestamp
+        state["voice_board_online"] = True
+        state["last_edgi_heartbeat_at"] = timestamp
+        state["edgi_board_online"] = True
+
+    return {
+        "status": "success",
+        "event_id": event_id,
+        "event_type": "emergency_voice",
+        "severity": "critical",
+        "timestamp": timestamp,
+    }
+
+
+def resolve_emergency_event(payload: EmergencyResolveRequest) -> dict[str, Any]:
+    resolved_at = now_iso()
+    source = (payload.source or "xiaozhi_voice_board").strip() or "xiaozhi_voice_board"
+    note = (payload.resolution_note or "已在开发板确认并解除紧急状态").strip()
+    resolved_by = (payload.resolved_by or source).strip() or source
+
+    with db_connect() as conn:
+        ensure_sleep_event_status_columns(conn)
+        if payload.event_id is not None:
+            row = conn.execute(
+                """
+                SELECT eventID FROM sleep_events
+                WHERE eventID = ? AND event_type = 'emergency_voice' AND status = 'active'
+                """,
+                (payload.event_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT eventID FROM sleep_events
+                WHERE event_type = 'emergency_voice' AND status = 'active' AND source = ?
+                ORDER BY timestamp DESC LIMIT 1
+                """,
+                (source,),
+            ).fetchone()
+
+        if not row:
+            return {"status": "not_found", "message": "没有待处理的紧急事件"}
+
+        event_id = int(row["eventID"])
+        conn.execute(
+            """
+            UPDATE sleep_events
+            SET status = 'resolved', resolved_at = ?, resolution_note = ?, resolved_by = ?
+            WHERE eventID = ?
+            """,
+            (resolved_at, note, resolved_by, event_id),
+        )
+        conn.commit()
+
+    return {
+        "status": "success",
+        "event_id": event_id,
+        "event_status": "resolved",
+        "resolved_at": resolved_at,
+    }
 
 
 def record_sleep_events_locked(row: dict[str, Any]) -> None:
@@ -565,7 +844,9 @@ def record_sleep_events_locked(row: dict[str, Any]) -> None:
     snore_level = row.get("snore_level")
     target_distance = float(row.get("target_distance") or 0.0)
     radar_board_online = bool(state["radar_board_online"])
-    snore_board_online = bool(state["snore_board_online"])
+    edgi_board_online = bool(state["edgi_board_online"])
+    environment_board_online = bool(row.get("environment_board_online"))
+    comfort_status = row.get("comfort_status")
     radar_has_target = bool(row.get("radar_online")) and target_distance > 0
 
     condition = "normal"
@@ -596,19 +877,52 @@ def record_sleep_events_locked(row: dict[str, Any]) -> None:
             fingerprint=f"no_person:{minute}",
         )
 
-    if not snore_board_online:
+    if not edgi_board_online:
         if condition == "normal":
-            condition = "snore_offline"
+            condition = "edgi_offline"
         insert_sleep_event(
             "device_offline",
             "warning",
-            "呼噜检测板离线",
-            "呼噜检测模拟板超过 5 秒未发送特征或音频片段。",
+            "Edgi E84 离线",
+            "开发板心跳中断，呼噜、语音与环境数据暂不可用。",
             timestamp,
-            "snore_board",
-            -8,
-            {"snore_age_seconds": seconds_since(state["last_snore_heartbeat_at"])},
-            fingerprint=f"device_offline:snore:{minute}",
+            "edgi_board",
+            -10,
+            {"edgi_age_seconds": seconds_since(state["last_edgi_heartbeat_at"])},
+            fingerprint=f"device_offline:edgi:{minute}",
+        )
+
+    if edgi_board_online and environment_board_online and not bool(state["environment_sensor_ok"]):
+        if condition == "normal":
+            condition = "environment_sensor_error"
+        insert_sleep_event(
+            "sensor_error",
+            "warning",
+            "温湿度传感器异常",
+            "Edgi E84 在线，但 AHT20 当前没有提供有效读数。",
+            timestamp,
+            "environment_board",
+            -4,
+            {"environment_age_seconds": seconds_since(state["last_environment_heartbeat_at"])},
+            fingerprint=f"sensor_error:environment:{minute}",
+        )
+    elif comfort_status and comfort_status not in {"comfortable", "offline", "no_data", "sensor_error"}:
+        severity = "critical" if str(comfort_status).endswith("_critical") else "warning"
+        condition = "environment_uncomfortable"
+        insert_sleep_event(
+            "environment",
+            severity,
+            "睡眠环境不舒适",
+            f"当前温湿度状态为 {comfort_status}，建议检查房间温度、湿度或通风。",
+            timestamp,
+            "environment_board",
+            -12 if severity == "critical" else -6,
+            {
+                "temperature_c": row.get("temperature_c"),
+                "humidity_pct": row.get("humidity_pct"),
+                "comfort_status": comfort_status,
+            },
+            fingerprint=f"environment:{minute}",
         )
 
     if isinstance(snore_level, (int, float)) and (row.get("snore_detected") or snore_level >= 0.62):
@@ -698,6 +1012,10 @@ def sleep_event_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "source": row["source"],
         "score_delta": row["score_delta"],
         "details": details,
+        "status": row["status"] or "active",
+        "resolved_at": row["resolved_at"],
+        "resolution_note": row["resolution_note"],
+        "resolved_by": row["resolved_by"],
     }
 
 
@@ -725,10 +1043,11 @@ def load_sleep_events(
         params.append(user_id)
     where_sql = " WHERE " + " AND ".join(where_parts) if where_parts else ""
     with db_connect() as conn:
+        ensure_sleep_event_status_columns(conn)
         rows = conn.execute(
             f"""
             SELECT eventID, userID, event_type, severity, title, message, timestamp,
-                   source, score_delta, details
+                   source, score_delta, details, status, resolved_at, resolution_note, resolved_by
             FROM sleep_events
             {where_sql}
             ORDER BY timestamp DESC
@@ -876,9 +1195,13 @@ def compute_sleep_score(rows: list[dict[str, Any]], events: list[dict[str, Any]]
     heart_values = numeric_values(rows, "heart_rate")
     breath_values = numeric_values(rows, "breath_rate")
     snore_levels = numeric_values(rows, "snore_level")
+    comfort_statuses = [row.get("comfort_status") for row in rows if row.get("comfort_status")]
     total_rows = max(len(rows), 1)
     radar_offline_ratio = sum(1 for row in rows if row.get("radar_online") is False) / total_rows if rows else 0.0
-    snore_offline_ratio = sum(1 for row in rows if row.get("snore_online") is False) / total_rows if rows else 0.0
+    uncomfortable_ratio = (
+        sum(1 for status in comfort_statuses if status not in {"comfortable", "offline"}) / total_rows
+        if rows else 0.0
+    )
     no_person_ratio = sum(1 for row in rows if row.get("radar_online") is False or float(row.get("target_distance") or 0) <= 0) / total_rows if rows else 0.0
     snore_event_count = sum(1 for row in rows if row.get("snore_detected")) + sum(1 for event in events if event.get("type") == "snore")
 
@@ -903,13 +1226,17 @@ def compute_sleep_score(rows: list[dict[str, Any]], events: list[dict[str, Any]]
             penalties.append({"name": "呼噜扰动", "value": round(penalty, 1), "reason": f"平均呼噜强度 {avg_snore * 100:.0f}%，事件点 {snore_event_count} 个"})
     if radar_offline_ratio > 0:
         penalties.append({"name": "雷达掉线", "value": round(min(22.0, radar_offline_ratio * 34.0), 1), "reason": f"雷达断线占比 {radar_offline_ratio * 100:.0f}%"})
-    if snore_offline_ratio > 0:
-        penalties.append({"name": "呼噜板掉线", "value": round(min(14.0, snore_offline_ratio * 24.0), 1), "reason": f"呼噜板断线占比 {snore_offline_ratio * 100:.0f}%"})
+    if uncomfortable_ratio > 0:
+        penalties.append({"name": "环境舒适度", "value": round(min(16.0, uncomfortable_ratio * 24.0), 1), "reason": f"温湿度不舒适占比 {uncomfortable_ratio * 100:.0f}%"})
     if no_person_ratio > 0.08:
         penalties.append({"name": "疑似离床", "value": round(min(24.0, no_person_ratio * 32.0), 1), "reason": f"未检测到人体占比 {no_person_ratio * 100:.0f}%"})
 
     score = max(0, min(100, round(100.0 - sum(float(item["value"]) for item in penalties))))
-    event_severities = [event.get("severity", "info") for event in events]
+    event_severities = [
+        event.get("severity", "info")
+        for event in events
+        if event.get("status", "active") == "active"
+    ]
     worst_event = max(event_severities, key=severity_rank) if event_severities else "info"
     if radar_offline_ratio > 0.25 or worst_event == "critical":
         label = "设备异常" if radar_offline_ratio > 0.25 else "呼噜频繁"
@@ -935,6 +1262,10 @@ def build_stability_cards(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     heart_values = numeric_values(rows, "heart_rate")
     breath_values = numeric_values(rows, "breath_rate")
     snore_levels = numeric_values(rows, "snore_level")
+    environment_rows = [row for row in rows if row.get("environment_online")]
+    comfortable_rows = [row for row in environment_rows if row.get("comfort_status") == "comfortable"]
+    temperatures = numeric_values(rows, "temperature_c")
+    humidities = numeric_values(rows, "humidity_pct")
     cards = [
         {
             "key": "heart",
@@ -957,6 +1288,13 @@ def build_stability_cards(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "unit": "%",
             "detail": f"平均强度 {round((average(snore_levels) or 0) * 100)}%，样本 {len(snore_levels)}",
         },
+        {
+            "key": "environment",
+            "title": "环境舒适度",
+            "value": round(len(comfortable_rows) / len(environment_rows) * 100) if environment_rows else 0,
+            "unit": "%",
+            "detail": f"温度 {average(temperatures) or '--'} C，湿度 {average(humidities) or '--'} %RH",
+        },
     ]
     return cards
 
@@ -970,6 +1308,13 @@ def build_sleep_overview(
     user_id: Optional[int],
     devices: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
+    events = [
+        event for event in events
+        if not (
+            event.get("type") == "device_offline"
+            and event.get("source") in {"snore_board", "environment_board"}
+        )
+    ]
     events_sorted = sorted(events, key=lambda item: item.get("timestamp", ""), reverse=True)
     heatmap = build_snore_heatmap(rows, events_sorted)
     score = compute_sleep_score(rows, events_sorted)
@@ -987,8 +1332,14 @@ def build_sleep_overview(
         "stats": {
             **stats,
             "event_count": len(events_sorted),
-            "critical_event_count": sum(1 for event in events_sorted if event.get("severity") == "critical"),
-            "warning_event_count": sum(1 for event in events_sorted if event.get("severity") == "warning"),
+            "critical_event_count": sum(
+                1 for event in events_sorted
+                if event.get("severity") == "critical" and event.get("status", "active") == "active"
+            ),
+            "warning_event_count": sum(
+                1 for event in events_sorted
+                if event.get("severity") == "warning" and event.get("status", "active") == "active"
+            ),
         },
         "devices": devices or {},
         "heatmap": heatmap,
@@ -1120,6 +1471,7 @@ async def get_heart_rate() -> dict[str, Any]:
 async def get_target_data() -> dict[str, Any]:
     snapshot = state_snapshot()
     has_radar = bool(snapshot["radar_online"]) and snapshot["target_distance"] > 0
+    env = environment_snapshot(snapshot)
     return {
         "heart_rate": snapshot["heart_rate"],
         "breath_rate": snapshot["breath_rate"],
@@ -1130,6 +1482,12 @@ async def get_target_data() -> dict[str, Any]:
         "snore_dbfs": snapshot["snore_dbfs"],
         "snore_level": snore_level_from_dbfs(snapshot["snore_dbfs"], snapshot["snore_score"]),
         "snore_detected": snapshot["snore_detected"],
+        "environment_board_online": env["environment_board_online"],
+        "last_environment_heartbeat_at": env["last_environment_heartbeat_at"],
+        "environment_age_seconds": env["environment_age_seconds"],
+        "temperature_c": env["temperature_c"],
+        "humidity_pct": env["humidity_pct"],
+        "comfort_status": env["comfort_status"],
         "sleep_stage": sleep_stage_for(
             snapshot["heart_rate"] if snapshot["radar_online"] else None,
             snapshot["breath_rate"] if snapshot["radar_online"] else None,
@@ -1146,6 +1504,7 @@ async def get_target_data() -> dict[str, Any]:
 @app.get("/detailed")
 async def get_detailed_data() -> dict[str, Any]:
     snapshot = state_snapshot()
+    snapshot.update(environment_snapshot(snapshot))
     snapshot["timestamp"] = time.time()
     snapshot["processing_count"] = snapshot["frame_count"]
     snapshot["status"] = "ok" if snapshot["radar_online"] and snapshot["target_distance"] > 0 else "no_data"
@@ -1157,11 +1516,21 @@ async def get_status() -> dict[str, Any]:
     snapshot = state_snapshot()
     radar_age = seconds_since(snapshot["last_radar_received_at"])
     snore_age = seconds_since(snapshot["last_snore_heartbeat_at"])
+    voice_age = seconds_since(snapshot["last_voice_received_at"])
+    env = environment_snapshot(snapshot)
+    edgi = edgi_board_snapshot(snapshot)
+    active_emergency = latest_active_emergency_event()
     return {
         "running": snapshot["running"],
         "radar_online": snapshot["radar_online"],
         "radar_board_online": snapshot["radar_board_online"],
         "snore_board_online": snapshot["snore_board_online"],
+        "snore_monitoring": bool(snapshot["snore_session_active"] or snapshot["snore_board_online"]),
+        "snore_paused": bool(snapshot["snore_session_stopped"] and edgi["edgi_board_online"]),
+        "environment_board_online": env["environment_board_online"],
+        "environment_sensor_ok": env["environment_sensor_ok"],
+        "voice_board_online": snapshot["voice_board_online"],
+        "edgi_board_online": edgi["edgi_board_online"],
         "scenario": current_scenario(time.time() - snapshot["start_time"]),
         "total_frames": snapshot["frame_count"],
         "processed_frames": snapshot["frame_count"],
@@ -1170,8 +1539,16 @@ async def get_status() -> dict[str, Any]:
         "last_radar_frame_number": snapshot["last_radar_frame_number"],
         "last_radar_received_at": snapshot["last_radar_received_at"],
         "last_snore_heartbeat_at": snapshot["last_snore_heartbeat_at"],
+        "last_environment_heartbeat_at": env["last_environment_heartbeat_at"],
+        "last_voice_received_at": snapshot["last_voice_received_at"],
+        "last_edgi_heartbeat_at": edgi["last_edgi_heartbeat_at"],
         "radar_age_seconds": round(radar_age, 2) if radar_age is not None else None,
         "snore_age_seconds": round(snore_age, 2) if snore_age is not None else None,
+        "environment_age_seconds": env["environment_age_seconds"],
+        "voice_age_seconds": round(voice_age, 2) if voice_age is not None else None,
+        "edgi_age_seconds": edgi["edgi_age_seconds"],
+        "emergency_active": active_emergency is not None,
+        "active_emergency": active_emergency,
         "audio_upload_count": snapshot["audio_upload_count"],
         "last_audio_received_at": snapshot["last_audio_received_at"],
         "last_audio_file": snapshot["last_audio_file"],
@@ -1183,6 +1560,9 @@ async def get_status() -> dict[str, Any]:
         "snore_detected": snapshot["snore_detected"],
         "snore_event_count": snapshot["snore_event_count"],
         "last_snore_at": snapshot["last_snore_at"],
+        "temperature_c": env["temperature_c"],
+        "humidity_pct": env["humidity_pct"],
+        "comfort_status": env["comfort_status"],
         "sleep_stage": sleep_stage_for(
             snapshot["heart_rate"] if snapshot["radar_online"] else None,
             snapshot["breath_rate"] if snapshot["radar_online"] else None,
@@ -1234,7 +1614,7 @@ async def get_sleep_overview(
             seconds,
             date,
             userID,
-            devices={"radar_board_online": None, "snore_board_online": None},
+            devices={"radar_board_online": None, "snore_board_online": None, "environment_board_online": None, "voice_board_online": None, "edgi_board_online": None},
         )
 
     cutoff = time.time() - float(seconds)
@@ -1246,12 +1626,29 @@ async def get_sleep_overview(
         devices = {
             "radar_board_online": bool(state["radar_board_online"]),
             "snore_board_online": bool(state["snore_board_online"]),
+            "snore_monitoring": bool(state["snore_session_active"] or state["snore_board_online"]),
+            "snore_paused": bool(state["snore_session_stopped"] and edgi_board_snapshot(state)["edgi_board_online"]),
+            "environment_board_online": environment_snapshot(state)["environment_board_online"],
+            "environment_sensor_ok": environment_snapshot(state)["environment_sensor_ok"],
+            "voice_board_online": bool(state["voice_board_online"]),
+            "edgi_board_online": edgi_board_snapshot(state)["edgi_board_online"],
             "radar_age_seconds": seconds_since(state["last_radar_received_at"]),
             "snore_age_seconds": seconds_since(state["last_snore_heartbeat_at"]),
+            "environment_age_seconds": environment_snapshot(state)["environment_age_seconds"],
+            "voice_age_seconds": seconds_since(state["last_voice_received_at"]),
+            "edgi_age_seconds": edgi_board_snapshot(state)["edgi_age_seconds"],
             "audio_upload_count": state["audio_upload_count"],
             "last_audio_received_at": state["last_audio_received_at"],
+            "last_environment_heartbeat_at": state["last_environment_heartbeat_at"],
+            "temperature_c": environment_snapshot(state)["temperature_c"],
+            "humidity_pct": environment_snapshot(state)["humidity_pct"],
+            "comfort_status": environment_snapshot(state)["comfort_status"],
+            "emergency_active": latest_active_emergency_event() is not None,
         }
     events = load_sleep_events(start_iso=cutoff_iso, limit=260)
+    active_emergency = latest_active_emergency_event()
+    if active_emergency and not any(event["eventID"] == active_emergency["eventID"] for event in events):
+        events.append(active_emergency)
     return build_sleep_overview(rows, events, "live", seconds, date, userID, devices)
 
 
@@ -1282,8 +1679,13 @@ async def receive_mock_radar_frame(frame: RadarFrameData) -> dict[str, Any]:
 async def receive_mock_snore_heartbeat(heartbeat: SnoreHeartbeat) -> dict[str, Any]:
     score = max(0.0, min(1.0, float(heartbeat.snore_score)))
     with STATE_LOCK:
-        state["last_snore_heartbeat_at"] = now_iso()
+        heartbeat_at = now_iso()
+        state["last_snore_heartbeat_at"] = heartbeat_at
+        state["last_edgi_heartbeat_at"] = heartbeat_at
         state["snore_board_online"] = True
+        state["edgi_board_online"] = True
+        state["snore_session_active"] = True
+        state["snore_session_stopped"] = False
         state["snore_score"] = round(score, 3)
         if heartbeat.dbfs is not None:
             state["snore_dbfs"] = heartbeat.dbfs
@@ -1306,6 +1708,85 @@ async def receive_mock_snore_heartbeat(heartbeat: SnoreHeartbeat) -> dict[str, A
         "snore_level": snore_level_from_dbfs(heartbeat.dbfs, score),
         "snore_detected": state_snapshot()["snore_detected"],
     }
+
+@app.post("/mock/snore-session/start")
+async def start_mock_snore_session() -> dict[str, Any]:
+    with STATE_LOCK:
+        heartbeat_at = now_iso()
+        state["snore_session_active"] = True
+        state["snore_session_stopped"] = False
+        state["last_snore_heartbeat_at"] = heartbeat_at
+        state["last_edgi_heartbeat_at"] = heartbeat_at
+        state["snore_board_online"] = True
+        state["edgi_board_online"] = True
+        upsert_timeline_locked()
+    return {
+        "code": 200,
+        "status": "success",
+        "snore_board_online": True,
+        "snore_monitoring": True,
+        "snore_paused": False,
+    }
+
+
+@app.post("/mock/snore-session/stop")
+async def stop_mock_snore_session() -> dict[str, Any]:
+    with STATE_LOCK:
+        heartbeat_at = now_iso()
+        state["snore_session_active"] = False
+        state["snore_session_stopped"] = True
+        state["snore_board_online"] = False
+        state["last_snore_heartbeat_at"] = None
+        state["last_edgi_heartbeat_at"] = heartbeat_at
+        state["edgi_board_online"] = True
+        state["snore_detected"] = False
+        upsert_timeline_locked()
+    return {
+        "code": 200,
+        "status": "success",
+        "snore_board_online": False,
+        "snore_monitoring": False,
+        "snore_paused": True,
+    }
+
+
+@app.post("/mock/environment-heartbeat")
+async def receive_mock_environment_heartbeat(heartbeat: EnvironmentHeartbeat) -> dict[str, Any]:
+    sensor_ok = bool(heartbeat.sensor_ok)
+    temperature = round(float(heartbeat.temperature_c), 1)
+    humidity = round(max(0.0, min(100.0, float(heartbeat.humidity_pct))), 1)
+    comfort_status = comfort_status_for(temperature, humidity, sensor_ok=sensor_ok, online=sensor_ok)
+    with STATE_LOCK:
+        heartbeat_at = now_iso()
+        state["last_environment_heartbeat_at"] = heartbeat_at
+        state["last_edgi_heartbeat_at"] = heartbeat_at
+        state["environment_board_online"] = True
+        state["edgi_board_online"] = True
+        state["environment_sensor_ok"] = sensor_ok
+        state["temperature_c"] = temperature if sensor_ok else None
+        state["humidity_pct"] = humidity if sensor_ok else None
+        state["comfort_status"] = comfort_status
+        state["last_device_message"] = f"environment heartbeat from {heartbeat.source}"
+        upsert_timeline_locked()
+    return {
+        "code": 200,
+        "status": "success",
+        "message": "温湿度心跳已接收",
+        "temperature_c": temperature if sensor_ok else None,
+        "humidity_pct": humidity if sensor_ok else None,
+        "sensor_ok": sensor_ok,
+        "comfort_status": comfort_status,
+    }
+
+
+@app.post("/emergency")
+async def receive_emergency(payload: EmergencyRequest) -> dict[str, Any]:
+    return record_emergency_event(payload)
+
+
+@app.post("/emergency/resolve")
+async def resolve_emergency(payload: EmergencyResolveRequest) -> dict[str, Any]:
+    return resolve_emergency_event(payload)
 
 
 @app.post("/register")
@@ -1483,27 +1964,14 @@ async def receive_audio(request: Request) -> dict[str, Any]:
         raw_for_db = body
 
     dbfs = estimate_dbfs(raw_for_db)
-    if dbfs is None:
-        snore_score = 0.0
-    else:
-        snore_score = max(0.0, min(1.0, (dbfs + 45.0) / 35.0))
-    snore_detected = snore_score >= 0.55 or seconds >= 8.0
 
     with STATE_LOCK:
         state["audio_upload_count"] += 1
         state["last_audio_received_at"] = now_iso()
-        state["last_snore_heartbeat_at"] = state["last_audio_received_at"]
-        state["snore_board_online"] = True
         state["last_audio_file"] = str(output_file)
         state["last_audio_seconds"] = round(seconds, 2)
         state["last_audio_dbfs"] = dbfs
-        state["snore_dbfs"] = dbfs
-        state["snore_score"] = round(snore_score, 3)
-        state["snore_detected"] = bool(snore_detected)
         state["last_device_message"] = f"received audio {output_file.name}"
-        if snore_detected:
-            state["snore_event_count"] += 1
-            state["last_snore_at"] = now_iso()
         upsert_timeline_locked()
 
     return {
@@ -1513,9 +1981,9 @@ async def receive_audio(request: Request) -> dict[str, Any]:
         "file": str(output_file),
         "seconds": round(seconds, 2),
         "dbfs": dbfs,
-        "snore_score": round(snore_score, 3),
-        "snore_level": snore_level_from_dbfs(dbfs, snore_score),
-        "snore_detected": snore_detected,
+        "snore_score": round(float(state["snore_score"] or 0.0), 3),
+        "snore_level": snore_level_from_dbfs(state["snore_dbfs"], state["snore_score"]),
+        "snore_detected": bool(state["snore_detected"]),
     }
 
 

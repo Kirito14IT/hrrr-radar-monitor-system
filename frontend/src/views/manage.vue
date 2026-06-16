@@ -34,6 +34,10 @@
             <img src="@/assets/leftmenu/datamana.svg" alt="" class="menu-icon" />
             <span>看护预警中心</span>
           </el-menu-item>
+          <el-menu-item index="/manage/environment_analysis">
+            <img src="@/assets/leftmenu/management.svg" alt="" class="menu-icon" />
+            <span>睡眠环境分析</span>
+          </el-menu-item>
           <el-menu-item index="/manage/data">
             <img src="@/assets/leftmenu/management.svg" alt="" class="menu-icon" />
             <span>历史数据</span>
@@ -44,8 +48,7 @@
       <div class="sidebar-footer">
         <span class="status-dot"></span>
         <div>
-          <strong>双板融合看护</strong>
-          <small>Radar + Acoustic sensors</small>
+          <strong>雷达 + Edgi E84 看护</strong>
         </div>
       </div>
     </aside>
@@ -53,7 +56,6 @@
     <main class="main-content">
       <header class="top-bar">
         <div class="top-bar-title">
-          <span class="top-kicker">HRRR Radar Monitor</span>
           <strong>{{ route.meta.title || '睡眠看护系统' }}</strong>
         </div>
         <div class="top-bar-actions">
@@ -158,7 +160,7 @@ const menuActive = computed(() => 'var(--care-sidebar-text-active)')
 }
 
 .brand-copy strong {
-  font-size: 18px;
+  font-size: 20px;
   color: var(--care-sidebar-text-strong);
 }
 
@@ -166,7 +168,7 @@ const menuActive = computed(() => 'var(--care-sidebar-text-active)')
 .sidebar-footer small,
 .top-kicker {
   color: var(--care-sidebar-muted);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .menu-container {
@@ -183,7 +185,7 @@ const menuActive = computed(() => 'var(--care-sidebar-text-active)')
   min-height: 52px;
   margin: 8px 0;
   border-radius: 16px;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 700;
   color: var(--care-sidebar-text);
   background: transparent !important;
@@ -259,7 +261,7 @@ const menuActive = computed(() => 'var(--care-sidebar-text-active)')
 
 .top-bar strong {
   color: var(--care-text-strong);
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .top-bar-actions {
@@ -269,7 +271,7 @@ const menuActive = computed(() => 'var(--care-sidebar-text-active)')
 }
 
 .theme-label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--care-muted);
   letter-spacing: 0.04em;

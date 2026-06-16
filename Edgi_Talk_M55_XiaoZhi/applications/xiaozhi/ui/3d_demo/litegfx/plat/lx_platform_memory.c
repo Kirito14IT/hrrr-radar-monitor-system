@@ -19,6 +19,7 @@
 #include "lx_platform_log.h"
 #include "stdbool.h"
 #include <string.h>
+#include <rtthread.h>
 #include "vg_lite.h"
 #include <rtdbg.h>
 /*********************

@@ -28,7 +28,7 @@ extern "C" {
  * @brief Initialize WiFi manager
  *
  * This function will:
- * 1. Wait for SD card mount
+ * 1. Wait for the flash filesystem to become writable
  * 2. Try to connect with saved configuration
  * 3. Start AP config mode if no saved config or connection failed
  */

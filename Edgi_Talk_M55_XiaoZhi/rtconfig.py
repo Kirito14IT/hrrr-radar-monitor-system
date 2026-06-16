@@ -17,7 +17,11 @@ if os.getenv('RTT_ROOT'):
 # EXEC_PATH is the compiler execute path, for example, CodeSourcery, Keil MDK, IAR
 if  CROSS_TOOL == 'gcc':
     PLATFORM    = 'gcc'
-    EXEC_PATH   = r'C:\Users\XXYYZZ'
+    gcc_paths = [
+        r'C:\Infineon\Tools\mtb-gcc-arm-eabi\14.2.1\gcc\bin',
+        r'D:\RT-ThreadStudio\platform\env_released\env\tools\gnu_gcc\arm_gcc\mingw\bin',
+    ]
+    EXEC_PATH = next((path for path in gcc_paths if os.path.isdir(path)), '')
 elif CROSS_TOOL == 'keil':
     PLATFORM    = 'armclang'
     EXEC_PATH   = r'C:/Keil_v5'

@@ -28,7 +28,7 @@ class RealtimeSnoreApiTest(unittest.TestCase):
         self.processor = RealtimeRadarProcessor(load_models=False, api_enabled=True)
         self.client = TestClient(self.processor.app)
 
-    def test_audio_upload_updates_snore_status_and_timeline(self):
+    def test_audio_upload_saves_audio_without_predicting_snore_status(self):
         response = self.client.post(
             "/audio",
             content=make_pcm(),
@@ -42,16 +42,53 @@ class RealtimeSnoreApiTest(unittest.TestCase):
         Path(body["file"]).unlink(missing_ok=True)
 
         status = self.client.get("/status").json()
-        self.assertTrue(status["snore_board_online"])
+        self.assertFalse(status["snore_board_online"])
         self.assertEqual(status["audio_upload_count"], 1)
         self.assertIsNotNone(status["last_audio_received_at"])
-        self.assertIsNotNone(status["snore_age_seconds"])
-        self.assertIn("snore_level", status)
+        self.assertIsNotNone(status["last_audio_dbfs"])
+        self.assertIsNone(status["last_snore_heartbeat_at"])
+        self.assertIsNone(status["snore_age_seconds"])
+        self.assertEqual(status["snore_score"], 0.0)
+        self.assertIsNone(status["snore_dbfs"])
+        self.assertIsNone(status["snore_level"])
+        self.assertFalse(status["snore_detected"])
 
         timeline = self.client.get("/timeline?seconds=180").json()
         self.assertEqual(timeline["code"], 200)
         self.assertTrue(timeline["data"])
-        self.assertTrue(timeline["data"][-1]["snore_online"])
+        self.assertFalse(timeline["data"][-1]["snore_online"])
+
+    def test_audio_upload_does_not_overwrite_real_snore_heartbeat(self):
+        heartbeat = self.client.post(
+            "/mock/snore-heartbeat",
+            json={
+                "snore_score": 0.72,
+                "snore_detected": True,
+                "dbfs": -24.0,
+                "source": "real_snore_board",
+            },
+        )
+        self.assertEqual(heartbeat.status_code, 200)
+        before = self.client.get("/status").json()
+
+        response = self.client.post(
+            "/audio",
+            content=make_pcm(seconds=8.0),
+            headers={"Content-Type": "application/octet-stream"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        Path(response.json()["file"]).unlink(missing_ok=True)
+
+        status = self.client.get("/status").json()
+        self.assertTrue(status["snore_board_online"])
+        self.assertEqual(status["audio_upload_count"], 1)
+        self.assertIsNotNone(status["last_audio_dbfs"])
+        self.assertEqual(status["last_snore_heartbeat_at"], before["last_snore_heartbeat_at"])
+        self.assertEqual(status["snore_score"], 0.72)
+        self.assertEqual(status["snore_dbfs"], -24.0)
+        self.assertTrue(status["snore_detected"])
+        self.assertEqual(status["snore_event_count"], before["snore_event_count"])
 
     def test_snore_heartbeat_updates_snore_status(self):
         response = self.client.post(
@@ -152,6 +189,89 @@ class RealtimeSnoreApiTest(unittest.TestCase):
         status = self.client.get("/status").json()
         self.assertTrue(status["snore_board_online"])
         self.assertTrue(status["snore_session_active"])
+
+    def test_environment_heartbeat_updates_status_timeline_and_overview(self):
+        response = self.client.post(
+            "/mock/environment-heartbeat",
+            json={
+                "temperature_c": 24.3,
+                "humidity_pct": 52.1,
+                "sensor_ok": True,
+                "source": "real_edgi_talk_m33_aht20",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "success")
+        self.assertEqual(body["comfort_status"], "comfortable")
+
+        status = self.client.get("/status").json()
+        self.assertTrue(status["environment_board_online"])
+        self.assertTrue(status["edgi_board_online"])
+        self.assertEqual(status["temperature_c"], 24.3)
+        self.assertEqual(status["humidity_pct"], 52.1)
+        self.assertEqual(status["comfort_status"], "comfortable")
+        self.assertIsNotNone(status["last_environment_heartbeat_at"])
+        self.assertIsNotNone(status["environment_age_seconds"])
+
+        timeline = self.client.get("/timeline?seconds=180").json()
+        self.assertEqual(timeline["code"], 200)
+        latest = timeline["data"][-1]
+        self.assertTrue(latest["environment_online"])
+        self.assertEqual(latest["temperature_c"], 24.3)
+        self.assertEqual(latest["humidity_pct"], 52.1)
+        self.assertEqual(latest["comfort_status"], "comfortable")
+        self.assertIn("avg_temperature_c", timeline["summary"])
+
+        overview = self.client.get("/sleep/overview?mode=live&seconds=180").json()
+        self.assertTrue(overview["devices"]["environment_board_online"])
+        self.assertEqual(overview["stats"]["latest_comfort_status"], "comfortable")
+        self.assertIn("环境舒适度", [card["title"] for card in overview["stability_cards"]])
+
+    def test_emergency_updates_status_and_overview(self):
+        response = self.client.post(
+            "/emergency",
+            json={
+                "source": "xiaozhi_voice_board",
+                "phrase": "需要帮助",
+                "transcript": "小智我需要帮助",
+                "device_id": "realtime-test",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        event_id = response.json()["event_id"]
+
+        status = self.client.get("/status").json()
+        self.assertTrue(status["edgi_board_online"])
+        self.assertTrue(status["emergency_active"])
+        self.assertEqual(status["active_emergency"]["eventID"], event_id)
+
+        overview = self.client.get("/sleep/overview?mode=live&seconds=60").json()
+        event = next(item for item in overview["events"] if item["eventID"] == event_id)
+        self.assertEqual(event["type"], "emergency_voice")
+        self.assertEqual(event["severity"], "critical")
+
+    def test_environment_offline_timeout_and_extreme_comfort_status(self):
+        response = self.client.post(
+            "/mock/environment-heartbeat",
+            json={
+                "temperature_c": 33.5,
+                "humidity_pct": 82.0,
+                "sensor_ok": True,
+                "source": "real_edgi_talk_m33_aht20",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["comfort_status"], "hot_humid_critical")
+
+        self.processor.last_environment_heartbeat_time = time.time() - 30.0
+        status = self.client.get("/status").json()
+        self.assertFalse(status["environment_board_online"])
+        self.assertEqual(status["comfort_status"], "offline")
+        self.assertIsNone(status["temperature_c"])
+        self.assertIsNone(status["humidity_pct"])
 
 
 if __name__ == "__main__":

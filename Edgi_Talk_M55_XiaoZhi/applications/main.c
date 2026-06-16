@@ -11,6 +11,8 @@
 #include <rtthread.h>
 #include <rtdevice.h>
 #include <board.h>
+#include "imu_fall_monitor.h"
+#include "alarm_clock.h"
 
 /*****************************************************************************
  * Macro Definitions
@@ -31,6 +33,7 @@
 extern void xiaozhi_ui_init(void);
 extern rt_err_t xiaozhi_ui_wait_ready(rt_int32_t timeout);
 extern void wifi_manager_init(void);
+extern int env_monitor_init(void);
 
 /*****************************************************************************
  * Main Entry
@@ -49,8 +52,26 @@ int main(void)
         LOG_W("UI initialization timeout");
     }
 
+    /* Start environment monitor before WiFi so idle UI can show sensor state. */
+    env_monitor_init();
+
     /* Initialize WiFi manager */
     wifi_manager_init();
+
+    if (alarm_clock_init() != RT_EOK)
+    {
+        LOG_W("Alarm clock unavailable");
+    }
+
+    /* Detect a board free fall as a non-verbal emergency signal when fitted. */
+#ifdef BSP_USING_LSM6DS3
+    if (imu_fall_monitor_init() != RT_EOK)
+    {
+        LOG_W("IMU free-fall monitor unavailable");
+    }
+#else
+    LOG_I("IMU free-fall monitor disabled (BSP_USING_LSM6DS3 is not set)");
+#endif
 
     return 0;
 }
