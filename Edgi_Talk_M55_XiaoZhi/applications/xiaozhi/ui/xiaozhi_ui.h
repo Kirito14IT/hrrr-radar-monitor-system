@@ -79,6 +79,11 @@ void xiaozhi_ui_set_snore_inference(bool model_positive,
 void xiaozhi_ui_set_snore_guard_state(bool enabled);
 
 /**
+ * @brief Update the top-level guard/dialogue mode and keyword connectivity.
+ */
+void xiaozhi_ui_set_operating_mode(bool guard_mode, bool keyword_online);
+
+/**
  * @brief Show the alarm ringing screen.
  */
 void xiaozhi_ui_show_alarm_ring(void);

@@ -4,6 +4,7 @@
 .DS_Store
 Thumbs.db
 Desktop.ini
+~$*.docx
 *.swp
 *.swo
 *.tmp
@@ -132,6 +133,7 @@ Edgi_Talk_M55_XiaoZhi/**/*.pcm
 Edgi_Talk_M55_XiaoZhi/**/*.raw
 radar_wifi/build/
 radar_wifi/.cache/
+mtb_shared/
 
 # Vendor archives and generated documentation bundles.
 *.zip
@@ -140,3 +142,14 @@ radar_wifi/.cache/
 *.tar
 *.tar.gz
 *.tgz
+
+# ---------------------------------------------------------------------------
+# Generated report/rendering workspaces
+# ---------------------------------------------------------------------------
+build_doc_assets/chrome_screenshot_profile/
+build_doc_assets/rendered*/
+build_doc_assets/__pycache__/
+build_doc_assets/*_render.pdf
+build_doc_assets/*_temp.docx
+build_doc_assets/competition_submission_render*.pdf
+build_doc_assets/competition_submission_temp.docx

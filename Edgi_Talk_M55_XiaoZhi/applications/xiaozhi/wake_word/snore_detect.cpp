@@ -15,6 +15,10 @@
 #define DBG_LVL DBG_LOG
 #include <rtdbg.h>
 
+#ifndef SNORE_DETECT_SERIAL_VERBOSE
+#define SNORE_DETECT_SERIAL_VERBOSE 0
+#endif
+
 #include "edge-impulse-sdk/tensorflow/lite/micro/micro_interpreter.h"
 #include "edge-impulse-sdk/tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "edge-impulse-sdk/tensorflow/lite/schema/schema_generated.h"
@@ -55,7 +59,7 @@ extern "C" void xz_trigger_care_alarm(void);
 
 /* --- NEW: Configuration for DB sending --- */
 #ifndef DB_SEND_TARGET_IP
-#define DB_SEND_TARGET_IP "192.168.0.101"  // Replace with your target IP
+#define DB_SEND_TARGET_IP "192.168.0.102"  // Replace with your target IP
 #endif
 
 #ifndef DB_SEND_TARGET_PORT
@@ -72,6 +76,7 @@ extern "C" void xz_trigger_care_alarm(void);
 #define HB_THREAD_STACK_SIZE 2048
 #define HB_THREAD_PRIORITY 18              // Same as snore detection (independent work)
 #define HB_THREAD_TICK 10
+#define HTTP_SOCKET_TIMEOUT_MS 1200
 /* END NEW */
 /* --- END NEW --- */
 
@@ -572,13 +577,17 @@ static int snore_infer_from_pcm(const int16_t *pcm, float *out_score, rt_bool_t 
     if (detected)
     {
         g_last_detect_tick = now;
+#if SNORE_DETECT_SERIAL_VERBOSE
         LOG_W("SNORE DETECTED: score=%.3f (raw=%d) threshold=%.2f", snore_score, (int)out1, kSnoreThreshold);
+#endif
     }
     else
     {
+#if SNORE_DETECT_SERIAL_VERBOSE
         LOG_I("NO SNORE: score=%.3f (raw=%d) threshold=%.2f%s",
               snore_score, (int)out1, kSnoreThreshold,
               (snore_score >= kSnoreThreshold && !cooldown_ok) ? " (cooldown)" : "");
+#endif
     }
 
     if (out_score)
@@ -810,7 +819,7 @@ static void audio_send_thread_entry(void *parameter)
 #define SNORE_THREAD_TICK       10
 
 /* NEW: Small helper to POST a JSON body to the backend.
- * Used for /mock/snore-session/{start,stop} and /mock/snore-heartbeat.
+ * Used for hardware snore session and heartbeat endpoints.
  * Returns 0 on success, negative on failure. Non-blocking on transport errors.
  */
 static int post_json_to_backend(const char *path, const char *json_body)
@@ -841,6 +850,10 @@ static int post_json_to_backend(const char *path, const char *json_body)
         LOG_W("post_json: socket() failed, errno=%d", errno);
         return -3;
     }
+
+    int timeout_ms = HTTP_SOCKET_TIMEOUT_MS;
+    (void)setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+    (void)setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
 
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
@@ -890,7 +903,9 @@ static int post_json_to_backend(const char *path, const char *json_body)
     (void)recv(sockfd, resp, sizeof(resp) - 1, 0);
     close(sockfd);
 
+#if SNORE_DETECT_SERIAL_VERBOSE
     LOG_I("post_json: %s sent %d bytes", path, (int)total);
+#endif
     return 0;
 }
 
@@ -905,7 +920,7 @@ static void heartbeat_thread_entry(void *parameter)
     LOG_I("hb: thread started (interval=%d ms)", HB_INTERVAL_MS);
 
     /* Announce session start so the dashboard flips to "online" immediately */
-    post_json_to_backend("/mock/snore-session/start", "{\"source\":\"real_snore_board\"}");
+    post_json_to_backend("/hardware/snore-session/start", "{\"source\":\"real_snore_board\"}");
 
     const rt_tick_t period_ticks = rt_tick_from_millisecond(HB_INTERVAL_MS);
     rt_tick_t next_send = rt_tick_get();
@@ -942,13 +957,13 @@ static void heartbeat_thread_entry(void *parameter)
                 "{\"snore_score\":%.3f,\"snore_detected\":%s,\"dbfs\":null,\"source\":\"real_snore_board\"}",
                 score, detected ? "true" : "false");
         if (body_len > 0) {
-            (void)post_json_to_backend("/mock/snore-heartbeat", body);
+            (void)post_json_to_backend("/hardware/snore-heartbeat", body);
         }
     }
 
     /* Full stop reports the session end. Capture-only pauses keep this
      * heartbeat alive so Edgi remains online during a voice interaction. */
-    post_json_to_backend("/mock/snore-session/stop", "{}");
+    post_json_to_backend("/hardware/snore-session/stop", "{}");
 
     LOG_I("hb: thread exiting");
     g_hb_tid = RT_NULL;
@@ -1226,7 +1241,7 @@ int snore_detect_start(void)
     /* NEW: Start heartbeat thread so the dashboard flips to "online"
      * immediately and stays online even during the 10-second audio
      * collection phase. The thread announces session start and then
-     * pushes a 1Hz snore score to /mock/snore-heartbeat. */
+     * pushes a 1Hz snore score to /hardware/snore-heartbeat. */
     if (!g_hb_running && !g_hb_tid) {
         g_hb_running = RT_TRUE;
         g_hb_tid = rt_thread_create("snore_hb",

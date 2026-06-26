@@ -54,11 +54,17 @@ Each command switches to YMODEM mode. Use a terminal that supports YMODEM upload
 
    ![alt text](figures/7.png)
 
-5. When the device screen shows **“Standby”**, it means voice interaction is ready:
+5. After networking, the device enters **Guard mode** by default and starts snore and emergency-keyword monitoring:
 
    ![alt text](figures/8.png)
 
-> **Tip:** Press the **first user button** on the development board to enter voice input. After waiting 1–2 seconds, XiaoZhi will automatically respond.
+> **Tip:** Tap **Dialogue mode** or press the **first user button** to stop guard monitoring and immediately start XiaoZhi voice input.
+
+## Guard and Dialogue Modes
+
+- **Guard mode (default):** runs the local snore model continuously and, while online, uses XiaoZhi cloud STT only to match the ten emergency phrases. Normal speech never plays an LLM reply; snore detection continues if the network is lost.
+- **Dialogue mode:** stops snore and emergency-keyword monitoring, starts listening immediately, and enables the existing multi-turn STT/LLM/TTS conversation.
+- Use the **Guard mode / Dialogue mode** buttons on the main screen. Returning from the guard details screen does not stop monitoring.
 
 ## XiaoZhi Expression Meaning
 
@@ -87,7 +93,7 @@ Each command switches to YMODEM mode. Use a terminal that supports YMODEM upload
 ### Running Effect
 
 * After flashing, the device will start the sample automatically on power-up.
-* Press the top button once to enter the **Listening** state and interact with the device.
+* The device starts in Guard mode. Press the top button once to switch to Dialogue mode and enter the **Listening** state.
   ![alt text](figures/3.png)
 
 ## Notes

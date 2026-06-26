@@ -50,6 +50,8 @@
 /* UDP server task header file. */
 #include "udp_server.h"
 #include "radar_task.h"
+#include "ble_radar_service.h"
+#include "radar_status_led.h"
 
 /******************************************************************************
  * Function Name: main
@@ -89,6 +91,9 @@ int main()
     printf("===============================================================\n");
     printf(" - UDP Server with Radar data\n");
     printf("===============================================================\n\n");
+
+    radar_status_led_init();
+    ble_radar_service_init();
 
     /* Create the tasks. */
     if(pdPASS != xTaskCreate(udp_server_task, "UDP server task", UDP_SERVER_TASK_STACK_SIZE, NULL,

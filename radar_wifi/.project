@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>Wi-Fi_UDP_Client_1</name>
+	<name>radar_wifi_2</name>
 	<comment></comment>
 	<projects>
 	</projects>
@@ -26,5 +26,15 @@
 		<nature>org.eclipse.cdt.managedbuilder.core.ScannerConfigNature</nature>
 	</natures>
 	<linkedResources>
+		<link>
+			<name>external_dirs</name>
+			<type>2</type>
+			<locationURI>virtual:/virtual</locationURI>
+		</link>
+		<link>
+			<name>external_dirs/configs</name>
+			<type>2</type>
+			<locationURI>PARENT-0-PROJECT_LOC/./configs</locationURI>
+		</link>
 	</linkedResources>
 </projectDescription>

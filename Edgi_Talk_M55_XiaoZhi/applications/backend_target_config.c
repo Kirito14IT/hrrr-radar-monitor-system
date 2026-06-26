@@ -15,7 +15,7 @@
 #include <rtdbg.h>
 
 #define BACKEND_CONFIG_TMP_FILE "/flash/backend_config.tmp"
-#define BACKEND_DEFAULT_HOST    "192.168.0.101"
+#define BACKEND_DEFAULT_HOST    "192.168.0.102"
 #define BACKEND_DEFAULT_PORT    8081
 #define BACKEND_CONFIG_VERSION  2
 
@@ -224,7 +224,7 @@ static int backend_cfg_set(int argc, char **argv)
     if (argc < 2)
     {
         rt_kprintf("Usage: backend_cfg_set <computer_ip> [port]\n");
-        rt_kprintf("Example: backend_cfg_set 192.168.0.101 8081\n");
+        rt_kprintf("Example: backend_cfg_set 192.168.0.102 8081\n");
         return -RT_EINVAL;
     }
 

@@ -68,10 +68,11 @@
 |---|---|
 | **平台** | Infineon PSoC™ Edge E84（多核：Secure M33 / M33 / M55） |
 | **实时系统** | RT-Thread（多核 + LVGL UI） |
-| **关键源文件** | [`Edgi_Talk_M55_XiaoZhi/applications/main.c`](Edgi_Talk_M55_XiaoZhi/applications/main.c)、[`Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/xiaozhi.cpp`](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/xiaozhi.cpp)、[`.../wake_word/meow_detect_once.cpp`](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/meow_detect_once.cpp) |
+| **关键源文件** | [`Edgi_Talk_M55_XiaoZhi/applications/main.c`](Edgi_Talk_M55_XiaoZhi/applications/main.c)、[`Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/xiaozhi.cpp`](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/xiaozhi.cpp)、[`.../wake_word/snore_detect.cpp`](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp) |
 | **核心子系统** | LVGL UI 表情动画 + Wi-Fi 配网（AP 模式 `192.168.169.1`）+ WebSocket 语音交互（基于小智云） + Edge Impulse 唤醒词检测 + 音频上行 |
 | **音频能力** | mic0 PCM 采集 + Opus 编码 + 16kHz 单声道 + 60ms 帧长；唤醒阈值 80% 置信度 |
 | **本项目用途** | 改造为**床旁呼噜检测 + 温湿度上报**：拾取夜间环境音，通过 HTTP POST 上传 10 秒音频到 PC 后端（`http://电脑IP:8081/audio`）；M33 读取 AHT20，M55 通过共享内存读取温湿度并上报 |
+| **双模式** | 上电默认守护模式：呼噜推理 + 云端 STT 求助词匹配；对话模式：暂停守护并立即进入小智多轮对话 |
 | **状态机** | Unknown → Starting → WifiConfiguring → Idle → Connecting → Listening → Speaking → Sleep |
 
 **前端展示对应：** 实时监测页 → 呼噜声浪条（条形跳动）、呼噜强度趋势图、温湿度趋势图、呼噜事件状态、设备状态胶囊中的"呼噜开发板在线/离线"和"温湿度板在线/离线"。

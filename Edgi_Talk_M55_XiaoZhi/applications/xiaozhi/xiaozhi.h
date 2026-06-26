@@ -40,6 +40,8 @@ extern "C" {
 #define BUTTON_EVENT_PRESSED    (1 << 3)
 #define BUTTON_EVENT_RELEASED   (1 << 4)
 #define TIMEOUT_EVENT           (1 << 5)
+#define MODE_EVENT_GUARD        (1 << 6)
+#define MODE_EVENT_DIALOGUE     (1 << 7)
 
 #define MIC_EVENT_OPEN          (1 << 0)
 #define MIC_EVENT_CLOSE         (1 << 1)
@@ -98,6 +100,12 @@ enum DeviceState
     kDeviceStateFatalError
 };
 
+enum XzOperatingMode
+{
+    kXzOperatingModeGuard,
+    kXzOperatingModeDialogue
+};
+
 typedef struct
 {
     uint32_t sample_rate;
@@ -121,6 +129,7 @@ typedef struct
     char client_id_string[MAX_CLIENT_ID_LEN];
     xiaozhi_ws_t ws;
     enum DeviceState state;
+    enum XzOperatingMode operating_mode;
     rt_event_t button_event;
     int wakeword_initialized_session;
     rt_bool_t multi_turn_conversation_enabled;  /* 多轮对话开关 */
@@ -211,6 +220,8 @@ int snore_detect_pause_for_voice(void);
 int snore_detect_resume_after_voice(void);
 int xz_set_snore_guard_enabled(rt_bool_t enabled);
 rt_bool_t xz_is_snore_guard_enabled(void);
+int xz_request_operating_mode(enum XzOperatingMode mode);
+enum XzOperatingMode xz_get_operating_mode(void);
 void xz_audio_decoder_encoder_open(uint8_t is_websocket);
 void xz_audio_decoder_encoder_close(void);
 void xz_audio_downlink(uint8_t *data, uint32_t size, uint32_t *aes_value, uint8_t need_aes);

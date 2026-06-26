@@ -39,6 +39,8 @@
 /* Header file for local task */
 #include "radar_config_task.h"
 
+#include "ble_radar_service.h"
+#include "radar_status_led.h"
 #include "radar_task.h"
 #include "udp_server.h"
 #include "xensiv_bgt60trxx_mtb.h"
@@ -285,6 +287,11 @@ void radar_task(void *pvParameters)
         {
             if(!test_mode)
             {
+                if (!ble_radar_service_tx_enabled())
+                {
+                    continue;
+                }
+
                 frame_num++;
                 publisher_msg->data[0] = RADAR_DATA_COMMAND;
                 publisher_msg->data[1] = DUMMY_BYTE;
@@ -297,6 +304,7 @@ void radar_task(void *pvParameters)
 
                 /* Send message back to publish queue. */
                 xQueueSendToBack(radar_data_queue, &publisher_msg, 0 );
+                ble_radar_service_note_frame_sent();
             }
             else
             {
@@ -320,9 +328,22 @@ void radar_task(void *pvParameters)
  ******************************************************************************/
 int32_t radar_start(bool start)
 {
-    if (xensiv_bgt60trxx_start_frame(&bgt60_obj.dev, start) != XENSIV_BGT60TRXX_STATUS_OK)
+    int32_t status = xensiv_bgt60trxx_start_frame(&bgt60_obj.dev, start);
+    if (status != XENSIV_BGT60TRXX_STATUS_OK)
     {
+        printf("ERROR: xensiv_bgt60trxx_start_frame(%s) failed, status=%" PRId32 "\r\n",
+               start ? "true" : "false",
+               status);
         return RESULT_ERROR;
+    }
+
+    if (start)
+    {
+        radar_status_led_set_idle();
+    }
+    else
+    {
+        radar_status_led_set_paused();
     }
 
     return RESULT_SUCCESS;

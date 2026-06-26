@@ -3,10 +3,10 @@
 # Any edits to this file will be lost the next time the library manager is run or
 # the next time 'make getlibs' is run.
 #
-bsp-assistant capsense-configurator capsense-tuner config device-configurator dfuh-tool config_ezpd ez-pd-configurator modlibs library-manager qspi-configurator seglcd-configurator smartio-configurator config_usbdev usbdev-configurator edge-protect-configurator :
-	make -C Wi-Fi_UDP_Client_1 $@
+bsp-assistant config device-configurator dfuh-tool config_ezpd ez-pd-configurator modlibs library-manager qspi-configurator seglcd-configurator smartio-configurator config_usbdev usbdev-configurator capsense-configurator capsense-tuner edge-protect-configurator :
+	make -C radar_wifi $@
 
-config_bt bt-configurator config_lin lin-configurator config_ml secure-policy-configurator :
+config_bt bt-configurator config_lin lin-configurator config_ml deepcraftmodelconverter secure-policy-configurator :
 	$(error $@ configurator cannot be executed at the application level. Run this command from the desired project directory.)
 
-.PHONY: bsp-assistant config_bt bt-configurator capsense-configurator capsense-tuner config device-configurator dfuh-tool config_ezpd ez-pd-configurator modlibs library-manager config_lin lin-configurator qspi-configurator seglcd-configurator smartio-configurator config_usbdev usbdev-configurator config_ml secure-policy-configurator edge-protect-configurator
+.PHONY: bsp-assistant config_bt bt-configurator config device-configurator dfuh-tool config_ezpd ez-pd-configurator modlibs library-manager config_lin lin-configurator qspi-configurator seglcd-configurator smartio-configurator config_usbdev usbdev-configurator config_ml capsense-configurator capsense-tuner deepcraftmodelconverter secure-policy-configurator edge-protect-configurator

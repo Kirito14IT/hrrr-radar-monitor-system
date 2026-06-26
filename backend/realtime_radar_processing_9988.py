@@ -85,6 +85,8 @@ except ImportError:
 # 处理参数设置
 FRAME_RATE = get_param('frame_rate')           # 雷达帧率
 BUFFER_SIZE = 65539                            # UDP包缓冲区大小
+RADAR_DATA_COMMAND = 1                         # 雷达固件数据帧命令字
+RADAR_DUMMY_BYTE = 0xFF                        # 雷达固件数据帧头 dummy byte
 
 # 雷达参数设置
 FFT_SIZE = 512                               # 距离FFT大小
@@ -237,7 +239,12 @@ class RealtimeRadarProcessor:
         # 添加CORS中间件
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],  # 允许所有来源
+            allow_origins=[
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://192.168.0.102:5173",
+            ],
+            allow_origin_regex=r"https?://(?:localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3})(?::\d+)?",
             allow_credentials=True,
             allow_methods=["*"],  # 允许所有方法
             allow_headers=["*"],  # 允许所有头
@@ -349,6 +356,15 @@ class RealtimeRadarProcessor:
         else:
             print(f"EEMD参数: 噪声={EEMD_NOISE_WIDTH}, 集合大小={EEMD_ENSEMBLE_SIZE}, IMF数量={EEMD_MAX_IMF}")
 
+    def _is_valid_radar_data_packet(self, data):
+        """只接受雷达固件定义的数据帧，避免 JSON 控制包/广播包污染在线状态。"""
+        if len(data) < 8:
+            return False
+        if data[0] != RADAR_DATA_COMMAND or data[1] != RADAR_DUMMY_BYTE:
+            return False
+        payload_len = len(data) - 6
+        return payload_len > 0 and payload_len % 2 == 0
+
     def start(self):
         """启动雷达数据接收和处理"""
         self.running = True
@@ -358,6 +374,8 @@ class RealtimeRadarProcessor:
         
         # 创建UDP套接字
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if hasattr(socket, "SIO_UDP_CONNRESET"):
+            self.socket.ioctl(socket.SIO_UDP_CONNRESET, False)
         
         # 绑定套接字到本地端口
         self.socket.bind(("0.0.0.0", self.server_port))
@@ -388,13 +406,21 @@ class RealtimeRadarProcessor:
         
         # 启动雷达数据传输
         print("启动雷达数据传输...")
-        # self.socket.sendto('{"radar_transmission":"enable"}'.encode(), (self.server_ip, self.server_port))
+        if self.server_ip and self.server_ip != "0.0.0.0":
+            self.socket.sendto('{"radar_transmission":"enable"}'.encode(), (self.server_ip, self.server_port))
         
         # 开始接收数据
         try:
                 while self.running:
                     # 接收一帧数据
-                    data, adr = self.socket.recvfrom(BUFFER_SIZE)
+                    try:
+                        data, adr = self.socket.recvfrom(BUFFER_SIZE)
+                    except ConnectionResetError as exc:
+                        print(f"UDP receive warning: {exc}")
+                        continue
+
+                    if not self._is_valid_radar_data_packet(data):
+                        continue
                     
                     # 获取帧号
                     frame_number = int.from_bytes(data[2:6], 'little')
@@ -471,7 +497,8 @@ class RealtimeRadarProcessor:
         
         if self.socket:
             # 停止雷达数据传输
-            self.socket.sendto('{"radar_transmission":"disable"}'.encode(), (self.server_ip, self.server_port))
+            if self.server_ip and self.server_ip != "0.0.0.0":
+                self.socket.sendto('{"radar_transmission":"disable"}'.encode(), (self.server_ip, self.server_port))
             self.socket.close()
             self.socket = None
         

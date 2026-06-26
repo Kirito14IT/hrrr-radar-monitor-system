@@ -1,0 +1,17 @@
+{
+  "name": "Radar Care 雷达蓝牙",
+  "short_name": "RadarCare",
+  "description": "雷达板蓝牙绑定与状态查看",
+  "start_url": "/manage/radar_bluetooth",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5fbfc",
+  "theme_color": "#0ea5a8",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}

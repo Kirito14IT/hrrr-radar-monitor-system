@@ -36,14 +36,26 @@
 #define BUTTON_DEBOUNCE_MS 20
 #define WAKEWORD_INIT_FLAG_RESET 0
 #define TTS_SENTENCE_TIMEOUT_MS 6000
+#define EMERGENCY_POST_TIMEOUT_MS 3000
+#define EMERGENCY_REPORT_THREAD_STACK 4096
+#define EMERGENCY_REPORT_THREAD_PRIORITY 18
+#define EMERGENCY_SOURCE_DEFAULT "xiaozhi_voice_board"
+#define EDGI_HEARTBEAT_INTERVAL_MS 5000
+#define EDGI_HEARTBEAT_THREAD_STACK 4096
+#define EDGI_HEARTBEAT_THREAD_PRIORITY 20
 
 #ifndef DB_SEND_TARGET_IP
-#define DB_SEND_TARGET_IP "192.168.0.101"
+#define DB_SEND_TARGET_IP "192.168.0.102"
 #endif
 
 #ifndef DB_SEND_TARGET_PORT
 #define DB_SEND_TARGET_PORT 8081
 #endif
+
+typedef struct
+{
+    char body[640];
+} emergency_report_msg_t;
 
 /* Global application state */
 xiaozhi_app_t g_app =
@@ -57,6 +69,7 @@ xiaozhi_app_t g_app =
         .client_id_string = {0},
         .ws = {0},
         .state = kDeviceStateUnknown,
+        .operating_mode = kXzOperatingModeGuard,
         .button_event = RT_NULL,
         .wakeword_initialized_session = 0,
         .multi_turn_conversation_enabled = RT_TRUE,
@@ -66,9 +79,13 @@ xiaozhi_app_t g_app =
         .pending_play_wake_sound = RT_FALSE};
 
 static volatile rt_bool_t g_snore_guard_enabled = RT_FALSE;
-static volatile rt_bool_t g_snore_guard_auto_started = RT_FALSE;
+static rt_thread_t g_edgi_heartbeat_tid = RT_NULL;
+static volatile rt_bool_t g_edgi_heartbeat_running = RT_FALSE;
 static void xz_prepare_voice_input(void);
 static void xz_restore_idle_audio(void);
+static int xz_apply_guard_mode(void);
+static int xz_apply_dialogue_mode(rt_bool_t play_wake_sound);
+static void xz_start_edgi_heartbeat(void);
 
 #include "ui/xiaozhi_ui.h"
 #include "iot/iot_c_api.h"
@@ -77,6 +94,12 @@ static void xz_restore_idle_audio(void);
 /* Wake word detection callback - optimized for quick response */
 void xz_wakeword_detected_callback(const char *wake_word, float confidence)
 {
+    if (g_app.operating_mode != kXzOperatingModeDialogue)
+    {
+        LOG_I("Wake word ignored while guard mode is active");
+        return;
+    }
+
     LOG_D("Wake word detected: %s (confidence: %.2f%%)", wake_word, confidence * 100);
 
     /* Update UI to show wake word detection */
@@ -200,6 +223,12 @@ static void tts_sentence_end_timeout(void *parameter)
 /* TTS stop delayed restart work function */
 static void tts_stop_restart_listening(struct rt_work *work, void *work_data)
 {
+    if (g_app.operating_mode != kXzOperatingModeDialogue)
+    {
+        LOG_I("Skipping TTS restart outside dialogue mode");
+        return;
+    }
+
     LOG_D("TTS stop delayed restart: restarting listening mode");
 
     /* Multi-turn conversation: keep listening without restarting wake word detection */
@@ -386,15 +415,33 @@ void xz_event_thread_entry(void *param)
     while (1)
     {
         rt_event_recv(g_app.button_event,
-                      BUTTON_EVENT_PRESSED | BUTTON_EVENT_RELEASED | TIMEOUT_EVENT,
+                      BUTTON_EVENT_PRESSED | BUTTON_EVENT_RELEASED | TIMEOUT_EVENT |
+                          MODE_EVENT_GUARD | MODE_EVENT_DIALOGUE,
                       RT_EVENT_FLAG_OR | RT_EVENT_FLAG_CLEAR,
                       RT_WAITING_FOREVER, &evt);
 
         /* First ensure state consistency */
         ensure_state_consistency();
 
+        if (evt & MODE_EVENT_GUARD)
+        {
+            (void)xz_apply_guard_mode();
+            continue;
+        }
+        if (evt & MODE_EVENT_DIALOGUE)
+        {
+            (void)xz_apply_dialogue_mode(RT_TRUE);
+            continue;
+        }
+
         if (evt & BUTTON_EVENT_PRESSED)
         {
+            if (g_app.operating_mode == kXzOperatingModeGuard)
+            {
+                (void)xz_apply_dialogue_mode(RT_TRUE);
+                continue;
+            }
+
             if (!g_app.ws.is_connected)
             {
                 g_app.pending_listen_start = RT_TRUE;
@@ -477,7 +524,9 @@ void xz_event_thread_entry(void *param)
             LOG_I("Processing TTS sentence end timeout event");
 
             /* Only restart listening if we're still in speaking state, multi-turn is enabled, and connected */
-            if (g_app.state == kDeviceStateSpeaking && g_app.multi_turn_conversation_enabled && g_app.ws.is_connected)
+            if (g_app.operating_mode == kXzOperatingModeDialogue &&
+                g_app.state == kDeviceStateSpeaking &&
+                g_app.multi_turn_conversation_enabled && g_app.ws.is_connected)
             {
                 g_app.state = kDeviceStateListening;
                 xz_prepare_voice_input();
@@ -687,6 +736,8 @@ static const char *xz_find_emergency_phrase(const char *text)
 static rt_thread_t g_emergency_alarm_tid = RT_NULL;
 static rt_tick_t g_emergency_alarm_last_tick = 0;
 static volatile rt_bool_t g_emergency_alarm_cancelled = RT_FALSE;
+static volatile rt_bool_t g_emergency_resolve_in_progress = RT_FALSE;
+static char g_active_emergency_source[64] = EMERGENCY_SOURCE_DEFAULT;
 static rt_thread_t g_care_alarm_tid = RT_NULL;
 static rt_tick_t g_care_alarm_last_tick = 0;
 static rt_thread_t g_alarm_clock_tid = RT_NULL;
@@ -956,6 +1007,17 @@ static void xz_json_escape(char *dst, size_t dst_size, const char *src)
     dst[out] = '\0';
 }
 
+static void xz_set_active_emergency_source(const char *source)
+{
+    const char *effective_source =
+        (source && source[0]) ? source : EMERGENCY_SOURCE_DEFAULT;
+
+    rt_strncpy(g_active_emergency_source,
+               effective_source,
+               sizeof(g_active_emergency_source) - 1);
+    g_active_emergency_source[sizeof(g_active_emergency_source) - 1] = '\0';
+}
+
 static int xz_post_json_to_backend(const char *path, const char *json_body)
 {
     if (!path || !json_body)
@@ -972,6 +1034,10 @@ static int xz_post_json_to_backend(const char *path, const char *json_body)
     int url_len = snprintf(url, sizeof(url), "http://%s:%d%s", backend_host, backend_port, path);
     if (url_len <= 0 || url_len >= (int)sizeof(url))
     {
+        LOG_W("backend: url too long for %s:%d path=%s",
+              backend_host,
+              backend_port,
+              path);
         return -2;
     }
 
@@ -982,19 +1048,100 @@ static int xz_post_json_to_backend(const char *path, const char *json_body)
         return -3;
     }
 
+    webclient_set_timeout(session, EMERGENCY_POST_TIMEOUT_MS);
     webclient_header_fields_add(session, "Content-Type: application/json\r\n");
     webclient_header_fields_add(session, "Content-Length: %u\r\n", (unsigned)body_len);
 
+    LOG_I("backend: posting %u bytes to %s", (unsigned)body_len, url);
     int status = webclient_post(session, url, json_body, body_len);
     webclient_close(session);
     if (status < 200 || status >= 300)
     {
-        LOG_W("emergency: post %s failed, status=%d", url, status);
+        LOG_W("backend: post %s failed, status=%d", url, status);
         return -4;
     }
 
-    LOG_I("emergency: /emergency reported");
+    LOG_I("backend: post %s ok", path);
     return 0;
+}
+
+static void xz_edgi_heartbeat_thread(void *parameter)
+{
+    (void)parameter;
+    LOG_I("edgi heartbeat: thread started (interval=%d ms)", EDGI_HEARTBEAT_INTERVAL_MS);
+
+    while (g_edgi_heartbeat_running)
+    {
+        const rt_bool_t guard_mode =
+            (g_app.operating_mode == kXzOperatingModeGuard) ? RT_TRUE : RT_FALSE;
+        const rt_bool_t keyword_online =
+            (g_app.ws.is_connected && g_app.ws.session_id[0] != '\0') ? RT_TRUE : RT_FALSE;
+        const char *mode = guard_mode ? "guard" : "dialogue";
+
+        char body[192];
+        int body_len = snprintf(body,
+                                sizeof(body),
+                                "{\"source\":\"xiaozhi_board\","
+                                "\"mode\":\"%s\","
+                                "\"keyword_online\":%s,"
+                                "\"snore_guard_enabled\":%s}",
+                                mode,
+                                keyword_online ? "true" : "false",
+                                g_snore_guard_enabled ? "true" : "false");
+        if (body_len > 0 && body_len < (int)sizeof(body))
+        {
+            if (xz_post_json_to_backend("/hardware/edgi-heartbeat", body) != 0)
+            {
+                LOG_W("edgi heartbeat: post failed");
+            }
+        }
+
+        rt_thread_mdelay(EDGI_HEARTBEAT_INTERVAL_MS);
+    }
+
+    LOG_I("edgi heartbeat: thread exiting");
+    g_edgi_heartbeat_tid = RT_NULL;
+}
+
+static void xz_start_edgi_heartbeat(void)
+{
+    if (g_edgi_heartbeat_running || g_edgi_heartbeat_tid)
+    {
+        return;
+    }
+
+    g_edgi_heartbeat_running = RT_TRUE;
+    g_edgi_heartbeat_tid = rt_thread_create("edgi_hb",
+                                            xz_edgi_heartbeat_thread,
+                                            RT_NULL,
+                                            EDGI_HEARTBEAT_THREAD_STACK,
+                                            EDGI_HEARTBEAT_THREAD_PRIORITY,
+                                            10);
+    if (!g_edgi_heartbeat_tid)
+    {
+        g_edgi_heartbeat_running = RT_FALSE;
+        LOG_E("edgi heartbeat: create thread failed");
+        return;
+    }
+
+    rt_thread_startup(g_edgi_heartbeat_tid);
+}
+
+static void xz_emergency_report_thread(void *parameter)
+{
+    emergency_report_msg_t *msg = (emergency_report_msg_t *)parameter;
+
+    if (!msg)
+    {
+        return;
+    }
+
+    if (xz_post_json_to_backend("/emergency", msg->body) != 0)
+    {
+        LOG_W("emergency: report failed");
+    }
+
+    rt_free(msg);
 }
 
 static void xz_report_emergency_event(const char *source,
@@ -1006,7 +1153,7 @@ static void xz_report_emergency_event(const char *source,
     char escaped_transcript[384];
     char escaped_device[64];
     xz_json_escape(escaped_source, sizeof(escaped_source),
-                   source ? source : "xiaozhi_voice_board");
+                   source ? source : EMERGENCY_SOURCE_DEFAULT);
     xz_json_escape(escaped_phrase, sizeof(escaped_phrase), phrase);
     xz_json_escape(escaped_transcript, sizeof(escaped_transcript), transcript);
     xz_json_escape(escaped_device, sizeof(escaped_device), get_client_id());
@@ -1027,42 +1174,106 @@ static void xz_report_emergency_event(const char *source,
         return;
     }
 
-    if (xz_post_json_to_backend("/emergency", body) != 0)
+    emergency_report_msg_t *msg = (emergency_report_msg_t *)rt_malloc(sizeof(emergency_report_msg_t));
+    if (!msg)
     {
-        LOG_W("emergency: report failed");
+        LOG_W("emergency: alloc report message failed");
+        return;
     }
+
+    rt_strncpy(msg->body, body, sizeof(msg->body) - 1);
+    msg->body[sizeof(msg->body) - 1] = '\0';
+
+    rt_thread_t tid = rt_thread_create("sos_report",
+                                      xz_emergency_report_thread,
+                                      msg,
+                                      EMERGENCY_REPORT_THREAD_STACK,
+                                      EMERGENCY_REPORT_THREAD_PRIORITY,
+                                      10);
+    if (tid == RT_NULL)
+    {
+        LOG_W("emergency: report thread create failed");
+        rt_free(msg);
+        return;
+    }
+
+    rt_thread_startup(tid);
 }
 
 void xz_trigger_emergency_event(const char *source,
                                 const char *phrase,
                                 const char *transcript)
 {
+    const char *event_source =
+        (source && source[0]) ? source : EMERGENCY_SOURCE_DEFAULT;
+    const rt_bool_t is_imu_emergency =
+        strcmp(event_source, "xiaozhi_imu_board") == 0;
     const char *display_phrase = phrase ? phrase : "检测到异常情况";
     const char *event_transcript = transcript ? transcript : display_phrase;
+    if (is_imu_emergency)
+    {
+        display_phrase = "设备跌落";
+        event_transcript = "IMU检测到开发板低重力或撞击，疑似设备被打翻";
+    }
 
+    xz_set_active_emergency_source(event_source);
+    g_emergency_resolve_in_progress = RT_FALSE;
     LOG_W("emergency event triggered: source=%s phrase=%s",
-          source ? source : "xiaozhi_voice_board",
+          event_source,
           display_phrase);
     xiaozhi_ui_show_emergency(display_phrase);
     xz_trigger_emergency_alarm();
-    xz_report_emergency_event(source, display_phrase, event_transcript);
+    xz_report_emergency_event(event_source, display_phrase, event_transcript);
 }
 
 static void xz_resolve_emergency_thread(void *parameter)
 {
     (void)parameter;
-    const char *body =
-        "{\"source\":\"xiaozhi_voice_board\","
-        "\"resolution_note\":\"已在开发板确认并解除紧急状态\","
-        "\"resolved_by\":\"xiaozhi_voice_board\"}";
-    const int result = xz_post_json_to_backend("/emergency/resolve", body);
+
+    g_emergency_alarm_cancelled = RT_TRUE;
+    if (g_emergency_alarm_tid != RT_NULL || wavplayer_state_get() != PLAYER_STATE_STOPED)
+    {
+        wavplayer_stop();
+    }
+
+    char escaped_source[64];
+    xz_json_escape(escaped_source,
+                   sizeof(escaped_source),
+                   g_active_emergency_source[0] ? g_active_emergency_source : EMERGENCY_SOURCE_DEFAULT);
+
+    char resolve_body[256];
+    int body_len = snprintf(resolve_body,
+                            sizeof(resolve_body),
+                            "{\"source\":\"%s\","
+                            "\"resolution_note\":\"已在开发板手动解除紧急状态\","
+                            "\"resolved_by\":\"xiaozhi_board_manual_button\"}",
+                            escaped_source);
+    if (body_len <= 0 || body_len >= (int)sizeof(resolve_body))
+    {
+        LOG_W("emergency resolve: body too long");
+        g_emergency_resolve_in_progress = RT_FALSE;
+        xiaozhi_ui_set_emergency_resolution(false);
+        return;
+    }
+
+    const int result = xz_post_json_to_backend("/emergency/resolve", resolve_body);
+    g_emergency_resolve_in_progress = RT_FALSE;
     xiaozhi_ui_set_emergency_resolution(result == 0);
+    xiaozhi_ui_set_operating_mode(
+        g_app.operating_mode == kXzOperatingModeGuard,
+        g_app.operating_mode == kXzOperatingModeGuard &&
+            g_app.ws.is_connected && g_app.ws.session_id[0] != '\0');
 }
 
 void xz_resolve_emergency_from_board(void)
 {
+    if (g_emergency_resolve_in_progress)
+    {
+        LOG_I("emergency resolve: already in progress");
+        return;
+    }
+    g_emergency_resolve_in_progress = RT_TRUE;
     g_emergency_alarm_cancelled = RT_TRUE;
-    wavplayer_stop();
     xiaozhi_ui_set_emergency_resolution(true);
 
     rt_thread_t tid = rt_thread_create(
@@ -1075,6 +1286,8 @@ void xz_resolve_emergency_from_board(void)
     if (tid == RT_NULL)
     {
         LOG_E("emergency resolve: thread create failed");
+        g_emergency_resolve_in_progress = RT_FALSE;
+        xiaozhi_ui_set_emergency_resolution(false);
         return;
     }
     rt_thread_startup(tid);
@@ -1111,17 +1324,6 @@ void xz_audio_send_using_websocket(uint8_t *data, int len)
     }
 }
 
-static void xz_auto_start_snore_guard(void *parameter)
-{
-    (void)parameter;
-    rt_thread_mdelay(800);
-    if (g_app.ws.is_connected && !g_snore_guard_auto_started)
-    {
-        g_snore_guard_auto_started = RT_TRUE;
-        (void)xz_set_snore_guard_enabled(RT_TRUE);
-    }
-}
-
 err_t my_wsapp_fn(int code, char *buf, size_t len)
 {
     switch (code)
@@ -1132,20 +1334,6 @@ err_t my_wsapp_fn(int code, char *buf, size_t len)
         {
             g_app.ws.is_connected = 1;
             rt_sem_release(g_app.ws.sem);
-            if (!g_snore_guard_auto_started)
-            {
-                rt_thread_t tid = rt_thread_create(
-                    "snoreauto",
-                    xz_auto_start_snore_guard,
-                    RT_NULL,
-                    1536,
-                    20,
-                    10);
-                if (tid != RT_NULL)
-                {
-                    rt_thread_startup(tid);
-                }
-            }
         }
         break;
     case WS_DISCONNECT:
@@ -1188,9 +1376,9 @@ err_t my_wsapp_fn(int code, char *buf, size_t len)
             LOG_D("Stopped speaker due to disconnection\n");
         }
 
-        /* Ensure mic is closed when entering sleep */
         xz_mic(0);
-        xz_restore_idle_audio();
+        g_app.ws.is_connected = 0;
+        g_app.state = kDeviceStateUnknown;
 
         /* Stop TTS sentence end timer if running */
         if (g_app.tts_sentence_end_timer)
@@ -1203,15 +1391,22 @@ err_t my_wsapp_fn(int code, char *buf, size_t len)
             }
         }
 
-        xiaozhi_ui_chat_status("   休眠中");
-        xiaozhi_ui_chat_output("等待唤醒");
-        xiaozhi_ui_update_emoji("sleepy");
+        if (g_app.operating_mode == kXzOperatingModeGuard)
+        {
+            xiaozhi_ui_set_operating_mode(true, false);
+            xiaozhi_ui_chat_output("关键词离线，呼噜监测继续");
+        }
+        else
+        {
+            xiaozhi_ui_chat_status("   休眠中");
+            xiaozhi_ui_chat_output("等待唤醒");
+            xiaozhi_ui_update_emoji("sleepy");
+        }
         LOG_I("WebSocket closed\n");
-        g_app.ws.is_connected = 0;
-        g_app.state = kDeviceStateUnknown;
 
         /* Restore the configured idle audio owner. */
-        if (!xz_wakeword_is_enabled())
+        if (g_app.operating_mode == kXzOperatingModeDialogue &&
+            !xz_wakeword_is_enabled())
         {
             LOG_I("Starting wake word detection after disconnection");
             xz_wakeword_start();
@@ -1230,7 +1425,10 @@ err_t my_wsapp_fn(int code, char *buf, size_t len)
         Message_handle((const uint8_t *)buf, len);
         break;
     case WS_DATA:
-        xz_audio_downlink((uint8_t *)buf, len, NULL, 0);
+        if (g_app.operating_mode == kXzOperatingModeDialogue)
+        {
+            xz_audio_downlink((uint8_t *)buf, len, NULL, 0);
+        }
         break;
     default:
         LOG_E("Unknown error\n");
@@ -1371,8 +1569,16 @@ void reconnect_websocket(void)
 
     // Reset state
     g_app.state = kDeviceStateUnknown;
-    xiaozhi_ui_chat_status("   连接失败");
-    xiaozhi_ui_chat_output("请重试");
+    if (g_app.operating_mode == kXzOperatingModeGuard)
+    {
+        xiaozhi_ui_set_operating_mode(true, false);
+        xiaozhi_ui_chat_output("关键词离线，呼噜监测继续");
+    }
+    else
+    {
+        xiaozhi_ui_chat_status("   连接失败");
+        xiaozhi_ui_chat_output("请重试");
+    }
 }
 
 void xz_ws_audio_init(void)
@@ -1463,7 +1669,8 @@ void xz_voice_suspend(void)
 
 void xz_voice_resume(void)
 {
-    if (!xz_wakeword_is_enabled())
+    if (g_app.operating_mode == kXzOperatingModeDialogue &&
+        !xz_wakeword_is_enabled())
     {
         xz_wakeword_start();
     }
@@ -1472,6 +1679,127 @@ void xz_voice_resume(void)
 }
 
 } /* extern "C" */
+
+static void xz_cancel_conversation_timers(void)
+{
+    if (g_app.tts_sentence_end_timer)
+    {
+        rt_timer_stop(g_app.tts_sentence_end_timer);
+    }
+    if (tts_stop_delay_timer)
+    {
+        rt_timer_stop(tts_stop_delay_timer);
+    }
+}
+
+static void xz_stop_active_cloud_audio(void)
+{
+    xz_cancel_conversation_timers();
+    g_app.pending_listen_start = RT_FALSE;
+    g_app.pending_play_wake_sound = RT_FALSE;
+
+    if (g_app.ws.is_connected && g_app.ws.session_id[0] != '\0' &&
+        (xz_mic_is_enabled() || g_app.state == kDeviceStateListening ||
+         g_app.state == kDeviceStateSpeaking))
+    {
+        ws_send_listen_stop(&g_app.ws.clnt, g_app.ws.session_id);
+    }
+
+    xz_mic(0);
+    xz_speaker(0);
+    if (xz_wakeword_is_enabled())
+    {
+        xz_wakeword_stop();
+    }
+}
+
+static int xz_apply_guard_mode(void)
+{
+    const rt_bool_t keyword_online =
+        (g_app.ws.is_connected && g_app.ws.session_id[0] != '\0')
+            ? RT_TRUE
+            : RT_FALSE;
+
+    LOG_I("Switching to guard mode");
+    g_app.operating_mode = kXzOperatingModeGuard;
+    g_app.multi_turn_conversation_enabled = RT_FALSE;
+    xz_stop_active_cloud_audio();
+
+    if (xz_set_snore_guard_enabled(RT_TRUE) != RT_EOK)
+    {
+        LOG_E("Guard mode: failed to start snore detection");
+        xiaozhi_ui_set_operating_mode(true, false);
+        return -RT_ERROR;
+    }
+
+    if (keyword_online)
+    {
+        g_app.state = kDeviceStateListening;
+        xz_mic(1);
+        if (!ws_send_listen_start(&g_app.ws.clnt,
+                                  g_app.ws.session_id,
+                                  kListeningModeAlwaysOn))
+        {
+            LOG_W("Guard mode: failed to start always-on keyword stream");
+            xz_mic(0);
+            g_app.state = kDeviceStateIdle;
+            xiaozhi_ui_set_operating_mode(true, false);
+            return -RT_ERROR;
+        }
+        LOG_I("Guard mode: snore and cloud keyword detection active");
+    }
+    else
+    {
+        g_app.state = kDeviceStateUnknown;
+        LOG_W("Guard mode: keyword detection offline, snore detection remains active");
+    }
+
+    xiaozhi_ui_set_operating_mode(true, keyword_online ? true : false);
+    return RT_EOK;
+}
+
+static int xz_apply_dialogue_mode(rt_bool_t play_wake_sound)
+{
+    LOG_I("Switching to dialogue mode");
+    g_app.operating_mode = kXzOperatingModeDialogue;
+    g_app.multi_turn_conversation_enabled = RT_TRUE;
+    xz_stop_active_cloud_audio();
+    (void)xz_set_snore_guard_enabled(RT_FALSE);
+    xiaozhi_ui_set_operating_mode(false, false);
+
+    if (!g_app.ws.is_connected || g_app.ws.session_id[0] == '\0')
+    {
+        g_app.pending_listen_start = RT_TRUE;
+        g_app.pending_play_wake_sound = play_wake_sound;
+        xiaozhi_ui_chat_status("   连接中");
+        xiaozhi_ui_chat_output("正在连接小智...");
+        reconnect_websocket();
+        return RT_EOK;
+    }
+
+    if (play_wake_sound)
+    {
+        xz_play_wake_sound();
+    }
+
+    g_app.state = kDeviceStateListening;
+    xz_prepare_voice_input();
+    xz_mic(1);
+    if (!ws_send_listen_start(&g_app.ws.clnt,
+                              g_app.ws.session_id,
+                              kListeningModeAutoStop))
+    {
+        LOG_W("Dialogue mode: listen start failed");
+        g_app.state = kDeviceStateIdle;
+        xz_mic(0);
+        xz_restore_idle_audio();
+        return -RT_ERROR;
+    }
+
+    xiaozhi_ui_chat_status("   聆听中");
+    xiaozhi_ui_chat_output("聆听中...");
+    return RT_EOK;
+}
 
 static void xz_prepare_voice_input(void)
 {
@@ -1485,6 +1813,28 @@ static void xz_prepare_voice_input(void)
 static void xz_restore_idle_audio(void)
 {
     xz_mic(0);
+
+    if (g_app.operating_mode == kXzOperatingModeGuard)
+    {
+        if (g_app.ws.is_connected && g_app.ws.session_id[0] != '\0')
+        {
+            g_app.state = kDeviceStateListening;
+            xz_mic(1);
+            if (ws_send_listen_start(&g_app.ws.clnt,
+                                     g_app.ws.session_id,
+                                     kListeningModeAlwaysOn))
+            {
+                xiaozhi_ui_set_operating_mode(true, true);
+                return;
+            }
+            xz_mic(0);
+        }
+
+        xiaozhi_ui_set_operating_mode(true, false);
+        LOG_I("audio hub: guard snore active, keyword stream offline");
+        return;
+    }
+
     if (!xz_wakeword_is_enabled())
     {
         xz_wakeword_start();
@@ -1494,6 +1844,25 @@ static void xz_restore_idle_audio(void)
 }
 
 extern "C" {
+
+int xz_request_operating_mode(enum XzOperatingMode mode)
+{
+    if (!g_app.button_event)
+    {
+        return -RT_ERROR;
+    }
+
+    const rt_uint32_t event =
+        (mode == kXzOperatingModeGuard)
+            ? MODE_EVENT_GUARD
+            : MODE_EVENT_DIALOGUE;
+    return rt_event_send(g_app.button_event, event);
+}
+
+enum XzOperatingMode xz_get_operating_mode(void)
+{
+    return g_app.operating_mode;
+}
 
 int xz_set_snore_guard_enabled(rt_bool_t enabled)
 {
@@ -1623,6 +1992,17 @@ void Message_handle(const uint8_t *data, uint16_t len)
 
     char *type = my_json_string(root, "type");
 
+    if (g_app.operating_mode == kXzOperatingModeGuard &&
+        (strcmp(type, "tts") == 0 || strcmp(type, "llm") == 0))
+    {
+        /* Guard mode uses the cloud only as an STT source. Never let normal
+         * speech produce an audible or visual LLM response. */
+        xz_speaker(0);
+        LOG_D("Guard mode ignored cloud %s output", type);
+        cJSON_Delete(root);
+        return;
+    }
+
     if (strcmp(type, "hello") == 0)
     {
         char *session_id = cJSON_GetObjectItem(root, "session_id")->valuestring;
@@ -1654,7 +2034,8 @@ void Message_handle(const uint8_t *data, uint16_t len)
         send_iot_descriptors();
         send_iot_states();
         rt_bool_t pending_listen = g_app.pending_listen_start;
-        if (!pending_listen && !in_listening)
+        if (g_app.operating_mode == kXzOperatingModeDialogue &&
+            !pending_listen && !in_listening)
         {
             xiaozhi_ui_chat_status("   待命中");
             xiaozhi_ui_chat_output(" ");
@@ -1675,7 +2056,8 @@ void Message_handle(const uint8_t *data, uint16_t len)
                 g_app.wakeword_initialized_session = 1;
 
                 /* Start detection only if no pending listen */
-                if (!pending_listen && !in_listening)
+                if (g_app.operating_mode == kXzOperatingModeDialogue &&
+                    !pending_listen && !in_listening)
                 {
                     if (xz_wakeword_start() == 0)
                     {
@@ -1694,7 +2076,7 @@ void Message_handle(const uint8_t *data, uint16_t len)
         }
         else
         {
-            if (pending_listen)
+            if (g_app.operating_mode == kXzOperatingModeDialogue && pending_listen)
             {
                 if (xz_wakeword_is_enabled())
                 {
@@ -1705,7 +2087,8 @@ void Message_handle(const uint8_t *data, uint16_t len)
             else
             {
                 /* Just ensure wake word is running */
-                if (!xz_wakeword_is_enabled() && !in_listening)
+                if (g_app.operating_mode == kXzOperatingModeDialogue &&
+                    !xz_wakeword_is_enabled() && !in_listening)
                 {
                     LOG_D("Restarting wake word detection");
                     xz_wakeword_start();
@@ -1713,7 +2096,11 @@ void Message_handle(const uint8_t *data, uint16_t len)
             }
         }
 
-        if (pending_listen)
+        if (g_app.operating_mode == kXzOperatingModeGuard)
+        {
+            (void)xz_apply_guard_mode();
+        }
+        else if (pending_listen)
         {
             if (g_app.state == kDeviceStateListening || g_app.state == kDeviceStateSpeaking)
             {
@@ -1756,17 +2143,24 @@ void Message_handle(const uint8_t *data, uint16_t len)
     }
     else if (strcmp(type, "goodbye") == 0)
     {
-        /* Ensure mic is closed when entering sleep */
         xz_mic(0);
-        xiaozhi_ui_chat_status("   休眠中");
-        xiaozhi_ui_chat_output("等待唤醒");
-        xiaozhi_ui_update_emoji("sleepy");
         g_app.state = kDeviceStateUnknown;
         LOG_I("session ended\n");
 
-        /* Reset the initialization flag for next session */
         g_app.wakeword_initialized_session = 0;
-        xz_restore_idle_audio();
+        if (g_app.operating_mode == kXzOperatingModeGuard)
+        {
+            g_app.ws.session_id[0] = '\0';
+            xiaozhi_ui_set_operating_mode(true, false);
+            xiaozhi_ui_chat_output("关键词离线，呼噜监测继续");
+        }
+        else
+        {
+            xiaozhi_ui_chat_status("   休眠中");
+            xiaozhi_ui_chat_output("等待唤醒");
+            xiaozhi_ui_update_emoji("sleepy");
+            xz_restore_idle_audio();
+        }
     }
     else if (strcmp(type, "tts") == 0)
     {
@@ -1924,18 +2318,31 @@ void Message_handle(const uint8_t *data, uint16_t len)
         const char *text = (text_item && cJSON_IsString(text_item)) ? text_item->valuestring : RT_NULL;
         LOG_I("stt:%s", text ? text : "(null)");
 
-        const char *emergency_phrase = xz_find_emergency_phrase(text);
-        if (emergency_phrase)
+        if (g_app.operating_mode == kXzOperatingModeGuard)
         {
-            LOG_W("stt emergency phrase detected: %s", emergency_phrase);
-            xz_trigger_emergency_event("xiaozhi_voice_board",
-                                       emergency_phrase,
-                                       text);
+            const char *emergency_phrase = xz_find_emergency_phrase(text);
+            const rt_tick_t now = rt_tick_get();
+            const rt_tick_t cooldown = rt_tick_from_millisecond(8000);
+            const rt_bool_t duplicate =
+                g_emergency_alarm_tid != RT_NULL ||
+                (g_emergency_alarm_last_tick != 0 &&
+                 (rt_tick_t)(now - g_emergency_alarm_last_tick) < cooldown);
+
+            if (emergency_phrase && !duplicate)
+            {
+                LOG_W("guard keyword detected: %s", emergency_phrase);
+                xz_trigger_emergency_event("xiaozhi_voice_board",
+                                           emergency_phrase,
+                                           text);
+            }
+            else if (emergency_phrase)
+            {
+                LOG_I("guard keyword duplicate ignored: %s", emergency_phrase);
+            }
         }
 
-        /* 本地关键字：通过语音打开打鼾检测系统
-         * 例如：”小智，请打开打鼾检测系统”、”打开打鼾检测”等。 */
-        if (text && strstr(text, "打开打鼾检测") != RT_NULL)
+        if (g_app.operating_mode == kXzOperatingModeDialogue &&
+            text && strstr(text, "打开打鼾检测") != RT_NULL)
         {
             LOG_I("stt command: open snore detector via voice");
             xiaozhi_ui_enter_snore_mode_from_voice();
@@ -2209,14 +2616,29 @@ void xiaozhi_ws_connect(void)
 
     /* All retries failed */
     LOG_E("WebSocket connection failed after all attempts\n");
-    xiaozhi_ui_chat_status("   连接失败");
-    xiaozhi_ui_chat_output("请检查网络并重试");
+    if (g_app.operating_mode == kXzOperatingModeGuard)
+    {
+        xiaozhi_ui_set_operating_mode(true, false);
+        xiaozhi_ui_chat_output("关键词离线，呼噜监测继续");
+    }
+    else
+    {
+        xiaozhi_ui_chat_status("   连接失败");
+        xiaozhi_ui_chat_output("请检查网络并重试");
+    }
 }
 
 /* Application entry point */
 void xiaozhi_entry(void *p)
 {
     char *my_ota_version;
+
+    /* Bring up the shared microphone before cloud access so local snore
+     * monitoring remains available when the Internet is unavailable. */
+    xz_ws_audio_init();
+    xz_start_edgi_heartbeat();
+    (void)xz_apply_guard_mode();
+
     while (1)
     {
         my_ota_version = get_xiaozhi_ws();

@@ -3,42 +3,43 @@
 # Any edits to this file will be lost the next time the library manager is run or
 # the next time 'make getlibs' is run.
 #
-# List of local libraries
-
-
 # Path to the current BSP
 SEARCH_TARGET_APP_CY8CKIT-062S2-AI=bsps/TARGET_APP_CY8CKIT-062S2-AI
 
 # The search paths for the included middleware
-SEARCH_retarget-io=../mtb_shared/retarget-io/release-v1.8.1
-SEARCH_sensor-xensiv-bgt60trxx=../mtb_shared/sensor-xensiv-bgt60trxx/release-v2.0.0
-SEARCH_serial-flash=../mtb_shared/serial-flash/release-v1.4.3
-SEARCH_wifi-core-freertos-lwip-mbedtls=../mtb_shared/wifi-core-freertos-lwip-mbedtls/release-v1.1.1
-SEARCH_abstraction-rtos=../mtb_shared/abstraction-rtos/release-v1.12.0
-SEARCH_bt-fw-mur-cyw43439=../mtb_shared/bt-fw-mur-cyw43439/release-v1.0.0
-SEARCH_cat1cm0p=../mtb_shared/cat1cm0p/release-v1.9.0
-SEARCH_clib-support=../mtb_shared/clib-support/release-v1.8.0
-SEARCH_cmsis=../mtb_shared/cmsis/release-v5.8.2
-SEARCH_connectivity-utilities=../mtb_shared/connectivity-utilities/release-v4.5.1
-SEARCH_core-lib=../mtb_shared/core-lib/release-v1.6.0
-SEARCH_core-make=../mtb_shared/core-make/release-v3.7.0
-SEARCH_cy-mbedtls-acceleration=../mtb_shared/cy-mbedtls-acceleration/release-v1.6.0
-SEARCH_freertos=../mtb_shared/freertos/release-v10.5.004
-SEARCH_lwip-freertos-integration=../mtb_shared/lwip-freertos-integration/release-v1.1.0
-SEARCH_lwip-network-interface-integration=../mtb_shared/lwip-network-interface-integration/release-v1.6.0
-SEARCH_lwip=../mtb_shared/lwip/STABLE-2_1_2_RELEASE
-SEARCH_mbedtls=../mtb_shared/mbedtls/mbedtls-2.25.0
-SEARCH_mtb-hal-cat1=../mtb_shared/mtb-hal-cat1/release-v2.7.4
-SEARCH_mtb-pdl-cat1=../mtb_shared/mtb-pdl-cat1/release-v3.18.0
-SEARCH_recipe-make-cat1a=../mtb_shared/recipe-make-cat1a/release-v2.6.0
-SEARCH_secure-sockets=../mtb_shared/secure-sockets/release-v3.10.0
-SEARCH_whd-bsp-integration=../mtb_shared/whd-bsp-integration/release-v2.3.1
-SEARCH_wifi-connection-manager=../mtb_shared/wifi-connection-manager/release-v3.7.0
-SEARCH_wifi-host-driver=../mtb_shared/wifi-host-driver/release-v4.3.1
-SEARCH_wifi-resources=../mtb_shared/wifi-resources/release-v2.0.0
-SEARCH_wpa3-external-supplicant=../mtb_shared/wpa3-external-supplicant/release-v1.2.3
+SEARCH_btstack-integration=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/btstack-integration/release-v7.0.1
+SEARCH_btstack=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/btstack/release-v5.0.5
+SEARCH_retarget-io=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/retarget-io/release-v1.8.1
+SEARCH_sensor-xensiv-bgt60trxx=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/sensor-xensiv-bgt60trxx/release-v2.0.0
+SEARCH_serial-flash=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/serial-flash/release-v1.4.3
+SEARCH_wifi-core-freertos-lwip-mbedtls=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/wifi-core-freertos-lwip-mbedtls/release-v1.1.1
+SEARCH_abstraction-rtos=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/abstraction-rtos/release-v1.12.0
+SEARCH_bt-fw-mur-cyw43439=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/bt-fw-mur-cyw43439/release-v1.0.0
+SEARCH_cat1cm0p=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/cat1cm0p/release-v1.9.0
+SEARCH_clib-support=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/clib-support/release-v1.8.0
+SEARCH_cmsis=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/cmsis/release-v5.8.2
+SEARCH_connectivity-utilities=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/connectivity-utilities/release-v4.5.1
+SEARCH_core-lib=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/core-lib/release-v1.6.0
+SEARCH_core-make=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/core-make/release-v3.8.0
+SEARCH_cy-mbedtls-acceleration=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/cy-mbedtls-acceleration/release-v1.6.0
+SEARCH_freertos=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/freertos/release-v10.5.004
+SEARCH_lwip-freertos-integration=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/lwip-freertos-integration/release-v1.1.0
+SEARCH_lwip-network-interface-integration=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/lwip-network-interface-integration/release-v1.6.0
+SEARCH_lwip=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/lwip/STABLE-2_1_2_RELEASE
+SEARCH_mbedtls=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/mbedtls/mbedtls-2.25.0
+SEARCH_mtb-hal-cat1=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/mtb-hal-cat1/release-v2.7.4
+SEARCH_mtb-pdl-cat1=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/mtb-pdl-cat1/release-v3.18.0
+SEARCH_recipe-make-cat1a=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/recipe-make-cat1a/release-v2.6.0
+SEARCH_secure-sockets=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/secure-sockets/release-v3.10.0
+SEARCH_whd-bsp-integration=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/whd-bsp-integration/release-v2.3.1
+SEARCH_wifi-connection-manager=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/wifi-connection-manager/release-v3.7.0
+SEARCH_wifi-host-driver=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/wifi-host-driver/release-v4.3.1
+SEARCH_wifi-resources=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/wifi-resources/release-v2.0.5
+SEARCH_wpa3-external-supplicant=$(patsubst %/,%,$(CY_GETLIBS_SHARED_PATH))/$(CY_GETLIBS_SHARED_NAME)/wpa3-external-supplicant/release-v1.2.3
 
 # Search libraries added to build
+SEARCH_MTB_MK+=$(SEARCH_btstack-integration)
+SEARCH_MTB_MK+=$(SEARCH_btstack)
 SEARCH_MTB_MK+=$(SEARCH_retarget-io)
 SEARCH_MTB_MK+=$(SEARCH_sensor-xensiv-bgt60trxx)
 SEARCH_MTB_MK+=$(SEARCH_serial-flash)
@@ -68,6 +69,8 @@ SEARCH_MTB_MK+=$(SEARCH_wifi-resources)
 SEARCH_MTB_MK+=$(SEARCH_wpa3-external-supplicant)
 
 -include $(CY_INTERNAL_APP_PATH)/importedbsp.mk
+COMPONENTS += MW_BTSTACK_INTEGRATION
+COMPONENTS += MW_BTSTACK
 COMPONENTS += MW_RETARGET_IO
 COMPONENTS += MW_SENSOR_XENSIV_BGT60TRXX
 COMPONENTS += MW_SERIAL_FLASH
@@ -108,8 +111,8 @@ bsp-assistant:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name bsp-assistant
 .PHONY: bsp-assistant
 
-CY_HELP_bsp-assistant=Launches the BSP Assistant 1.50 GUI
-CY_HELP_bsp-assistant_VERBOSE=Launches the BSP Assistant 1.50 GUI. Check the BSP Assistant 1.50 User Guide for more information.
+CY_HELP_bsp-assistant=Launches the BSP Assistant 1.60 GUI
+CY_HELP_bsp-assistant_VERBOSE=Launches the BSP Assistant 1.60 GUI. Check the BSP Assistant 1.60 User Guide for more information.
 mtb_help_tool_bsp-assistant:
 	@:
 	$(info $(MTB__SPACE)bsp-assistant       $(CY_HELP_bsp-assistant))
@@ -122,8 +125,8 @@ config_bt:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name bt-configurator
 .PHONY: config_bt
 
-CY_HELP_config_bt=Launches the Bluetooth® Configurator 3.40 GUI for the target's cybt file
-CY_HELP_config_bt_VERBOSE=Launches the Bluetooth® Configurator 3.40 GUI. Check the Bluetooth® Configurator 3.40 User Guide for more information.
+CY_HELP_config_bt=Launches the Bluetooth® Configurator 3.50 GUI for the target's cybt file
+CY_HELP_config_bt_VERBOSE=Launches the Bluetooth® Configurator 3.50 GUI. Check the Bluetooth® Configurator 3.50 User Guide for more information.
 mtb_help_tool_config_bt:
 	@:
 	$(info $(MTB__SPACE)config_bt           $(CY_HELP_config_bt))
@@ -136,8 +139,8 @@ bt-configurator:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name bt-configurator
 .PHONY: bt-configurator
 
-CY_HELP_bt-configurator=Launches the Bluetooth® Configurator 3.40 GUI for the target's cybt file
-CY_HELP_bt-configurator_VERBOSE=Launches the Bluetooth® Configurator 3.40 GUI. Check the Bluetooth® Configurator 3.40 User Guide for more information.
+CY_HELP_bt-configurator=Launches the Bluetooth® Configurator 3.50 GUI for the target's cybt file
+CY_HELP_bt-configurator_VERBOSE=Launches the Bluetooth® Configurator 3.50 GUI. Check the Bluetooth® Configurator 3.50 User Guide for more information.
 mtb_help_tool_bt-configurator:
 	@:
 	$(info $(MTB__SPACE)bt-configurator     $(CY_HELP_bt-configurator))
@@ -146,40 +149,12 @@ mtb_help_tools_end: mtb_help_tool_bt-configurator
 mtb_help_tool_bt-configurator: mtb_help_tools_start
 .PHONY: mtb_help_tool_bt-configurator
 
-capsense-configurator:
-	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name capsense-configurator
-.PHONY: capsense-configurator
-
-CY_HELP_capsense-configurator=Launches the CAPSENSE™ Configurator 8.10 GUI for the target's cycapsense file
-CY_HELP_capsense-configurator_VERBOSE=Launches the CAPSENSE™ Configurator 8.10 GUI. Check the CAPSENSE™ Configurator 8.10 User Guide for more information.
-mtb_help_tool_capsense-configurator:
-	@:
-	$(info $(MTB__SPACE)capsense-configurator $(CY_HELP_capsense-configurator))
-
-mtb_help_tools_end: mtb_help_tool_capsense-configurator
-mtb_help_tool_capsense-configurator: mtb_help_tools_start
-.PHONY: mtb_help_tool_capsense-configurator
-
-capsense-tuner:
-	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name capsense-tuner
-.PHONY: capsense-tuner
-
-CY_HELP_capsense-tuner=Launches the CAPSENSE™ Tuner 8.10 GUI for the target's cycapsense file
-CY_HELP_capsense-tuner_VERBOSE=Launches the CAPSENSE™ Tuner 8.10 GUI. Check the CAPSENSE™ Tuner 8.10 User Guide for more information.
-mtb_help_tool_capsense-tuner:
-	@:
-	$(info $(MTB__SPACE)capsense-tuner      $(CY_HELP_capsense-tuner))
-
-mtb_help_tools_end: mtb_help_tool_capsense-tuner
-mtb_help_tool_capsense-tuner: mtb_help_tools_start
-.PHONY: mtb_help_tool_capsense-tuner
-
 config:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name device-configurator
 .PHONY: config
 
-CY_HELP_config=Launches the Device Configurator 5.50 GUI for the target's modus file
-CY_HELP_config_VERBOSE=Launches the Device Configurator 5.50 GUI. Check the Device Configurator 5.50 User Guide for more information.
+CY_HELP_config=Launches the Device Configurator 5.60 GUI for the target's modus file
+CY_HELP_config_VERBOSE=Launches the Device Configurator 5.60 GUI. Check the Device Configurator 5.60 User Guide for more information.
 mtb_help_tool_config:
 	@:
 	$(info $(MTB__SPACE)config              $(CY_HELP_config))
@@ -192,8 +167,8 @@ device-configurator:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name device-configurator
 .PHONY: device-configurator
 
-CY_HELP_device-configurator=Launches the Device Configurator 5.50 GUI for the target's modus file
-CY_HELP_device-configurator_VERBOSE=Launches the Device Configurator 5.50 GUI. Check the Device Configurator 5.50 User Guide for more information.
+CY_HELP_device-configurator=Launches the Device Configurator 5.60 GUI for the target's modus file
+CY_HELP_device-configurator_VERBOSE=Launches the Device Configurator 5.60 GUI. Check the Device Configurator 5.60 User Guide for more information.
 mtb_help_tool_device-configurator:
 	@:
 	$(info $(MTB__SPACE)device-configurator $(CY_HELP_device-configurator))
@@ -206,8 +181,8 @@ modlibs:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name library-manager
 .PHONY: modlibs
 
-CY_HELP_modlibs=Launches the Library Manager 2.50 GUI
-CY_HELP_modlibs_VERBOSE=Launches the Library Manager 2.50 GUI. Check the Library Manager 2.50 User Guide for more information.
+CY_HELP_modlibs=Launches the Library Manager 2.60 GUI
+CY_HELP_modlibs_VERBOSE=Launches the Library Manager 2.60 GUI. Check the Library Manager 2.60 User Guide for more information.
 mtb_help_tool_modlibs:
 	@:
 	$(info $(MTB__SPACE)modlibs             $(CY_HELP_modlibs))
@@ -220,8 +195,8 @@ library-manager:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name library-manager
 .PHONY: library-manager
 
-CY_HELP_library-manager=Launches the Library Manager 2.50 GUI
-CY_HELP_library-manager_VERBOSE=Launches the Library Manager 2.50 GUI. Check the Library Manager 2.50 User Guide for more information.
+CY_HELP_library-manager=Launches the Library Manager 2.60 GUI
+CY_HELP_library-manager_VERBOSE=Launches the Library Manager 2.60 GUI. Check the Library Manager 2.60 User Guide for more information.
 mtb_help_tool_library-manager:
 	@:
 	$(info $(MTB__SPACE)library-manager     $(CY_HELP_library-manager))
@@ -234,8 +209,8 @@ config_lin:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name lin-configurator
 .PHONY: config_lin
 
-CY_HELP_config_lin=Launches the LIN Configurator 1.70 GUI for the target's mtblin file
-CY_HELP_config_lin_VERBOSE=Launches the LIN Configurator 1.70 GUI. Check the LIN Configurator 1.70 User Guide for more information.
+CY_HELP_config_lin=Launches the LIN Configurator 1.80 GUI for the target's mtblin file
+CY_HELP_config_lin_VERBOSE=Launches the LIN Configurator 1.80 GUI. Check the LIN Configurator 1.80 User Guide for more information.
 mtb_help_tool_config_lin:
 	@:
 	$(info $(MTB__SPACE)config_lin          $(CY_HELP_config_lin))
@@ -248,8 +223,8 @@ lin-configurator:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name lin-configurator
 .PHONY: lin-configurator
 
-CY_HELP_lin-configurator=Launches the LIN Configurator 1.70 GUI for the target's mtblin file
-CY_HELP_lin-configurator_VERBOSE=Launches the LIN Configurator 1.70 GUI. Check the LIN Configurator 1.70 User Guide for more information.
+CY_HELP_lin-configurator=Launches the LIN Configurator 1.80 GUI for the target's mtblin file
+CY_HELP_lin-configurator_VERBOSE=Launches the LIN Configurator 1.80 GUI. Check the LIN Configurator 1.80 User Guide for more information.
 mtb_help_tool_lin-configurator:
 	@:
 	$(info $(MTB__SPACE)lin-configurator    $(CY_HELP_lin-configurator))
@@ -262,8 +237,8 @@ qspi-configurator:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name qspi-configurator
 .PHONY: qspi-configurator
 
-CY_HELP_qspi-configurator=Launches the QSPI Configurator 4.60 GUI for the target's cyqspi file
-CY_HELP_qspi-configurator_VERBOSE=Launches the QSPI Configurator 4.60 GUI. Check the QSPI Configurator 4.60 User Guide for more information.
+CY_HELP_qspi-configurator=Launches the QSPI Configurator 4.70 GUI for the target's cyqspi file
+CY_HELP_qspi-configurator_VERBOSE=Launches the QSPI Configurator 4.70 GUI. Check the QSPI Configurator 4.70 User Guide for more information.
 mtb_help_tool_qspi-configurator:
 	@:
 	$(info $(MTB__SPACE)qspi-configurator   $(CY_HELP_qspi-configurator))
@@ -276,8 +251,8 @@ seglcd-configurator:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name seglcd-configurator
 .PHONY: seglcd-configurator
 
-CY_HELP_seglcd-configurator=Launches the Segment LCD Configurator 1.90 GUI for the target's cyseglcd file
-CY_HELP_seglcd-configurator_VERBOSE=Launches the Segment LCD Configurator 1.90 GUI. Check the Segment LCD Configurator 1.90 User Guide for more information.
+CY_HELP_seglcd-configurator=Launches the Segment LCD Configurator 1.100 GUI for the target's cyseglcd file
+CY_HELP_seglcd-configurator_VERBOSE=Launches the Segment LCD Configurator 1.100 GUI. Check the Segment LCD Configurator 1.100 User Guide for more information.
 mtb_help_tool_seglcd-configurator:
 	@:
 	$(info $(MTB__SPACE)seglcd-configurator $(CY_HELP_seglcd-configurator))
@@ -290,8 +265,8 @@ smartio-configurator:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name smartio-configurator
 .PHONY: smartio-configurator
 
-CY_HELP_smartio-configurator=Launches the Smart I/O Configurator 4.50 GUI for the target's modus file
-CY_HELP_smartio-configurator_VERBOSE=Launches the Smart I/O Configurator 4.50 GUI. Check the Smart I/O Configurator 4.50 User Guide for more information.
+CY_HELP_smartio-configurator=Launches the Smart I/O Configurator 4.60 GUI for the target's modus file
+CY_HELP_smartio-configurator_VERBOSE=Launches the Smart I/O Configurator 4.60 GUI. Check the Smart I/O Configurator 4.60 User Guide for more information.
 mtb_help_tool_smartio-configurator:
 	@:
 	$(info $(MTB__SPACE)smartio-configurator $(CY_HELP_smartio-configurator))
@@ -304,8 +279,8 @@ config_usbdev:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name usbdev-configurator
 .PHONY: config_usbdev
 
-CY_HELP_config_usbdev=Launches the USB Configurator [for USBDEV middleware] 3.0 GUI for the target's cyusbdev file
-CY_HELP_config_usbdev_VERBOSE=Launches the USB Configurator [for USBDEV middleware] 3.0 GUI. Check the USB Configurator [for USBDEV middleware] 3.0 User Guide for more information.
+CY_HELP_config_usbdev=Launches the USB Configurator [for USBDEV middleware] 3.10 GUI for the target's cyusbdev file
+CY_HELP_config_usbdev_VERBOSE=Launches the USB Configurator [for USBDEV middleware] 3.10 GUI. Check the USB Configurator [for USBDEV middleware] 3.10 User Guide for more information.
 mtb_help_tool_config_usbdev:
 	@:
 	$(info $(MTB__SPACE)config_usbdev       $(CY_HELP_config_usbdev))
@@ -318,8 +293,8 @@ usbdev-configurator:
 	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name usbdev-configurator
 .PHONY: usbdev-configurator
 
-CY_HELP_usbdev-configurator=Launches the USB Configurator [for USBDEV middleware] 3.0 GUI for the target's cyusbdev file
-CY_HELP_usbdev-configurator_VERBOSE=Launches the USB Configurator [for USBDEV middleware] 3.0 GUI. Check the USB Configurator [for USBDEV middleware] 3.0 User Guide for more information.
+CY_HELP_usbdev-configurator=Launches the USB Configurator [for USBDEV middleware] 3.10 GUI for the target's cyusbdev file
+CY_HELP_usbdev-configurator_VERBOSE=Launches the USB Configurator [for USBDEV middleware] 3.10 GUI. Check the USB Configurator [for USBDEV middleware] 3.10 User Guide for more information.
 mtb_help_tool_usbdev-configurator:
 	@:
 	$(info $(MTB__SPACE)usbdev-configurator $(CY_HELP_usbdev-configurator))
@@ -355,5 +330,33 @@ mtb_help_tool_ml-configurator:
 mtb_help_tools_end: mtb_help_tool_ml-configurator
 mtb_help_tool_ml-configurator: mtb_help_tools_start
 .PHONY: mtb_help_tool_ml-configurator
+
+capsense-configurator:
+	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name capsense-configurator
+.PHONY: capsense-configurator
+
+CY_HELP_capsense-configurator=Launches the CAPSENSE™ Configurator 10.0 GUI for the target's cycapsense file
+CY_HELP_capsense-configurator_VERBOSE=Launches the CAPSENSE™ Configurator 10.0 GUI. Check the CAPSENSE™ Configurator 10.0 User Guide for more information.
+mtb_help_tool_capsense-configurator:
+	@:
+	$(info $(MTB__SPACE)capsense-configurator $(CY_HELP_capsense-configurator))
+
+mtb_help_tools_end: mtb_help_tool_capsense-configurator
+mtb_help_tool_capsense-configurator: mtb_help_tools_start
+.PHONY: mtb_help_tool_capsense-configurator
+
+capsense-tuner:
+	$(CY_TOOL_mtblaunch_EXE_ABS) --project . --short-name capsense-tuner
+.PHONY: capsense-tuner
+
+CY_HELP_capsense-tuner=Launches the CAPSENSE™ Tuner 10.0 GUI for the target's cycapsense file
+CY_HELP_capsense-tuner_VERBOSE=Launches the CAPSENSE™ Tuner 10.0 GUI. Check the CAPSENSE™ Tuner 10.0 User Guide for more information.
+mtb_help_tool_capsense-tuner:
+	@:
+	$(info $(MTB__SPACE)capsense-tuner      $(CY_HELP_capsense-tuner))
+
+mtb_help_tools_end: mtb_help_tool_capsense-tuner
+mtb_help_tool_capsense-tuner: mtb_help_tools_start
+.PHONY: mtb_help_tool_capsense-tuner
 
 .PHONY: mtb_help_tools_start mtb_help_tools_end

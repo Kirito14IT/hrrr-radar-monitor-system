@@ -51,7 +51,7 @@ export const useHistoryAnalysisStore = defineStore('historyAnalysis', {
         }
       } catch (error) {
         console.error('历史数据请求失败:', error)
-        this.error = '历史数据接口暂时不可用，请确认模拟后端正在运行。'
+        this.error = '历史数据接口暂时不可用，请确认真实后端服务正在运行。'
       } finally {
         this.loading = false
       }
@@ -114,7 +114,7 @@ export const useHistoryAnalysisStore = defineStore('historyAnalysis', {
         if (requestToken !== activeRequestToken) return null
 
         console.error('AI 分析失败:', error)
-        this.AiData = 'AI 分析接口暂时不可用。请确认模拟后端正在运行；未配置 DeepSeek key 时，后端会自动使用本地规则兜底。'
+        this.AiData = 'AI 分析接口暂时不可用。请确认真实后端服务正在运行；未配置 DeepSeek key 时，后端会自动使用本地规则兜底。'
         this.aiProvider = 'local'
         this.aiProviderLabel = '请求失败'
         this.aiFallback = true

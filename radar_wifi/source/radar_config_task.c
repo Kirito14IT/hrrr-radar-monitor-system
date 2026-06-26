@@ -80,8 +80,14 @@ static cy_rslt_t json_parser_cb(cy_JSON_object_t *json_object, void *arg)
 
         if (( json_object->value_length == ENABLE_STR_LENGTH) && (memcmp(json_object->value, ENABLE_STRING, json_object->value_length) == 0))
         {
-            radar_start(true);
-            printf("Radar data transmission is enabled \r\n");
+            if (radar_start(true) != RESULT_SUCCESS)
+            {
+                printf("Failed to enable radar data transmission\r\n");
+            }
+            else
+            {
+                printf("Radar data transmission is enabled \r\n");
+            }
         }
         else if (( json_object->value_length == DISABLE_STR_LENGTH) && (memcmp(json_object->value, DISABLE_STRING, json_object->value_length) == 0))
         {

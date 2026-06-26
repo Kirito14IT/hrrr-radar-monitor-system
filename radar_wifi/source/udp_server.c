@@ -52,6 +52,8 @@
 /* UDP server task header file. */
 #include "udp_server.h"
 #include "radar_task.h"
+#include "ble_radar_service.h"
+#include "radar_status_led.h"
 
 #include "wifi_config.h"
 
@@ -170,9 +172,7 @@ void udp_server_task(void *arg)
                                           ((uint32_t) a))
 
 // 目标服务器IP和端口配置
-#define UDP_SERVER_IP_ADDRESS             MAKE_IPV4_ADDRESS(8,133,22,44)
-//192,168,118,143
-//8,133,22,44
+#define UDP_SERVER_IP_ADDRESS             MAKE_IPV4_ADDRESS(192, 168, 0, 102)
 #define UDP_SERVER_PORT                   (9988)
     cy_socket_sockaddr_t udp_server_addr = {
             .ip_address.ip.v4 = UDP_SERVER_IP_ADDRESS,
@@ -192,12 +192,17 @@ void udp_server_task(void *arg)
             switch(msg->cmd)
             {
                 case RADAR_DATA_COMMAND:
+                case RADAR_STATUS_COMMAND:
                 {
                     result = cy_socket_sendto(server_radar_data, msg->data, msg->length, CY_SOCKET_FLAGS_NONE,
                                              &udp_server_addr, sizeof(cy_socket_sockaddr_t), &bytes_sent);
                     if(result == CY_RSLT_SUCCESS )
                     {
-                        printf("Data with length:%" PRIu32 " sent to udp client\n", bytes_sent);
+                        //printf("Data with length:%" PRIu32 " sent to udp client\n", bytes_sent);
+                        if (msg->cmd == RADAR_DATA_COMMAND)
+                        {
+                            radar_status_led_set_transmitting();
+                        }
                     }
                     else
                     {
@@ -265,6 +270,7 @@ cy_rslt_t connect_to_wifi_ap(void)
             printf("IP Address Assigned: %d.%d.%d.%d\n", (uint8)ip_address.ip.v4,
                     (uint8)(ip_address.ip.v4 >> 8), (uint8)(ip_address.ip.v4 >> 16),
                     (uint8)(ip_address.ip.v4 >> 24));
+            ble_radar_service_start_stack();
 
             /* IP address and UDP port number of the UDP server */
             // 注意：这里应该保持目标服务器IP，不要改为雷达设备自己的IP
@@ -359,9 +365,12 @@ cy_rslt_t udp_server_recv_handler(cy_socket_t socket_handle, void *arg)
         result = cy_socket_recvfrom(server_radar_data, udp_msg_payload, MAX_UDP_RECV_BUFFER_SIZE,
                                     CY_SOCKET_FLAGS_NONE, &peer_addr, NULL,
                                     &bytes_received);
-        printf("message received %s\n", udp_msg_payload);
-
+        if (bytes_received >= MAX_UDP_RECV_BUFFER_SIZE)
+        {
+            bytes_received = MAX_UDP_RECV_BUFFER_SIZE - 1u;
+        }
         udp_msg_payload[bytes_received] = '\0';
+        printf("message received %s\n", udp_msg_payload);
 
         xSemaphoreGive(sem_udp_payload);
 
@@ -404,4 +413,3 @@ void radar_init()
 
 
 /* [] END OF FILE */
-

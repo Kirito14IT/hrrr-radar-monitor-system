@@ -20,9 +20,9 @@
     </div>
 
     <div class="device-row">
-      <div class="device-pill" :class="{ online: devices.radar_board_online }">
+      <div class="device-pill" :class="{ online: radarBoardReady, warning: radarBoardUnstable }">
         <span class="pulse"></span>
-        雷达板 {{ deviceText(devices.radar_board_online) }}
+        雷达板 {{ radarDeviceText }}
       </div>
       <div class="device-pill" :class="{ online: edgiBoardOnline, warning: edgiBoardNeedsAttention }">
         <span class="pulse"></span>
@@ -30,6 +30,9 @@
       </div>
       <div v-if="devices.emergency_active" class="device-pill emergency">
         紧急求助
+      </div>
+      <div v-if="apneaCount > 0" class="device-pill apnea">
+        疑似暂停 {{ apneaCount }}
       </div>
       <div class="device-pill muted">音频片段 {{ devices.audio_upload_count ?? '--' }} 次</div>
       <div class="device-pill muted">数据点 {{ overview.stats?.points ?? 0 }}</div>
@@ -64,6 +67,7 @@
           <select v-model="eventFilter" class="dark-select">
             <option value="all">全部</option>
             <option value="abnormal">只看异常</option>
+            <option value="apnea">呼吸暂停</option>
             <option value="snore">只看呼噜</option>
             <option value="environment">只看环境</option>
             <option value="device">只看设备</option>
@@ -148,7 +152,7 @@ const eventFilter = ref('all')
 const refreshTimer = ref(null)
 
 const overview = reactive({
-  score: { score: 0, label: '等待数据', summary: '等待模拟开发板上线。', penalties: [] },
+  score: { score: 0, label: '等待数据', summary: '等待真实开发板上线。', penalties: [] },
   stats: {},
   devices: {},
   heatmap: [],
@@ -161,7 +165,15 @@ const devices = computed(() => overview.devices || {})
 const score = computed(() => overview.score || { score: 0, label: '等待数据', summary: '', penalties: [] })
 const heatmap = computed(() => overview.heatmap || [])
 const stabilityCards = computed(() => overview.stability_cards || [])
+const apneaCount = computed(() => Number(overview.stats?.suspected_apnea_count || 0))
 const topPenalties = computed(() => (score.value.penalties || []).slice(0, 4))
+const radarBoardUnstable = computed(() => Boolean(devices.value.radar_board_online && devices.value.radar_board_stationary === false))
+const radarBoardReady = computed(() => Boolean(devices.value.radar_board_online && !radarBoardUnstable.value))
+const radarDeviceText = computed(() => {
+  if (devices.value.radar_board_online === null || devices.value.radar_board_online === undefined) return '历史模式'
+  if (!devices.value.radar_board_online) return '离线'
+  return radarBoardUnstable.value ? '未静止' : '在线'
+})
 
 const comfortLabelMap = {
   comfortable: '舒适',
@@ -245,6 +257,9 @@ const filteredEvents = computed(() => {
   if (eventFilter.value === 'snore') {
     return events.filter(event => event.type === 'snore')
   }
+  if (eventFilter.value === 'apnea') {
+    return events.filter(event => event.type === 'suspected_apnea')
+  }
   if (eventFilter.value === 'environment') {
     return events.filter(event => event.type === 'environment' || event.source === 'environment_board')
   }
@@ -280,10 +295,10 @@ async function loadOverview() {
     const status = error.response?.status
     const hint =
       status === 404
-        ? '检测到 8081 端口有服务，但缺少 /sleep/overview 接口。\n请停止当前后端，改启动：python backend\\mock_hardware_api.py\n（不要启动 realtime_radar_processing.py 或 mock_server.py）'
+        ? '检测到 8081 端口有服务，但缺少 /sleep/overview 接口。\n请停止当前后端，改启动：python backend\\realtime_radar_processing.py\n（不要启动 realtime_radar_processing.py 或 mock_server.py）'
         : !error.response
-        ? '无法连接 8081 端口后端服务。\n请先在项目根目录执行：conda activate radar && python backend\\mock_hardware_api.py'
-        : '请先启动后端：python backend\\mock_hardware_api.py'
+        ? '无法连接 8081 端口后端服务。\n请先在项目根目录执行：conda activate radar && python backend\\realtime_radar_processing.py'
+        : '请先启动后端：python backend\\realtime_radar_processing.py'
     overview.score = {
       score: 0,
       label: status === 404 ? '后端接口缺失' : '后端未连接',
@@ -336,8 +351,9 @@ function sourceLabel(source) {
     radar_board: '雷达板',
     snore_board: 'Edgi E84',
     environment_board: 'Edgi E84',
+    radar_snore_fusion: '雷达+呼噜融合',
     xiaozhi_voice_board: '小智语音板',
-    mock_api: '模拟后端'
+    backend_api: '真实后端服务'
   }
   return map[source] || source || '系统'
 }
@@ -473,6 +489,12 @@ h1 {
   color: #fff;
   border-color: var(--care-danger);
   background: var(--care-danger);
+}
+
+.device-pill.apnea {
+  color: #fff;
+  border-color: #dc2626;
+  background: #dc2626;
 }
 
 .device-pill.muted {

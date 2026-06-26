@@ -1,4 +1,5 @@
 mock_monitor.db
+user_data.db
 mock_audio_uploads/
 received_audio_*.wav
 .env

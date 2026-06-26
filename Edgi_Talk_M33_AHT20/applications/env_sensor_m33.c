@@ -8,6 +8,10 @@
 #define DBG_LVL DBG_INFO
 #include <rtdbg.h>
 
+#ifndef ENV_M33_SAMPLE_LOG_VERBOSE
+#define ENV_M33_SAMPLE_LOG_VERBOSE 0
+#endif
+
 #define ENV_SENSOR_THREAD_STACK     2048
 #define ENV_SENSOR_THREAD_PRIORITY  20
 #define ENV_SENSOR_THREAD_TICK      10
@@ -99,9 +103,11 @@ static void env_sensor_thread_entry(void *parameter)
             env_shared_memory_write(temp_x10, humidity_x10, 1,
                                     ENV_SHARED_STATUS_OK,
                                     rt_tick_get_millisecond());
+#if ENV_M33_SAMPLE_LOG_VERBOSE
             LOG_I("AHT20 sample: %d.%d C, %d.%d %%RH",
                   temp_x10 / 10, temp_x10 < 0 ? -(temp_x10 % 10) : temp_x10 % 10,
                   humidity_x10 / 10, humidity_x10 < 0 ? -(humidity_x10 % 10) : humidity_x10 % 10);
+#endif
         }
         else
         {

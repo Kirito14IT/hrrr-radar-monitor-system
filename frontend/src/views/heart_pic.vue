@@ -9,8 +9,8 @@
         {{ isAutoRefreshing ? '停止监测' : '开始实时监测' }}
       </el-button>
       <div class="device-status">
-        <span class="status-pill" :class="{ online: statusState.radar_board_online }">
-          雷达开发板：{{ statusState.radar_board_online ? '在线' : '离线' }}
+        <span class="status-pill" :class="{ online: radarBoardReady, warning: radarBoardUnstable }">
+          雷达开发板：{{ radarBoardStatusText }}
         </span>
         <span class="status-pill" :class="{ online: edgiBoardOnline, warning: edgiBoardNeedsAttention }">
           Edgi E84：{{ edgiBoardStatusText }}
@@ -25,7 +25,7 @@
     </div>
 
     <div class="device-panel">
-      <div class="device-card care-glass-card" :class="{ online: statusState.radar_board_online }">
+      <div class="device-card care-glass-card" :class="{ online: radarBoardReady, warning: radarBoardUnstable }">
         <div class="device-title">毫米波雷达开发板</div>
         <div class="device-value">{{ radarDeviceValue }}</div>
         <div v-if="statusState.radar_board_online" class="device-meta">
@@ -149,6 +149,11 @@ const statusState = reactive({
   last_audio_received_at: null,
   last_radar_frame_number: 0,
   radar_age_seconds: null,
+  radar_status_age_seconds: null,
+  radar_board_stationary: true,
+  radar_motion_reason: 'disabled',
+  radar_motion_delta: null,
+  radar_motion_sensor_ready: null,
   snore_age_seconds: null,
   environment_board_online: false,
   voice_board_online: false,
@@ -188,13 +193,23 @@ const snorePercent = computed(() => {
 
 const hasRadarVitals = computed(() => isNumber(currentHeartRate.value) && isNumber(currentBreathRate.value))
 
+const radarBoardUnstable = computed(() => Boolean(statusState.radar_board_online && statusState.radar_board_stationary === false))
+const radarBoardReady = computed(() => Boolean(statusState.radar_board_online && !radarBoardUnstable.value))
+
+const radarBoardStatusText = computed(() => {
+  if (!statusState.radar_board_online) return '离线'
+  return radarBoardUnstable.value ? '未静止' : '在线'
+})
+
 const radarDeviceValue = computed(() => {
   if (!statusState.radar_board_online) return '未连接'
+  if (radarBoardUnstable.value) return '板子未静止'
   if (!hasRadarVitals.value) return '等待生命体征计算'
   return '正在连续发送'
 })
 
 const radarDistanceText = computed(() => {
+  if (radarBoardUnstable.value) return '请放稳雷达板后再采集'
   const distance = statusState.target_distance
   if (!isNumber(distance) || distance <= 0) return '目标距离：等待处理'
   const bin = statusState.target_bin === null || statusState.target_bin === undefined ? '--' : statusState.target_bin
@@ -361,10 +376,10 @@ const updateInsights = (rows) => {
     currentBreathRate.value = null
     isUserPresent.value = false
     insight.sleepStage = '等待数据'
-    insight.sleepReason = '还没有收到时间轴数据，请确认模拟后端正在运行。'
+    insight.sleepReason = '还没有收到时间轴数据，请确认真实后端服务正在运行。'
     insight.snoreLabel = '暂无事件'
     insight.snoreImpact = '最近 3 分钟未检测到呼噜事件。'
-    insight.summary = '等待模拟开发板上线。'
+    insight.summary = '等待真实开发板上线。'
     insight.latestTime = ''
     return
   }
@@ -448,6 +463,11 @@ const loadStatus = async () => {
     statusState.last_audio_received_at = res.last_audio_received_at || null
     statusState.last_radar_frame_number = res.last_radar_frame_number || 0
     statusState.radar_age_seconds = res.radar_age_seconds
+    statusState.radar_status_age_seconds = res.radar_status_age_seconds
+    statusState.radar_board_stationary = res.radar_board_stationary !== false
+    statusState.radar_motion_reason = res.radar_motion_reason || 'disabled'
+    statusState.radar_motion_delta = isNumber(res.radar_motion_delta) ? Number(res.radar_motion_delta) : null
+    statusState.radar_motion_sensor_ready = res.radar_motion_sensor_ready
     statusState.snore_age_seconds = res.snore_age_seconds
     statusState.environment_board_online = !!res.environment_board_online
     statusState.voice_board_online = !!res.voice_board_online

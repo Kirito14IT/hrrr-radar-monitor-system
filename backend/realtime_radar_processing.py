@@ -12,6 +12,7 @@ import threading
 import math
 import wave
 import hashlib
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from scipy import signal
@@ -19,6 +20,7 @@ from radar_func import range_fft, mti_filter, extract_phase
 
 # 导入信号分解模块
 from signal_decomposition import apply_cwt, apply_eemd
+from apnea_fusion import breath_window_abnormal, detect_suspected_apnea_events
 
 # 导入存在检测模块
 from presence_detection import RadarPresenceDetector
@@ -70,6 +72,11 @@ except ImportError:
 try:
     import tensorflow as tf
     from tensorflow import keras
+    try:
+        import tf_keras as legacy_keras
+        print("成功导入tf_keras旧模型兼容加载器")
+    except ImportError:
+        legacy_keras = None
     print("成功导入TensorFlow/Keras")
 except ImportError:
     print("警告：无法导入TensorFlow/Keras，模型推理功能将被禁用")
@@ -92,6 +99,9 @@ except ImportError:
 # 处理参数设置
 FRAME_RATE = get_param('frame_rate')           # 雷达帧率
 BUFFER_SIZE = 65539                            # UDP包缓冲区大小
+RADAR_DATA_COMMAND = 1                         # 雷达固件数据帧命令字
+RADAR_STATUS_COMMAND = 2                       # 雷达固件状态帧命令字
+RADAR_DUMMY_BYTE = 0xFF                        # 雷达固件数据帧头 dummy byte
 
 # 雷达参数设置
 FFT_SIZE = 512                               # 距离FFT大小
@@ -125,11 +135,18 @@ SNORE_BOARD_TIMEOUT_SECONDS = 15.0             # 呼噜板离线判定超时（1
 VOICE_BOARD_TIMEOUT_SECONDS = 30.0             # 语音事件到达后暂时标记小智语音链路在线
 EDGI_BOARD_TIMEOUT_SECONDS = 60.0              # 任一 Edgi 模块心跳后的整板在线宽限期
 SNORE_SESSION_GRACE_SECONDS = 30.0             # 呼噜板按下 Snore detect 后保持在线的最长静默期
+EMERGENCY_DEVICE_GRACE_SECONDS = 90.0          # 紧急报警播放期间，传感器短暂心跳抖动不判离线
 TIMELINE_RETENTION_SECONDS = 7200             # 时间轴保留时长
 SAMPLE_RATE = 16000                           # 呼噜板音频采样率
 SAMPLE_WIDTH = 2                              # int16 PCM
 NUM_CHANNELS = 2                              # 呼噜板音频双声道
 SNORE_EVENT_HOLD_SECONDS = 180.0              # 呼噜事件状态保持时间
+SNORE_SOUND_STOP_SECONDS = 1.5                # 呼噜声音连续消失超过该时长，判定一次呼噜停止
+SNORE_SOUND_SCORE_THRESHOLD = 0.45            # 未显式上报 snore_detected 时，score 超过该值也视作有声音
+SNORE_SOUND_DBFS_THRESHOLD = -42.0            # 未显式上报 snore_detected 时，dbfs 高于该值也视作有声音
+SNORE_STOP_ALARM_COOLDOWN_SECONDS = 20.0      # 呼噜停止+呼吸下降报警去抖，避免同一段声音重复报警
+BREATH_DESCENT_WINDOW_SECONDS = 2.0           # 判断呼吸波形下降时使用的雷达相位窗口
+BREATH_DESCENT_COMPARE_SECONDS = 0.5          # 比较窗口：最近 0.5s vs 前 0.5s
 
 def comfort_status_for(temperature_c, humidity_pct, sensor_ok=True, online=True):
     if not online:
@@ -172,68 +189,94 @@ def comfort_status_for(temperature_c, humidity_pct, sensor_ok=True, online=True)
     return f"{status}_critical" if critical else status
 
 
-def estimate_breath_rate_fft(phase_signal, fs=FRAME_RATE, breath_band=(0.1, 0.5)):
+def estimate_breath_rate_fft_with_quality(phase_signal, fs=FRAME_RATE, breath_band=(0.1, 0.5)):
     """
-    使用 FFT + 带通 + 质心法峰值检测估计呼吸率
+    使用带通 + Welch 功率谱估计呼吸率，并返回质量分。
+
+    旧版本直接取 FFT 最大峰，雷达轻微抖动、相位跳变或短窗噪声都会把峰值拉偏。
+    这里增加去趋势、相位展开、谱峰信噪比和边界峰过滤，宁可返回 None，
+    也不要把低质量结果当作真实呼吸率。
     """
-    if phase_signal is None or len(phase_signal) < 10:
-        return None
+    if phase_signal is None:
+        return None, 0.0
 
-    N = len(phase_signal)
-    if N % 2 != 0:
-        phase_signal = phase_signal[:-1]
-        N -= 1
+    values = np.asarray(phase_signal, dtype=float)
+    values = values[np.isfinite(values)]
+    if len(values) < max(64, int(fs * 8)):
+        return None, 0.0
 
-    # 窗函数
-    windowed = phase_signal * np.hanning(N)
+    values = np.unwrap(values)
+    values = signal.detrend(values, type="linear")
+    if np.std(values) < 1e-5:
+        return None, 0.0
 
-    # 零填充（提高插值精度）
-    N_fft = max(1024, 8 * N)
-    fft_vals = np.fft.rfft(windowed, n=N_fft)
-    freqs = np.fft.rfftfreq(N_fft, d=1.0 / fs)
-    magnitude = np.abs(fft_vals)
+    try:
+        sos = signal.butter(3, breath_band, btype="bandpass", fs=fs, output="sos")
+        filtered = signal.sosfiltfilt(sos, values)
+    except ValueError:
+        filtered = values
 
-    # 找呼吸频段范围
-    low_idx = np.searchsorted(freqs, breath_band[0])
-    high_idx = np.searchsorted(freqs, breath_band[1])
-    if high_idx <= low_idx:
-        return None
+    nperseg = min(len(filtered), max(128, int(fs * 16)))
+    if nperseg < 64:
+        return None, 0.0
+    freqs, power = signal.welch(
+        filtered,
+        fs=fs,
+        window="hann",
+        nperseg=nperseg,
+        noverlap=nperseg // 2,
+        nfft=max(1024, 4 * nperseg),
+        detrend=False,
+        scaling="spectrum",
+    )
 
-    # 呼吸频段的幅度谱
-    band_magnitude = magnitude[low_idx:high_idx]
-    band_freqs = freqs[low_idx:high_idx]
+    band_mask = (freqs >= breath_band[0]) & (freqs <= breath_band[1])
+    if not np.any(band_mask):
+        return None, 0.0
+    band_freqs = freqs[band_mask]
+    band_power = power[band_mask]
+    if len(band_power) < 5 or float(np.max(band_power)) <= 1e-12:
+        return None, 0.0
 
-    # 找到最大峰值
-    peak_idx_in_band = np.argmax(band_magnitude)
-    if peak_idx_in_band == 0 or peak_idx_in_band == len(band_magnitude) - 1:
-        # 如果峰值在边界，直接用原始频率
-        peak_freq = band_freqs[peak_idx_in_band]
-    else:
-        # 使用质心法在峰值周围一个小邻域内求重心
-        # 取峰值前后各 2 个点（可根据需要调整）
-        neighborhood_size = 2
-        start = max(0, peak_idx_in_band - neighborhood_size)
-        end = min(len(band_magnitude), peak_idx_in_band + neighborhood_size + 1)
+    peak_idx = int(np.argmax(band_power))
+    peak_power = float(band_power[peak_idx])
+    noise_floor = float(np.median(band_power) + 1e-12)
+    snr = peak_power / noise_floor
+    if snr < 3.0 or peak_idx in {0, len(band_power) - 1}:
+        return None, min(0.45, snr / 6.0)
 
-        # 局部幅度和频率
-        local_mag = band_magnitude[start:end]
-        local_freqs = band_freqs[start:end]
+    # 抛物线插值，减少频率 bin 粗糙造成的跳动。
+    left = float(band_power[peak_idx - 1])
+    center = float(band_power[peak_idx])
+    right = float(band_power[peak_idx + 1])
+    denom = left - 2.0 * center + right
+    offset = 0.0 if abs(denom) < 1e-12 else 0.5 * (left - right) / denom
+    offset = max(-0.5, min(0.5, offset))
+    step = float(band_freqs[1] - band_freqs[0]) if len(band_freqs) > 1 else 0.0
+    peak_freq = float(band_freqs[peak_idx]) + offset * step
 
-        # 质心法：频率 = Σ(mag * freq) / Σ(mag)
-        weighted_sum = np.sum(local_mag * local_freqs)
-        mag_sum = np.sum(local_mag)
-        if mag_sum > 1e-12:
-            peak_freq = weighted_sum / mag_sum
-        else:
-            peak_freq = band_freqs[peak_idx_in_band]
+    # 如果主峰落在二倍频，而半频附近也有能量，取半频作为呼吸率。
+    half_freq = peak_freq / 2.0
+    if breath_band[0] <= half_freq <= breath_band[1]:
+        half_idx = int(np.argmin(np.abs(band_freqs - half_freq)))
+        if float(band_power[half_idx]) >= peak_power * 0.42:
+            peak_freq = float(band_freqs[half_idx])
+            peak_power = float(band_power[half_idx])
 
     breath_rate_bpm = peak_freq * 60.0
+    if not 6.0 <= breath_rate_bpm <= 30.0:
+        return None, 0.0
 
-    # 合理性检查
-    if 6.1 <= breath_rate_bpm <= 30:
-        return breath_rate_bpm
-    else:
-        return 0
+    dominance = peak_power / (float(np.sum(band_power)) + 1e-12)
+    quality = min(1.0, 0.55 * min(1.0, snr / 10.0) + 0.45 * min(1.0, dominance * 6.0))
+    if quality < 0.35:
+        return None, quality
+    return breath_rate_bpm, quality
+
+
+def estimate_breath_rate_fft(phase_signal, fs=FRAME_RATE, breath_band=(0.1, 0.5)):
+    breath_rate, _quality = estimate_breath_rate_fft_with_quality(phase_signal, fs, breath_band)
+    return breath_rate
 
 class RealtimeRadarProcessor:
     """实时雷达数据处理器"""
@@ -268,6 +311,7 @@ class RealtimeRadarProcessor:
         )
         self.presence_detected = False
         self.presence_stable = False
+        self.presence_bypassed_by_snore = False
 
         # API服务器设置
         self.api_enabled = api_enabled
@@ -287,6 +331,12 @@ class RealtimeRadarProcessor:
         self.frames_since_last_process = 0  # 自上次处理后累积的帧数 - 添加为类属性
         self.last_radar_received_time = None
         self.last_radar_received_at = None
+        self.last_radar_status_time = None
+        self.last_radar_status_at = None
+        self.radar_board_stationary = True
+        self.radar_motion_reason = "disabled"
+        self.radar_motion_delta = None
+        self.radar_motion_sensor_ready = None
         self.last_snore_heartbeat_time = None
         self.last_snore_heartbeat_at = None
         self.last_environment_heartbeat_time = None
@@ -315,6 +365,16 @@ class RealtimeRadarProcessor:
         self.snore_event_count = 0
         self.last_snore_time = None
         self.last_snore_at = None
+        self.snore_sound_active = False
+        self.snore_sound_started_time = None
+        self.snore_sound_started_at = None
+        self.last_snore_sound_time = None
+        self.last_snore_sound_at = None
+        self.last_snore_sound_stop_time = None
+        self.last_snore_sound_stop_at = None
+        self.last_snore_stop_alarm_time = None
+        self.snore_stop_breath_alarm_count = 0
+        self.last_snore_stop_fusion = None
         self.timeline = []
         self.emergency_events = []
         self.radar_debug = {
@@ -331,6 +391,11 @@ class RealtimeRadarProcessor:
             "target_distance": None,
             "presence_detected": False,
             "presence_stable": False,
+            "presence_bypassed_by_snore": False,
+            "board_still": True,
+            "motion_reason": "disabled",
+            "motion_delta": None,
+            "motion_sensor_ready": None,
         }
 
         # 结果存储
@@ -341,6 +406,9 @@ class RealtimeRadarProcessor:
         self.model_prediction = None        # 最近一次模型预测结果
         self.heart_rate = None              # 最近一次心率预测值
         self.breath_rate= None              # 最近一次呼吸预测值
+        self.breath_rate_quality = 0.0
+        self._breath_rate_history = deque(maxlen=7)
+        self._breath_rate_missing_count = 0
         # 模型加载
         self.cwt_model = None
         self.eemd_model = None
@@ -352,43 +420,87 @@ class RealtimeRadarProcessor:
                 if 'keras' in globals():
                     # 设置默认模型路径
                     if cwt_model_path is None:
-                        cwt_model_path = os.path.join(current_dir, 'trained_models', 'DeepStateSpace_CWT_best.keras')
+                        cwt_model_path = os.path.join(current_dir, 'trained_models', 'DeepStateSpace_CWT_best.h5')
                     else:
                         cwt_model_path = os.path.abspath(cwt_model_path)
                     if eemd_model_path is None:
-                        eemd_model_path = os.path.join(current_dir, 'trained_models', 'DeepStateSpace_EEMD_best.keras')
+                        eemd_model_path = os.path.join(current_dir, 'trained_models', 'DeepStateSpace_EEMD_best.h5')
                     else:
                         eemd_model_path = os.path.abspath(eemd_model_path)
 
                     # 根据当前分解方法加载对应模型
                     if DECOMP_TYPE == "cwt":
                         print(f"检查CWT模型: {cwt_model_path}")
-                        if os.path.exists(cwt_model_path):
+                        model_loadable, model_skip_reason = self._model_file_loadable_by_keras(cwt_model_path)
+                        if model_loadable:
                             print(f"加载CWT模型: {cwt_model_path}")
-                            self.cwt_model = keras.models.load_model(cwt_model_path)
+                            self.cwt_model = self._load_model_compat(cwt_model_path)
                             print(f"CWT模型加载成功: {self.cwt_model.name}")
                         else:
                             print(f"警告: CWT模型文件不存在 - {cwt_model_path}")
+                            self.enable_model_inference = False
                     elif DECOMP_TYPE == "eemd":
                         print(f"检查EEMD模型: {eemd_model_path}")
-                        if os.path.exists(eemd_model_path):
+                        model_loadable, model_skip_reason = self._model_file_loadable_by_keras(eemd_model_path)
+                        if model_loadable:
                             print(f"加载EEMD模型: {eemd_model_path}")
-                            self.eemd_model = keras.models.load_model(eemd_model_path)
+                            self.eemd_model = self._load_model_compat(eemd_model_path)
                             print(f"EEMD模型加载成功: {self.eemd_model.name}")
                         else:
                             print(f"警告: EEMD模型文件不存在 - {eemd_model_path}")
+                            self.enable_model_inference = False
                 else:
                     print("警告：TensorFlow/Keras未导入，无法加载模型")
                     self.enable_model_inference = False
             except Exception as e:
                 print(f"加载模型时出错: {e}")
                 self.enable_model_inference = False
-                import traceback
-                traceback.print_exc()
 
         # 如果启用API，初始化FastAPI应用
         if self.api_enabled:
             self._init_api()
+
+    @staticmethod
+    def _model_file_loadable_by_keras(path):
+        """Validate model file before keras.load_model to avoid noisy startup tracebacks."""
+        if not path or not os.path.isfile(path):
+            return False, "model file not found"
+        try:
+            with open(path, "rb") as model_file:
+                header = model_file.read(8)
+        except OSError as exc:
+            return False, f"model file is not readable: {exc}"
+
+        lower_path = path.lower()
+        if lower_path.endswith(".keras") and header == b"\x89HDF\r\n\x1a\n":
+            return False, "model file is HDF5 content but uses .keras extension; rename/convert it to .h5 or export a Keras v3 .keras zip"
+        return True, ""
+
+    @staticmethod
+    def _load_model_compat(path):
+        """Load both Keras 3 models and legacy HDF5 models."""
+        lower_path = path.lower()
+        if lower_path.endswith(".h5"):
+            if legacy_keras is not None:
+                return legacy_keras.models.load_model(path, compile=False)
+            return keras.models.load_model(path, compile=False)
+        return keras.models.load_model(path)
+
+    @staticmethod
+    def _jsonable(value):
+        """Convert numpy/scientific values to plain JSON-safe Python objects."""
+        if isinstance(value, dict):
+            return {str(key): RealtimeRadarProcessor._jsonable(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [RealtimeRadarProcessor._jsonable(item) for item in value]
+        if hasattr(value, "tolist"):
+            return RealtimeRadarProcessor._jsonable(value.tolist())
+        if hasattr(value, "item"):
+            try:
+                return value.item()
+            except (TypeError, ValueError):
+                pass
+        return value
 
     def _now_iso(self):
         """返回秒级ISO时间戳，供前端时间轴解析。"""
@@ -397,11 +509,39 @@ class RealtimeRadarProcessor:
     def _seconds_since(self, timestamp):
         if timestamp is None:
             return None
-        return max(0.0, time.time() - timestamp)
+        if isinstance(timestamp, (int, float)):
+            timestamp_seconds = float(timestamp)
+        else:
+            timestamp_text = str(timestamp).strip()
+            if not timestamp_text:
+                return None
+            try:
+                timestamp_seconds = float(timestamp_text)
+            except ValueError:
+                try:
+                    timestamp_seconds = datetime.fromisoformat(timestamp_text.replace("Z", "+00:00")).timestamp()
+                except (TypeError, ValueError):
+                    return None
+        return max(0.0, time.time() - timestamp_seconds)
 
     def _radar_board_online(self):
-        age = self._seconds_since(self.last_radar_received_time)
+        times = [
+            value for value in (
+                self.last_radar_received_time,
+                self.last_radar_status_time,
+            )
+            if value is not None
+        ]
+        age = self._seconds_since(max(times)) if times else None
         return bool(self.running and age is not None and age <= BOARD_TIMEOUT_SECONDS)
+
+    def _radar_data_online(self):
+        age = self._seconds_since(self.last_radar_received_time)
+        return bool(
+            self.running and
+            age is not None and
+            age <= BOARD_TIMEOUT_SECONDS
+        )
 
     def _snore_board_online(self):
         # Snore detect 已按下 → 在 session 宽限期内一律视为在线
@@ -419,10 +559,22 @@ class RealtimeRadarProcessor:
             return False
 
         heartbeat_age = self._seconds_since(self.last_snore_heartbeat_time)
+        if (
+            heartbeat_age is not None and
+            heartbeat_age <= EMERGENCY_DEVICE_GRACE_SECONDS and
+            self._emergency_device_grace_active()
+        ):
+            return True
         return bool(heartbeat_age is not None and heartbeat_age <= SNORE_BOARD_TIMEOUT_SECONDS)
 
     def _environment_board_online(self):
         age = self._seconds_since(self.last_environment_heartbeat_time)
+        if (
+            age is not None and
+            age <= EMERGENCY_DEVICE_GRACE_SECONDS and
+            self._emergency_device_grace_active()
+        ):
+            return True
         return bool(age is not None and age <= ENVIRONMENT_BOARD_TIMEOUT_SECONDS)
 
     def _voice_board_online(self):
@@ -437,10 +589,18 @@ class RealtimeRadarProcessor:
         with self.state_lock:
             active = [
                 event for event in self.emergency_events
-                if event.get("type") == "emergency_voice"
-                and event.get("status", "active") == "active"
+                if event.get("status", "active") == "active"
+                and event.get("type") in {"emergency_voice", "snore_stop_breath_drop"}
             ]
         return max(active, key=lambda item: item.get("timestamp", ""), default=None)
+
+    def _emergency_device_grace_active(self):
+        edgi_age = self._seconds_since(self.last_edgi_heartbeat_time)
+        return bool(
+            edgi_age is not None and
+            edgi_age <= EMERGENCY_DEVICE_GRACE_SECONDS and
+            self._active_emergency_event() is not None
+        )
 
     def _environment_snapshot(self):
         environment_age = self._seconds_since(self.last_environment_heartbeat_time)
@@ -473,6 +633,42 @@ class RealtimeRadarProcessor:
             return "等待生命体征"
         return "实时监测中"
 
+    def _update_breath_rate_estimate(self, raw_breath_rate, quality=0.0):
+        """平滑雷达呼吸率，降低单窗 FFT 抖动对前端和事件规则的影响。"""
+        if raw_breath_rate is None or not isinstance(raw_breath_rate, (int, float)):
+            self._breath_rate_missing_count += 1
+            if self._breath_rate_missing_count >= 4:
+                self.breath_rate = None
+                self.breath_rate_quality = 0.0
+            return self.breath_rate
+
+        raw = float(raw_breath_rate)
+        quality = max(0.0, min(1.0, float(quality or 0.0)))
+        if not 6.0 <= raw <= 30.0:
+            self._breath_rate_missing_count += 1
+            if self._breath_rate_missing_count >= 4:
+                self.breath_rate = None
+                self.breath_rate_quality = 0.0
+            return self.breath_rate
+
+        if self.breath_rate is not None:
+            jump = abs(raw - float(self.breath_rate))
+            if jump > 7.0 and quality < 0.70:
+                self._breath_rate_missing_count += 1
+                return self.breath_rate
+
+        self._breath_rate_missing_count = 0
+        self._breath_rate_history.append(raw)
+        median_rate = float(np.median(list(self._breath_rate_history)))
+        if self.breath_rate is None:
+            smoothed = median_rate
+        else:
+            alpha = 0.50 if quality >= 0.75 else 0.28
+            smoothed = float(self.breath_rate) * (1.0 - alpha) + median_rate * alpha
+        self.breath_rate = round(smoothed, 2)
+        self.breath_rate_quality = round(quality, 3)
+        return self.breath_rate
+
     @staticmethod
     def _snore_level_from_dbfs(dbfs, score):
         if dbfs is None:
@@ -500,6 +696,187 @@ class RealtimeRadarProcessor:
             wav_file.writeframes(raw_audio)
         return len(raw_audio) / float(SAMPLE_RATE * SAMPLE_WIDTH * NUM_CHANNELS)
 
+    @staticmethod
+    def _snore_sound_present(snore_detected, score, dbfs):
+        """判定当前心跳是否仍有呼噜/声音，独立于前端 snore_detected 的长保持状态。"""
+        if bool(snore_detected):
+            return True
+        try:
+            if float(score or 0.0) >= SNORE_SOUND_SCORE_THRESHOLD:
+                return True
+        except (TypeError, ValueError):
+            pass
+        try:
+            return dbfs is not None and float(dbfs) >= SNORE_SOUND_DBFS_THRESHOLD
+        except (TypeError, ValueError):
+            return False
+
+    def _breath_signal_descent_snapshot(self):
+        """返回当前雷达呼吸相位波形是否处于下降段。"""
+        if self.phase_values is None:
+            return {
+                "descending": False,
+                "reason": "no_phase_signal",
+            }
+
+        values = np.asarray(self.phase_values, dtype=float)
+        values = values[np.isfinite(values)]
+        min_points = int(max(FRAME_RATE * BREATH_DESCENT_WINDOW_SECONDS, FRAME_RATE))
+        if values.size < min_points:
+            return {
+                "descending": False,
+                "reason": "not_enough_phase_points",
+                "points": int(values.size),
+            }
+
+        window_points = min(values.size, int(FRAME_RATE * BREATH_DESCENT_WINDOW_SECONDS))
+        compare_points = max(3, int(FRAME_RATE * BREATH_DESCENT_COMPARE_SECONDS))
+        if window_points < compare_points * 2:
+            return {
+                "descending": False,
+                "reason": "not_enough_compare_points",
+                "points": int(values.size),
+            }
+
+        segment = signal.detrend(values[-window_points:])
+        try:
+            sos = signal.butter(3, (0.1, 0.5), btype="bandpass", fs=FRAME_RATE, output="sos")
+            segment = signal.sosfiltfilt(sos, segment)
+        except ValueError:
+            # 数据点不足以 filtfilt 时退回到去趋势后的相位波形。
+            pass
+
+        previous_mean = float(np.mean(segment[-compare_points * 2:-compare_points]))
+        recent_mean = float(np.mean(segment[-compare_points:]))
+        delta = recent_mean - previous_mean
+        x = np.arange(segment.size, dtype=float)
+        slope = float(np.polyfit(x, segment, 1)[0]) if segment.size >= 2 else 0.0
+        noise = float(np.std(segment))
+        threshold = max(1e-4, noise * 0.08)
+        descending = bool(delta <= -threshold or (delta < 0.0 and slope < 0.0))
+
+        return {
+            "descending": descending,
+            "reason": "ok",
+            "window_seconds": BREATH_DESCENT_WINDOW_SECONDS,
+            "compare_seconds": BREATH_DESCENT_COMPARE_SECONDS,
+            "previous_mean": round(previous_mean, 6),
+            "recent_mean": round(recent_mean, 6),
+            "delta": round(float(delta), 6),
+            "slope": round(float(slope), 8),
+            "threshold": round(float(threshold), 6),
+            "breath_rate": float(self.breath_rate) if self.breath_rate is not None else None,
+            "breath_quality": self.breath_rate_quality,
+            "target_bin": int(self.target_bin) if self.target_bin is not None else None,
+            "target_distance": float(self.target_bin * RANGE_RESOLUTION) if self.target_bin is not None else None,
+        }
+
+    def _record_snore_stop_breath_drop_alarm(self, stop_time, silence_seconds, score, dbfs, breath_snapshot, source):
+        now_text = datetime.fromtimestamp(stop_time).isoformat(timespec="seconds")
+        cooldown_age = self._seconds_since(self.last_snore_stop_alarm_time)
+        if cooldown_age is not None and cooldown_age < SNORE_STOP_ALARM_COOLDOWN_SECONDS:
+            return None
+
+        minute_bucket = datetime.fromtimestamp(stop_time).strftime("%Y-%m-%dT%H:%M:%S")
+        fingerprint_seed = (
+            f"snore_stop_breath_drop:{source}:{minute_bucket}:"
+            f"{breath_snapshot.get('target_bin')}:{round(float(silence_seconds), 1)}"
+        )
+        fingerprint = "snore_stop_breath_drop:" + hashlib.sha1(fingerprint_seed.encode("utf-8")).hexdigest()[:16]
+        event = {
+            "eventID": int(stop_time * 1000),
+            "userID": None,
+            "type": "snore_stop_breath_drop",
+            "severity": "critical",
+            "title": "呼噜停止伴随呼吸下降",
+            "message": f"检测到呼噜声音消失约 {silence_seconds:.1f} 秒，同时雷达呼吸波形处于下降段，建议立即观察。",
+            "timestamp": now_text,
+            "source": source or "real_snore_board",
+            "score_delta": -24,
+            "details": {
+                "silence_seconds": round(float(silence_seconds), 2),
+                "snore_score": round(float(score or 0.0), 3),
+                "snore_dbfs": float(dbfs) if dbfs is not None else None,
+                "last_snore_sound_at": self.last_snore_sound_at,
+                "breath_signal": breath_snapshot,
+            },
+            "fingerprint": fingerprint,
+            "status": "active",
+            "resolved_at": None,
+            "resolution_note": None,
+            "resolved_by": None,
+        }
+        if not any(item.get("fingerprint") == fingerprint for item in self.emergency_events):
+            self.emergency_events.append(event)
+            self.emergency_events = self.emergency_events[-120:]
+            self.snore_stop_breath_alarm_count += 1
+            self.last_snore_stop_alarm_time = stop_time
+        return event
+
+    def _update_snore_sound_state(self, sound_present, now, score, dbfs, source):
+        now_text = datetime.fromtimestamp(now).isoformat(timespec="seconds")
+        event = None
+
+        if sound_present:
+            if not self.snore_sound_active:
+                self.snore_sound_started_time = now
+                self.snore_sound_started_at = now_text
+            self.snore_sound_active = True
+            self.last_snore_sound_time = now
+            self.last_snore_sound_at = now_text
+            self.last_snore_stop_fusion = {
+                "state": "sound_present",
+                "timestamp": now_text,
+                "sound_present": True,
+            }
+            return event
+
+        silence_seconds = self._seconds_since(self.last_snore_sound_time)
+        should_stop = bool(
+            self.snore_sound_active and
+            silence_seconds is not None and
+            silence_seconds >= SNORE_SOUND_STOP_SECONDS
+        )
+        if not should_stop:
+            self.last_snore_stop_fusion = {
+                "state": "waiting_for_silence",
+                "timestamp": now_text,
+                "sound_present": False,
+                "silence_seconds": round(float(silence_seconds), 2) if silence_seconds is not None else None,
+                "stop_threshold_seconds": SNORE_SOUND_STOP_SECONDS,
+            }
+            return event
+
+        self.snore_sound_active = False
+        self.last_snore_sound_stop_time = now
+        self.last_snore_sound_stop_at = now_text
+        breath_snapshot = self._breath_signal_descent_snapshot()
+        self.last_snore_stop_fusion = {
+            "state": "stopped",
+            "timestamp": now_text,
+            "sound_present": False,
+            "silence_seconds": round(float(silence_seconds), 2),
+            "stop_threshold_seconds": SNORE_SOUND_STOP_SECONDS,
+            "breath_signal_descending": bool(breath_snapshot.get("descending")),
+            "breath_signal": breath_snapshot,
+        }
+
+        if breath_snapshot.get("descending"):
+            event = self._record_snore_stop_breath_drop_alarm(
+                now,
+                silence_seconds,
+                score,
+                dbfs,
+                breath_snapshot,
+                source,
+            )
+            self.last_snore_stop_fusion["alarm_triggered"] = event is not None
+            if event is not None:
+                print(f">> 呼噜停止+呼吸下降报警: silence={silence_seconds:.2f}s, breath_delta={breath_snapshot.get('delta')}")
+        else:
+            self.last_snore_stop_fusion["alarm_triggered"] = False
+        return event
+
     def _timeline_entry(self, timestamp=None):
         radar_online = self._radar_board_online()
         snore_online = self._snore_board_online()
@@ -515,9 +892,11 @@ class RealtimeRadarProcessor:
             "timestamp": timestamp or self._now_iso(),
             "heart_rate": heart_rate if radar_online else None,
             "breath_rate": breath_rate if radar_online else None,
+            "breath_quality": self.breath_rate_quality if radar_online else 0.0,
             "target_distance": float(target_distance) if radar_online else 0.0,
             "target_bin": int(self.target_bin) if self.target_bin is not None else None,
             "radar_online": radar_online,
+            "radar_board_stationary": bool(self.radar_board_stationary),
             "snore_online": snore_online,
             "snore_score": snore_score,
             "snore_dbfs": snore_dbfs,
@@ -581,7 +960,7 @@ class RealtimeRadarProcessor:
             "latest_comfort_status": latest.get("comfort_status", "offline"),
         }
 
-    # ===== sleep overview 辅助方法（移植自 mock_hardware_api.py） =====
+    # ===== sleep overview 聚合辅助方法 =====
 
     @staticmethod
     def _numeric_values(rows, key):
@@ -681,8 +1060,8 @@ class RealtimeRadarProcessor:
             candidates = [
                 event
                 for event in self.emergency_events
-                if event.get("type") == "emergency_voice"
-                and event.get("status", "active") == "active"
+                if event.get("status", "active") == "active"
+                and event.get("type") in {"emergency_voice", "snore_stop_breath_drop"}
                 and (
                     event.get("eventID") == payload.event_id
                     if payload.event_id is not None
@@ -795,11 +1174,11 @@ class RealtimeRadarProcessor:
         return result[-90:]
 
     def _synthesize_sleep_events(self, rows):
-        """从时间轴行中合成睡眠事件（与 mock_hardware_api.py 的 record_sleep_events_locked 同等逻辑，
+        """从时间轴行中合成睡眠事件（与 realtime_radar_processing.py 的 record_sleep_events_locked 同等逻辑，
         但仅在内存中累积，不写 SQLite）。每个 (type, 分钟) 仅记录一次。"""
         events: list = []
         seen = set()
-        radar_age = self._seconds_since(self.last_radar_received_at)
+        radar_age = self._seconds_since(self.last_radar_received_time)
         environment_age = self._seconds_since(self.last_environment_heartbeat_time)
         edgi_age = self._seconds_since(self.last_edgi_heartbeat_time)
         edgi_online = self._edgi_board_online()
@@ -918,13 +1297,15 @@ class RealtimeRadarProcessor:
                     f"heart_abnormal:{minute}",
                 )
 
-            if isinstance(breath_rate, (int, float)) and (breath_rate >= 24 or breath_rate < 10):
+            breath_window = breath_window_abnormal(rows[-8:])
+            if breath_window and row is rows[-1]:
                 condition = "vital_abnormal"
+                median_breath = breath_window["median_breath_rate"]
                 add(
                     "breath_abnormal", "warning", "呼吸异常波动",
-                    f"当前呼吸率 {breath_rate:.1f} RPM，超出静息观察范围。",
+                    f"最近呼吸率中位数 {median_breath:.1f} RPM，持续超出静息观察范围。",
                     timestamp, "radar_board", -10,
-                    {"breath_rate": breath_rate},
+                    {"breath_rate": breath_rate, **breath_window},
                     f"breath_abnormal:{minute}",
                 )
 
@@ -938,6 +1319,13 @@ class RealtimeRadarProcessor:
                 )
             previous_condition = condition
 
+        for apnea_event in detect_suspected_apnea_events(rows):
+            fingerprint = apnea_event.get("fingerprint")
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            events.append(apnea_event)
+
         return events
 
     def _compute_sleep_score(self, rows, events):
@@ -945,7 +1333,7 @@ class RealtimeRadarProcessor:
             return {
                 "score": 0,
                 "label": "等待数据",
-                "summary": "启动模拟后端和两个模拟开发板后，睡眠看护驾驶舱会开始生成评分。",
+                "summary": "启动真实后端服务和两个真实开发板后，睡眠看护驾驶舱会开始生成评分。",
                 "penalties": [],
             }
 
@@ -964,6 +1352,7 @@ class RealtimeRadarProcessor:
             if rows else 0.0
         )
         snore_event_count = sum(1 for row in rows if row.get("snore_detected")) + sum(1 for event in events if event.get("type") == "snore")
+        apnea_event_count = sum(1 for event in events if event.get("type") == "suspected_apnea")
 
         penalties = []
         if len(rows) < 10:
@@ -984,6 +1373,12 @@ class RealtimeRadarProcessor:
             penalty = min(28.0, avg_snore * 20.0 + snore_event_count * 0.6)
             if penalty >= 2:
                 penalties.append({"name": "呼噜扰动", "value": round(penalty, 1), "reason": f"平均呼噜强度 {avg_snore * 100:.0f}%，事件点 {snore_event_count} 个"})
+        if apnea_event_count:
+            penalties.append({
+                "name": "疑似呼吸暂停",
+                "value": round(min(30.0, apnea_event_count * 12.0), 1),
+                "reason": f"雷达与呼噜融合提示 {apnea_event_count} 次疑似暂停",
+            })
         if radar_offline_ratio > 0:
             penalties.append({"name": "雷达掉线", "value": round(min(22.0, radar_offline_ratio * 34.0), 1), "reason": f"雷达断线占比 {radar_offline_ratio * 100:.0f}%"})
         if uncomfortable_ratio > 0:
@@ -999,7 +1394,7 @@ class RealtimeRadarProcessor:
         ]
         worst_event = max(event_severities, key=self._severity_rank) if event_severities else "info"
         if radar_offline_ratio > 0.25 or worst_event == "critical":
-            label = "设备异常" if radar_offline_ratio > 0.25 else "呼噜频繁"
+            label = "设备异常" if radar_offline_ratio > 0.25 else ("疑似呼吸暂停" if apnea_event_count else "呼噜频繁")
         elif no_person_ratio > 0.12:
             label = "疑似离床"
         elif score >= 86:
@@ -1089,6 +1484,10 @@ class RealtimeRadarProcessor:
                     1 for event in events_sorted
                     if event.get("severity") == "warning" and event.get("status", "active") == "active"
                 ),
+                "suspected_apnea_count": sum(
+                    1 for event in events_sorted
+                    if event.get("type") == "suspected_apnea" and event.get("status", "active") == "active"
+                ),
             },
             "devices": devices or {},
             "heatmap": heatmap,
@@ -1136,13 +1535,56 @@ class RealtimeRadarProcessor:
                 "target_distance": float(target_distance) if target_distance is not None else None,
                 "presence_detected": bool(self.presence_detected),
                 "presence_stable": bool(self.presence_stable),
+                "presence_bypassed_by_snore": bool(self.presence_bypassed_by_snore),
             })
+
+    def _handle_radar_status_packet(self, packet):
+        try:
+            payload = packet[1:].decode("utf-8", errors="replace").strip("\x00\r\n ")
+            status = json.loads(payload)
+        except Exception as exc:
+            with self.state_lock:
+                self.radar_debug.update({
+                    "status_packet_error": str(exc),
+                    "status_packet_hex": packet[:80].hex(" "),
+                })
+            return
+
+        now = time.time()
+        now_text = self._now_iso()
+
+        with self.state_lock:
+            self.last_radar_status_time = now
+            self.last_radar_status_at = now_text
+            self.radar_board_stationary = True
+            self.radar_motion_reason = "disabled"
+            self.radar_motion_delta = None
+            self.radar_motion_sensor_ready = None
+            self.radar_debug.update({
+                "status_packet": status,
+                "last_status_at": now_text,
+                "board_still": True,
+                "motion_reason": "disabled",
+                "motion_delta": None,
+                "motion_sensor_ready": None,
+            })
+
+    def _is_valid_radar_data_packet(self, data):
+        """只接受雷达固件定义的数据帧，避免 JSON 控制包/广播包污染在线状态。"""
+        if len(data) < 8:
+            return False
+        if data[0] != RADAR_DATA_COMMAND or data[1] != RADAR_DUMMY_BYTE:
+            return False
+        payload_len = len(data) - 6
+        return payload_len > 0 and payload_len % 2 == 0
 
     def _status_snapshot(self):
         radar_age = self._seconds_since(self.last_radar_received_time)
+        radar_status_age = self._seconds_since(self.last_radar_status_time)
         snore_age = self._seconds_since(self.last_snore_heartbeat_time)
         voice_age = self._seconds_since(self.last_voice_received_time)
-        radar_online = self._radar_board_online()
+        radar_board_online = self._radar_board_online()
+        radar_online = self._radar_data_online()
         snore_online = self._snore_board_online()
         env = self._environment_snapshot()
         active_emergency = self._active_emergency_event()
@@ -1150,7 +1592,12 @@ class RealtimeRadarProcessor:
         return {
             "running": self.running,
             "radar_online": radar_online,
-            "radar_board_online": radar_online,
+            "radar_board_online": radar_board_online,
+            "radar_board_stationary": bool(self.radar_board_stationary),
+            "radar_motion_reason": self.radar_motion_reason,
+            "radar_motion_delta": self.radar_motion_delta,
+            "radar_motion_sensor_ready": self.radar_motion_sensor_ready,
+            "presence_bypassed_by_snore": bool(self.presence_bypassed_by_snore),
             "snore_board_online": snore_online,
             "snore_monitoring": bool(self.snore_session_active and snore_online),
             "snore_paused": bool(self.snore_session_stopped and self._edgi_board_online()),
@@ -1162,6 +1609,7 @@ class RealtimeRadarProcessor:
             "snore_session_started_at": self.snore_session_started_text,
             "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
             "breath_rate": float(self.breath_rate) if self.breath_rate is not None else None,
+            "breath_quality": self.breath_rate_quality,
             "target_distance": float(self.target_bin * RANGE_RESOLUTION) if self.target_bin is not None else None,
             "target_bin": int(self.target_bin) if self.target_bin is not None else None,
             "total_frames": self.total_frames_received,
@@ -1170,11 +1618,13 @@ class RealtimeRadarProcessor:
             "last_frame": self.last_frame_number,
             "last_radar_frame_number": self.last_frame_number,
             "last_radar_received_at": self.last_radar_received_at,
+            "last_radar_status_at": self.last_radar_status_at,
             "last_snore_heartbeat_at": self.last_snore_heartbeat_at,
             "last_environment_heartbeat_at": env["last_environment_heartbeat_at"],
             "last_voice_received_at": self.last_voice_received_at,
             "last_edgi_heartbeat_at": self.last_edgi_heartbeat_at,
             "radar_age_seconds": round(radar_age, 2) if radar_age is not None else None,
+            "radar_status_age_seconds": round(radar_status_age, 2) if radar_status_age is not None else None,
             "snore_age_seconds": round(snore_age, 2) if snore_age is not None else None,
             "environment_age_seconds": env["environment_age_seconds"],
             "voice_age_seconds": round(voice_age, 2) if voice_age is not None else None,
@@ -1192,6 +1642,11 @@ class RealtimeRadarProcessor:
             "snore_detected": bool(self.snore_detected) if snore_online else False,
             "snore_event_count": self.snore_event_count,
             "last_snore_at": self.last_snore_at,
+            "snore_sound_active": bool(self.snore_sound_active),
+            "last_snore_sound_at": self.last_snore_sound_at,
+            "last_snore_sound_stop_at": self.last_snore_sound_stop_at,
+            "last_snore_stop_fusion": self.last_snore_stop_fusion,
+            "snore_stop_breath_alarm_count": self.snore_stop_breath_alarm_count,
             "temperature_c": env["temperature_c"],
             "humidity_pct": env["humidity_pct"],
             "comfort_status": env["comfort_status"],
@@ -1240,6 +1695,13 @@ class RealtimeRadarProcessor:
             humidity_pct: float
             sensor_ok: bool = True
             source: str = "real_edgi_talk_m33_aht20"
+
+
+        class EdgiHeartbeat(BaseModel):
+            source: str = "xiaozhi_board"
+            mode: Optional[str] = None
+            keyword_online: Optional[bool] = None
+            snore_guard_enabled: Optional[bool] = None
 
 
         class EmergencyRequest(BaseModel):
@@ -1328,7 +1790,12 @@ class RealtimeRadarProcessor:
         # 添加CORS中间件
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],  # 允许所有来源
+            allow_origins=[
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://192.168.0.102:5173",
+            ],
+            allow_origin_regex=r"https?://(?:localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3})(?::\d+)?",
             allow_credentials=True,
             allow_methods=["*"],  # 允许所有方法
             allow_headers=["*"],  # 允许所有头
@@ -1355,7 +1822,8 @@ class RealtimeRadarProcessor:
         async def get_target_data():
             """同时获取目标距离和心率数据"""
             target_distance = self.target_bin * RANGE_RESOLUTION if self.target_bin is not None else None
-            radar_online = self._radar_board_online()
+            radar_board_online = self._radar_board_online()
+            radar_online = self._radar_data_online()
             env = self._environment_snapshot()
             return {
                 "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
@@ -1363,7 +1831,10 @@ class RealtimeRadarProcessor:
                 "target_distance": float(target_distance) if target_distance is not None else None,
                 "target_bin": int(self.target_bin) if self.target_bin is not None else None,
                 "radar_online": radar_online,
-                "radar_board_online": radar_online,
+                "radar_board_online": radar_board_online,
+                "radar_board_stationary": bool(self.radar_board_stationary),
+                "radar_motion_reason": self.radar_motion_reason,
+                "radar_motion_delta": self.radar_motion_delta,
                 "environment_board_online": env["environment_board_online"],
                 "last_environment_heartbeat_at": env["last_environment_heartbeat_at"],
                 "environment_age_seconds": env["environment_age_seconds"],
@@ -1384,12 +1855,36 @@ class RealtimeRadarProcessor:
             """获取雷达UDP帧解析诊断信息"""
             return self._status_snapshot()["radar_debug"]
 
-        @self.app.post("/mock/snore-heartbeat")
+        @self.app.post("/hardware/edgi-heartbeat")
+        async def receive_edgi_heartbeat(heartbeat: EdgiHeartbeat):
+            """接收 Edgi/XiaoZhi 开发板基础在线心跳。"""
+            now = time.time()
+            now_text = self._now_iso()
+            with self.state_lock:
+                self.last_edgi_heartbeat_time = now
+                self.last_edgi_heartbeat_at = now_text
+            self._upsert_timeline()
+            return {
+                "code": 200,
+                "status": "success",
+                "message": "Edgi heartbeat received",
+                "edgi_board_online": self._edgi_board_online(),
+                "source": heartbeat.source,
+                "mode": heartbeat.mode,
+                "keyword_online": heartbeat.keyword_online,
+                "snore_guard_enabled": heartbeat.snore_guard_enabled,
+                "received_at": now_text,
+            }
+
+        @self.app.post("/hardware/snore-heartbeat")
         async def receive_snore_heartbeat(heartbeat: SnoreHeartbeat):
             """接收呼噜检测板每秒特征心跳。"""
             score = max(0.0, min(1.0, float(heartbeat.snore_score)))
+            dbfs = float(heartbeat.dbfs) if heartbeat.dbfs is not None else None
+            sound_present = self._snore_sound_present(heartbeat.snore_detected, score, dbfs)
             now = time.time()
             now_text = self._now_iso()
+            stop_alarm_event = None
             with self.state_lock:
                 self.last_snore_heartbeat_time = now
                 self.last_snore_heartbeat_at = now_text
@@ -1397,9 +1892,9 @@ class RealtimeRadarProcessor:
                 self.last_edgi_heartbeat_at = now_text
                 self.snore_session_last_seen_at = now
                 self.snore_score = round(score, 3)
-                if heartbeat.dbfs is not None:
-                    self.snore_dbfs = float(heartbeat.dbfs)
-                    self.last_audio_dbfs = float(heartbeat.dbfs)
+                if dbfs is not None:
+                    self.snore_dbfs = dbfs
+                    self.last_audio_dbfs = dbfs
                 if heartbeat.snore_detected:
                     self.snore_detected = True
                     self.snore_event_count += 1
@@ -1408,18 +1903,29 @@ class RealtimeRadarProcessor:
                 else:
                     recent_snore = self._seconds_since(self.last_snore_time)
                     self.snore_detected = recent_snore is not None and recent_snore <= SNORE_EVENT_HOLD_SECONDS
+                stop_alarm_event = self._update_snore_sound_state(
+                    sound_present,
+                    now,
+                    score,
+                    dbfs,
+                    heartbeat.source,
+                )
             self._upsert_timeline()
             return {
                 "code": 200,
                 "status": "success",
                 "message": "呼噜心跳已接收",
                 "snore_score": round(score, 3),
-                "snore_dbfs": heartbeat.dbfs,
-                "snore_level": self._snore_level_from_dbfs(heartbeat.dbfs, score),
+                "snore_dbfs": dbfs,
+                "snore_level": self._snore_level_from_dbfs(dbfs, score),
                 "snore_detected": self._status_snapshot()["snore_detected"],
+                "sound_present": sound_present,
+                "last_snore_stop_fusion": self.last_snore_stop_fusion,
+                "alarm_triggered": stop_alarm_event is not None,
+                "alarm_event": stop_alarm_event,
             }
 
-        @self.app.post("/mock/environment-heartbeat")
+        @self.app.post("/hardware/environment-heartbeat")
         async def receive_environment_heartbeat(heartbeat: EnvironmentHeartbeat):
             """接收 M55 从 M33 AHT20 共享内存读取后转发的温湿度心跳。"""
             sensor_ok = bool(heartbeat.sensor_ok)
@@ -1447,7 +1953,7 @@ class RealtimeRadarProcessor:
                 "comfort_status": comfort_status,
             }
 
-        @self.app.post("/mock/snore-session/start")
+        @self.app.post("/hardware/snore-session/start")
         async def start_snore_session():
             """呼噜检测板按下 Snore detect 时调用，前端从此刻开始一直显示在线。"""
             now = time.time()
@@ -1462,6 +1968,14 @@ class RealtimeRadarProcessor:
                 self.last_snore_heartbeat_at = now_text
                 self.last_edgi_heartbeat_time = now
                 self.last_edgi_heartbeat_at = now_text
+                self.snore_sound_active = False
+                self.snore_sound_started_time = None
+                self.snore_sound_started_at = None
+                self.last_snore_sound_time = None
+                self.last_snore_sound_at = None
+                self.last_snore_sound_stop_time = None
+                self.last_snore_sound_stop_at = None
+                self.last_snore_stop_fusion = None
             self._upsert_timeline()
             return {
                 "code": 200,
@@ -1473,7 +1987,7 @@ class RealtimeRadarProcessor:
                 "started_at": now_text,
             }
 
-        @self.app.post("/mock/snore-session/stop")
+        @self.app.post("/hardware/snore-session/stop")
         async def stop_snore_session():
             """呼噜监测暂停时调用；Edgi E84 仍保持在线。"""
             now = time.time()
@@ -1487,6 +2001,14 @@ class RealtimeRadarProcessor:
                 # 让“最近心跳/音频”不再被 5/15 秒窗口认作在线依据
                 self.last_snore_heartbeat_time = None
                 self.last_audio_received_time = None
+                self.snore_sound_active = False
+                self.snore_sound_started_time = None
+                self.snore_sound_started_at = None
+                self.last_snore_sound_time = None
+                self.last_snore_sound_at = None
+                self.last_snore_sound_stop_time = None
+                self.last_snore_sound_stop_at = None
+                self.last_snore_stop_fusion = None
             self._upsert_timeline()
             return {
                 "code": 200,
@@ -1504,7 +2026,7 @@ class RealtimeRadarProcessor:
             if not body:
                 return {"code": 400, "status": "error", "message": "没有收到音频数据"}
 
-            audio_dir = Path(current_dir) / "mock_audio_uploads"
+            audio_dir = Path(current_dir) / "audio_uploads"
             audio_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_file = audio_dir / f"received_audio_{timestamp}.wav"
@@ -1567,7 +2089,7 @@ class RealtimeRadarProcessor:
                 if hasattr(result, "tolist"):
                     prediction["result"] = result.tolist()
                 results["model_prediction"] = prediction
-            return results
+            return self._jsonable(results)
 
         @self.app.get("/timeline")
         async def get_timeline(seconds: int = Query(180, ge=10, le=1800)):
@@ -1596,7 +2118,7 @@ class RealtimeRadarProcessor:
             date: Optional[str] = Query(None),
             userID: Optional[int] = Query(None),
         ):
-            """睡眠看护驾驶舱聚合接口（移植自 mock_hardware_api.py）。
+            """睡眠看护驾驶舱聚合接口。
 
             - live 模式：从 self.timeline 截取近 N 秒行 + 内存合成事件。
             - history 模式：优先按 date 过滤 self.timeline（如果该天还有数据）；
@@ -1619,6 +2141,10 @@ class RealtimeRadarProcessor:
                     rows = json.loads(json.dumps(rows))
                     devices = {
                         "radar_board_online": self._radar_board_online(),
+                        "radar_board_stationary": bool(self.radar_board_stationary),
+                        "radar_motion_reason": self.radar_motion_reason,
+                        "radar_motion_delta": self.radar_motion_delta,
+                        "radar_motion_sensor_ready": self.radar_motion_sensor_ready,
                         "snore_board_online": self._snore_board_online(),
                         "snore_monitoring": bool(self.snore_session_active and self._snore_board_online()),
                         "snore_paused": bool(self.snore_session_stopped and self._edgi_board_online()),
@@ -1626,8 +2152,9 @@ class RealtimeRadarProcessor:
                         "environment_sensor_ok": self._environment_snapshot()["environment_sensor_ok"],
                         "voice_board_online": self._voice_board_online(),
                         "edgi_board_online": self._edgi_board_online(),
-                        "radar_age_seconds": self._seconds_since(self.last_radar_received_at),
-                        "snore_age_seconds": self._seconds_since(self.last_snore_heartbeat_at),
+                        "radar_age_seconds": self._seconds_since(self.last_radar_received_time),
+                        "radar_status_age_seconds": self._seconds_since(self.last_radar_status_time),
+                        "snore_age_seconds": self._seconds_since(self.last_snore_heartbeat_time),
                         "environment_age_seconds": self._environment_snapshot()["environment_age_seconds"],
                         "voice_age_seconds": self._seconds_since(self.last_voice_received_time),
                         "edgi_age_seconds": self._seconds_since(self.last_edgi_heartbeat_time),
@@ -1646,6 +2173,10 @@ class RealtimeRadarProcessor:
                 env = self._environment_snapshot()
                 devices = {
                     "radar_board_online": self._radar_board_online(),
+                    "radar_board_stationary": bool(self.radar_board_stationary),
+                    "radar_motion_reason": self.radar_motion_reason,
+                    "radar_motion_delta": self.radar_motion_delta,
+                    "radar_motion_sensor_ready": self.radar_motion_sensor_ready,
                     "snore_board_online": self._snore_board_online(),
                     "snore_monitoring": bool(self.snore_session_active and self._snore_board_online()),
                     "snore_paused": bool(self.snore_session_stopped and self._edgi_board_online()),
@@ -1653,8 +2184,9 @@ class RealtimeRadarProcessor:
                     "environment_sensor_ok": env["environment_sensor_ok"],
                     "voice_board_online": self._voice_board_online(),
                     "edgi_board_online": self._edgi_board_online(),
-                    "radar_age_seconds": self._seconds_since(self.last_radar_received_at),
-                    "snore_age_seconds": self._seconds_since(self.last_snore_heartbeat_at),
+                    "radar_age_seconds": self._seconds_since(self.last_radar_received_time),
+                    "radar_status_age_seconds": self._seconds_since(self.last_radar_status_time),
+                    "snore_age_seconds": self._seconds_since(self.last_snore_heartbeat_time),
                     "environment_age_seconds": env["environment_age_seconds"],
                     "voice_age_seconds": self._seconds_since(self.last_voice_received_time),
                     "edgi_age_seconds": self._seconds_since(self.last_edgi_heartbeat_time),
@@ -1750,6 +2282,8 @@ class RealtimeRadarProcessor:
 
         # 创建UDP套接字
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if hasattr(socket, "SIO_UDP_CONNRESET"):
+            self.socket.ioctl(socket.SIO_UDP_CONNRESET, False)
 
         # 绑定套接字到本地端口
         self.socket.bind(("0.0.0.0", self.server_port))
@@ -1780,13 +2314,25 @@ class RealtimeRadarProcessor:
 
         # 启动雷达数据传输
         print("启动雷达数据传输...")
-        # self.socket.sendto('{"radar_transmission":"enable"}'.encode(), (self.server_ip, self.server_port))
+        if self.server_ip and self.server_ip != "0.0.0.0":
+            self.socket.sendto('{"radar_transmission":"enable"}'.encode(), (self.server_ip, self.server_port))
 
         # 开始接收数据
         try:
                 while self.running:
                     # 接收一帧数据
-                    data, adr = self.socket.recvfrom(BUFFER_SIZE)
+                    try:
+                        data, adr = self.socket.recvfrom(BUFFER_SIZE)
+                    except ConnectionResetError as exc:
+                        print(f"UDP receive warning: {exc}")
+                        continue
+
+                    if data and data[0] == RADAR_STATUS_COMMAND:
+                        self._handle_radar_status_packet(data)
+                        continue
+
+                    if not self._is_valid_radar_data_packet(data):
+                        continue
 
                     # 获取帧号
                     frame_number = int.from_bytes(data[2:6], 'little')
@@ -1803,6 +2349,8 @@ class RealtimeRadarProcessor:
                     self.frames_since_last_process += 1  # 使用类属性记录新帧
                     self.last_radar_received_time = time.time()
                     self.last_radar_received_at = self._now_iso()
+                    self.radar_board_stationary = True
+                    self.radar_motion_reason = "disabled"
                     self._update_packet_debug(data, frame_number)
 
                     # 将数据添加到缓冲区
@@ -1866,7 +2414,8 @@ class RealtimeRadarProcessor:
 
         if self.socket:
             # 停止雷达数据传输
-            self.socket.sendto('{"radar_transmission":"disable"}'.encode(), (self.server_ip, self.server_port))
+            if self.server_ip and self.server_ip != "0.0.0.0":
+                self.socket.sendto('{"radar_transmission":"disable"}'.encode(), (self.server_ip, self.server_port))
             self.socket.close()
             self.socket = None
 
@@ -1935,8 +2484,14 @@ class RealtimeRadarProcessor:
                 self.phase_values = phase_values
                 self.target_bin = target_bin
 
-                # 步骤5: 执行存在检测
-                if ENABLE_PRESENCE_DETECTION:
+                # 步骤5: 执行存在检测。呼噜声响起时临时关闭存在性检测，避免呼噜/疑似暂停场景下雷达分析被门控挡住。
+                snore_presence_bypass = bool(self.snore_sound_active)
+                self.presence_bypassed_by_snore = snore_presence_bypass
+                if snore_presence_bypass:
+                    self.presence_detected = True
+                    self.presence_stable = True
+                    print(">> 呼噜声响起，临时关闭存在性检测，直接执行雷达呼吸/模型分析")
+                elif ENABLE_PRESENCE_DETECTION:
                     # 提取最新一帧的数据用于存在检测
                     latest_frame_data = data_2d[-1:, :]  # 取最后一帧
                     self.presence_detected, self.presence_stable = self.presence_detector.detect_presence(latest_frame_data)
@@ -1945,6 +2500,7 @@ class RealtimeRadarProcessor:
                     # 如果未启用存在检测，则默认认为有人存在
                     self.presence_detected = True
                     self.presence_stable = True
+                    self.presence_bypassed_by_snore = False
 
                 # 步骤6: 只有在检测到人存在时才执行信号分解和心率计算
                 if self.presence_stable and DECOMPOSE_SIGNAL:
@@ -1995,13 +2551,16 @@ class RealtimeRadarProcessor:
                                     if prediction is not None and len(prediction) > 0:
                                         # 简单假设：预测值直接是心率
                                         self.heart_rate = float(prediction[0][0])
-                                        self.breath_rate = estimate_breath_rate_fft(self.phase_values)
+                                        raw_breath_rate, breath_quality = estimate_breath_rate_fft_with_quality(self.phase_values)
+                                        self._update_breath_rate_estimate(raw_breath_rate, breath_quality)
                                     # 保存预测结果
                                     self.model_prediction = {
                                         'type': 'cwt',
                                         'result': prediction,
                                         'time': predict_time,
-                                        'heart_rate': self.heart_rate
+                                        'heart_rate': self.heart_rate,
+                                        'breath_rate': self.breath_rate,
+                                        'breath_quality': self.breath_rate_quality,
                                     }
 
                                     print(f">> 模型推理完成: 形状={prediction.shape}, 用时={predict_time*1000:.0f}ms")
@@ -2046,13 +2605,17 @@ class RealtimeRadarProcessor:
                                     if prediction is not None and len(prediction) > 0:
                                         # 简单假设：预测值直接是心率
                                         self.heart_rate = float(prediction[0][0])
+                                        raw_breath_rate, breath_quality = estimate_breath_rate_fft_with_quality(self.phase_values)
+                                        self._update_breath_rate_estimate(raw_breath_rate, breath_quality)
 
                                     # 保存预测结果
                                     self.model_prediction = {
                                         'type': 'eemd',
                                         'result': prediction,
                                         'time': predict_time,
-                                        'heart_rate': self.heart_rate
+                                        'heart_rate': self.heart_rate,
+                                        'breath_rate': self.breath_rate,
+                                        'breath_quality': self.breath_rate_quality,
                                     }
 
                                     print(f">> 模型推理完成: 形状={prediction.shape}, 用时={predict_time*1000:.0f}ms")

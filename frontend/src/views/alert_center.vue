@@ -10,9 +10,9 @@
       </div>
 
       <div class="status-stack">
-        <div class="status-card care-glass-card" :class="{ online: status.radar_board_online }">
+        <div class="status-card care-glass-card" :class="{ online: radarBoardReady, warning: radarBoardUnstable }">
           <span>雷达板</span>
-          <strong>{{ status.radar_board_online ? '在线' : '离线' }}</strong>
+          <strong>{{ radarStatusText }}</strong>
         </div>
         <div class="status-card care-glass-card" :class="{ online: edgiBoardOnline, warning: edgiBoardNeedsAttention }">
           <span>Edgi E84</span>
@@ -238,6 +238,10 @@ const overview = reactive({
 const timelineRows = ref([])
 const status = reactive({
   radar_board_online: false,
+  radar_board_stationary: true,
+  radar_motion_reason: 'disabled',
+  radar_motion_delta: null,
+  radar_motion_sensor_ready: null,
   snore_board_online: false,
   snore_monitoring: false,
   snore_paused: false,
@@ -248,6 +252,7 @@ const status = reactive({
   emergency_active: false,
   active_emergency: null,
   radar_age_seconds: null,
+  radar_status_age_seconds: null,
   snore_age_seconds: null,
   environment_age_seconds: null,
   voice_age_seconds: null,
@@ -299,6 +304,12 @@ const comfortLabelMap = {
 }
 
 const comfortStatusLabel = computed(() => comfortLabelMap[status.comfort_status] || status.comfort_status || '离线')
+const radarBoardUnstable = computed(() => Boolean(status.radar_board_online && status.radar_board_stationary === false))
+const radarBoardReady = computed(() => Boolean(status.radar_board_online && !radarBoardUnstable.value))
+const radarStatusText = computed(() => {
+  if (!status.radar_board_online) return '离线'
+  return radarBoardUnstable.value ? '未静止' : '在线'
+})
 
 const environmentNeedsAttention = computed(() => {
   return status.environment_board_online && status.comfort_status !== 'comfortable'
@@ -350,6 +361,15 @@ const latestEmergencyEvent = computed(() => {
   ) || status.active_emergency || null
 })
 
+const latestApneaEvent = computed(() => {
+  const events = overview.events || []
+  return events.find(event =>
+    event.type === 'suspected_apnea' &&
+    ['warning', 'critical'].includes(event.severity) &&
+    (event.status || 'active') === 'active'
+  ) || null
+})
+
 const emergencyPhrase = computed(() => {
   const event = latestEmergencyEvent.value
   return event?.details?.transcript || event?.details?.phrase || '求助语音'
@@ -357,13 +377,14 @@ const emergencyPhrase = computed(() => {
 
 const riskItems = computed(() => {
   const emergency = buildEmergencyRisk()
+  const apnea = buildApneaRisk()
   const heart = buildHeartRisk()
   const breath = buildBreathRisk()
   const snore = buildSnoreRisk()
   const environment = buildEnvironmentRisk()
   const presence = buildPresenceRisk()
   const devices = buildDeviceRisk()
-  return [emergency, heart, breath, snore, environment, presence, devices]
+  return [emergency, apnea, heart, breath, snore, environment, presence, devices]
 })
 
 const overallRisk = computed(() => {
@@ -400,7 +421,11 @@ const overallRisk = computed(() => {
 
 const actionQueue = computed(() => riskItems.value
   .filter(item => item.level !== 'normal')
-  .sort((a, b) => riskWeight(b.level) - riskWeight(a.level))
+  .sort((a, b) => {
+    const levelDiff = riskWeight(b.level) - riskWeight(a.level)
+    if (levelDiff !== 0) return levelDiff
+    return riskPriority(a.key) - riskPriority(b.key)
+  })
   .map(item => ({
     key: `${item.key}:${item.level}`,
     level: item.level,
@@ -411,7 +436,7 @@ const actionQueue = computed(() => riskItems.value
 const activeActions = computed(() => actionQueue.value.filter(action => !policy.acknowledgedKeys.includes(action.key)))
 
 const chartSummary = computed(() => {
-  if (timelineRows.value.length === 0) return '暂无趋势数据，请确认模拟后端或开发板已启动。'
+  if (timelineRows.value.length === 0) return '暂无趋势数据，请确认真实后端服务或开发板已启动。'
   const heart = latestHeart.value === null ? '心率无数据' : `心率 ${latestHeart.value.toFixed(1)} BPM`
   const breath = latestBreath.value === null ? '呼吸无数据' : `呼吸 ${latestBreath.value.toFixed(1)} RPM`
   const snore = latestSnore.value === null ? '呼噜无数据' : `呼噜强度 ${latestSnore.value}%`
@@ -433,6 +458,20 @@ function riskWeight(level) {
   return 0
 }
 
+function riskPriority(key) {
+  const order = {
+    emergency_voice: 0,
+    suspected_apnea: 1,
+    breath: 2,
+    heart: 3,
+    snore: 4,
+    presence: 5,
+    environment: 6,
+    device: 7
+  }
+  return order[key] ?? 99
+}
+
 function buildEmergencyRisk() {
   const event = latestEmergencyEvent.value
   if (!event) {
@@ -448,6 +487,39 @@ function buildEmergencyRisk() {
     '立即确认床旁情况',
     '优先到现场或联系看护人员确认用户状态；情况紧急时联系当地急救电话。',
     'SOS'
+  )
+}
+
+function buildApneaRisk() {
+  const event = latestApneaEvent.value
+  if (!event) {
+    return risk(
+      'suspected_apnea',
+      '疑似暂停',
+      'normal',
+      '暂无提示',
+      '当前窗口未发现雷达与呼噜同时支持的疑似暂停。',
+      '无需处理',
+      '继续观察呼吸与呼噜趋势。',
+      'AP'
+    )
+  }
+  const details = event.details || {}
+  const duration = Number(details.duration_seconds)
+  const confidence = Number(details.confidence)
+  const statusText = Number.isFinite(duration) ? `${duration.toFixed(0)} 秒` : '疑似暂停'
+  const detail = Number.isFinite(confidence)
+    ? `融合置信度 ${Math.round(confidence * 100)}%，请结合现场观察。`
+    : '雷达呼吸减弱并伴随呼噜声变化。'
+  return risk(
+    'suspected_apnea',
+    '疑似暂停',
+    event.severity === 'critical' ? 'critical' : 'warning',
+    statusText,
+    detail,
+    '确认呼吸状态',
+    '确认用户呼吸、睡姿和雷达位置；如存在明显不适或异常，请联系看护人员或急救。',
+    'AP'
   )
 }
 
@@ -568,7 +640,7 @@ function buildEnvironmentRisk() {
 function buildPresenceRisk() {
   const row = latestRow.value
   if (timelineRows.value.length === 0) {
-    return risk('presence', '离床/无人', 'warning', '等待数据', '尚未获取到雷达目标距离。', '等待目标数据', '确认模拟后端和雷达板已启动，稍后刷新预警中心。', 'PR')
+    return risk('presence', '离床/无人', 'warning', '等待数据', '尚未获取到雷达目标距离。', '等待目标数据', '确认真实后端服务和雷达板已启动，稍后刷新预警中心。', 'PR')
   }
   if (row.radar_online === false || row.target_distance === 0 || row.target_distance === null) {
     return risk('presence', '离床/无人', 'critical', '疑似无人', '雷达在线状态或目标距离显示疑似离床。', '确认床旁状态', '检查雷达视场、目标距离和是否存在离床情况。', 'PR')
@@ -578,13 +650,19 @@ function buildPresenceRisk() {
 }
 
 function buildDeviceRisk() {
-  const radarOffline = !status.radar_board_online || Number(status.radar_age_seconds) > policy.offlineSeconds
+  const radarAge = Number(status.radar_age_seconds)
+  const radarStatusAge = Number(status.radar_status_age_seconds)
+  const radarSeenAge = Number.isFinite(radarStatusAge) ? radarStatusAge : radarAge
+  const radarOffline = !status.radar_board_online || radarSeenAge > policy.offlineSeconds
   const edgiOffline = !status.snore_board_online &&
     !status.environment_board_online &&
     !status.voice_board_online &&
     !status.edgi_board_online
   if (radarOffline || edgiOffline) {
     return risk('device', '设备链路', 'critical', '存在离线', `离线判定阈值 ${policy.offlineSeconds} 秒。`, '恢复设备链路', '检查雷达板和 Edgi E84 是否仍在运行，必要时重启对应端。', 'DV')
+  }
+  if (radarBoardUnstable.value) {
+    return risk('device', '设备链路', 'warning', '雷达未静止', '雷达板在线，但已暂停原始数据传输。', '放稳雷达板', '将雷达板固定后等待 2 秒，数据会自动恢复。', 'DV')
   }
   return risk('device', '设备链路', 'normal', '两块开发板在线', '雷达板与 Edgi E84 心跳正常。', '无需处理', '设备链路稳定。', 'DV')
 }
@@ -632,7 +710,7 @@ async function loadData() {
     }
   } catch (err) {
     console.error('预警中心数据加载失败:', err)
-    error.value = '看护预警中心无法连接模拟后端，请先启动 backend/mock_hardware_api.py。'
+    error.value = '看护预警中心无法连接真实后端服务，请先启动 backend/realtime_radar_processing.py。'
   } finally {
     loading.value = false
     await nextTick()

@@ -29,7 +29,7 @@
     },
     {
         "asset-name": "core-make",
-        "locked-commit": "release-v3.7.0"
+        "locked-commit": "release-v3.8.0"
     },
     {
         "asset-name": "cy-mbedtls-acceleration",
@@ -81,7 +81,7 @@
     },
     {
         "asset-name": "wifi-resources",
-        "locked-commit": "release-v2.0.0"
+        "locked-commit": "release-v2.0.5"
     },
     {
         "asset-name": "wpa3-external-supplicant",

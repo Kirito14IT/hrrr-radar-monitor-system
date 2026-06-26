@@ -1,15 +1,23 @@
 # db.py（更新版）
+import os
+import sqlite3
+
 import pymysql
 import bcrypt
 
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 3306,
-    'user': 'root',
-    'password': '123456',
-    'database': 'user_data',
+    'host': os.getenv('RADAR_DB_HOST', 'localhost'),
+    'port': int(os.getenv('RADAR_DB_PORT', '3306')),
+    'user': os.getenv('RADAR_DB_USER', 'root'),
+    'password': os.getenv('RADAR_DB_PASSWORD', '123456'),
+    'database': os.getenv('RADAR_DB_NAME', 'user_data'),
     'charset': 'utf8mb4'
 }
+
+SQLITE_PATH = os.getenv(
+    'RADAR_SQLITE_PATH',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_data.db'),
+)
 
 def hash_password(password: str) -> str:
     """对密码进行 bcrypt 哈希"""
@@ -22,34 +30,75 @@ def verify_password(password: str, hashed: str) -> bool:
 class Database:
     def __init__(self):
         self.connection = None
+        self.backend = None
         self.connect()
 
     def connect(self):
         """建立数据库连接"""
+        requested_backend = os.getenv('RADAR_DB_BACKEND', 'auto').lower()
+        if requested_backend not in {'auto', 'mysql', 'sqlite'}:
+            raise ValueError('RADAR_DB_BACKEND must be auto, mysql or sqlite')
+
+        if requested_backend == 'sqlite':
+            self._connect_sqlite()
+            return
+
         try:
             self.connection = pymysql.connect(**DB_CONFIG)
-            print("✅ 数据库连接成功")
+            self.backend = 'mysql'
+            print("[OK] 数据库连接成功")
         except Exception as e:
-            print(f"❌ 数据库连接失败: {e}")
-            raise
+            if requested_backend == 'mysql':
+                print(f"[ERROR] MySQL 数据库连接失败: {e}")
+                raise
+            print(f"[WARN] MySQL 不可用，自动使用 SQLite: {e}")
+            self._connect_sqlite()
+
+    def _connect_sqlite(self):
+        self.connection = sqlite3.connect(SQLITE_PATH, timeout=10)
+        self.connection.row_factory = sqlite3.Row
+        self.backend = 'sqlite'
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS user_info (
+                userID INTEGER PRIMARY KEY AUTOINCREMENT,
+                userName TEXT NOT NULL UNIQUE,
+                passWord TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS heart_data (
+                dataID INTEGER PRIMARY KEY AUTOINCREMENT,
+                userID INTEGER NOT NULL,
+                heart_rate REAL,
+                breath_rate REAL,
+                target_distance REAL,
+                timestamp TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        self.connection.commit()
+        print(f"[OK] SQLite 数据库已就绪: {SQLITE_PATH}")
+
+    def _prepare_sql(self, sql):
+        return sql.replace('%s', '?') if self.backend == 'sqlite' else sql
 
     def close(self):
         """关闭数据库连接"""
-        if self.connection and self.connection.open:
+        if self.connection and (self.backend == 'sqlite' or self.connection.open):
             self.connection.close()
-            print("🔌 数据库连接已关闭")
+            print("[OK] 数据库连接已关闭")
 
     def execute(self, sql, params=None):
         """执行 SQL 语句"""
         cursor = None
         try:
             cursor = self.connection.cursor()
-            cursor.execute(sql, params or ())
+            cursor.execute(self._prepare_sql(sql), params or ())
             self.connection.commit()
             return cursor
         except Exception as e:
             self.connection.rollback()
-            print(f"❌ 执行 SQL 失败: {sql}, 错误: {e}")
+            print(f"[ERROR] 执行 SQL 失败: {sql}, 错误: {e}")
             raise
         finally:
             if cursor:
@@ -59,11 +108,13 @@ class Database:
         """查询所有结果"""
         cursor = None
         try:
-            cursor = self.connection.cursor(pymysql.cursors.DictCursor)
-            cursor.execute(sql, params or ())
-            return cursor.fetchall()
+            cursor = (self.connection.cursor(pymysql.cursors.DictCursor)
+                      if self.backend == 'mysql' else self.connection.cursor())
+            cursor.execute(self._prepare_sql(sql), params or ())
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows] if self.backend == 'sqlite' else rows
         except Exception as e:
-            print(f"❌ 查询失败: {sql}, 错误: {e}")
+            print(f"[ERROR] 查询失败: {sql}, 错误: {e}")
             raise
         finally:
             if cursor:
@@ -73,11 +124,13 @@ class Database:
         """查询单条记录"""
         cursor = None
         try:
-            cursor = self.connection.cursor(pymysql.cursors.DictCursor)
-            cursor.execute(sql, params or ())
-            return cursor.fetchone()
+            cursor = (self.connection.cursor(pymysql.cursors.DictCursor)
+                      if self.backend == 'mysql' else self.connection.cursor())
+            cursor.execute(self._prepare_sql(sql), params or ())
+            row = cursor.fetchone()
+            return dict(row) if row is not None and self.backend == 'sqlite' else row
         except Exception as e:
-            print(f"❌ 查询失败: {sql}, 错误: {e}")
+            print(f"[ERROR] 查询失败: {sql}, 错误: {e}")
             raise
         finally:
             if cursor:
@@ -98,10 +151,10 @@ def create_user(user_name, password, email):
         sql = "INSERT INTO user_info (userName, passWord, email) VALUES (%s, %s, %s)"
         cursor = db.execute(sql, (user_name, hashed_pw, email))
         user_id = cursor.lastrowid  # 获取自增ID
-        print(f"✅ 用户 {user_name} (ID={user_id}) 创建成功")
+        print(f"[OK] 用户 {user_name} (ID={user_id}) 创建成功")
         return user_id
     except Exception as e:
-        print(f"❌ 创建用户失败: {e}")
+        print(f"[ERROR] 创建用户失败: {e}")
         raise
     finally:
         db.close()
@@ -114,7 +167,7 @@ def get_user_by_username(username):
         result = db.fetch_one(sql, (username,))
         return result
     except Exception as e:
-        print(f"❌ 查询用户失败: {e}")
+        print(f"[ERROR] 查询用户失败: {e}")
         return None
     finally:
         db.close()
@@ -145,9 +198,9 @@ def update_user(user_id, user_name=None, password=None, email=None):
         params.append(user_id)
 
         db.execute(sql, tuple(params))
-        print(f"✅ 用户 {user_id} 更新成功")
+        print(f"[OK] 用户 {user_id} 更新成功")
     except Exception as e:
-        print(f"❌ 更新用户失败: {e}")
+        print(f"[ERROR] 更新用户失败: {e}")
     finally:
         db.close()
 
@@ -157,9 +210,9 @@ def delete_user(user_id):
     try:
         sql = "DELETE FROM user_info WHERE userID = %s"
         db.execute(sql, (user_id,))
-        print(f"✅ 用户 {user_id} 删除成功")
+        print(f"[OK] 用户 {user_id} 删除成功")
     except Exception as e:
-        print(f"❌ 删除用户失败: {e}")
+        print(f"[ERROR] 删除用户失败: {e}")
     finally:
         db.close()
 
@@ -171,7 +224,7 @@ def list_all_users():
         users = db.fetch_all(sql)
         return users
     except Exception as e:
-        print(f"❌ 查询用户列表失败: {e}")
+        print(f"[ERROR] 查询用户列表失败: {e}")
     finally:
         db.close()
 
@@ -196,10 +249,10 @@ def save_vitals_with_user(user_id, heart_rate, breath_rate, target_distance, tim
         params = (user_id, heart_rate, breath_rate, target_distance, mysql_timestamp)
         cursor = db.execute(sql, params)
         data_id = cursor.lastrowid
-        print(f"✅ 生命体征数据已保存，dataID={data_id}, userID={user_id}")
+        print(f"[OK] 生命体征数据已保存，dataID={data_id}, userID={user_id}")
         return data_id
     except Exception as e:
-        print(f"❌ 保存生命体征失败: {e}")
+        print(f"[ERROR] 保存生命体征失败: {e}")
         raise
     finally:
         db.close()
@@ -260,7 +313,7 @@ def query_heart_data_by_date(page_num: int, page_size: int, date_str: str = None
             'total': total
         }
     except Exception as e:
-        print(f"❌ 查询心率数据失败: {e}")
+        print(f"[ERROR] 查询心率数据失败: {e}")
         raise
     finally:
         db.close()

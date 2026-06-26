@@ -6,14 +6,15 @@ class PresenceAntiPeekingAlgo:
     雷达存在检测和防窥视算法
     可用于检测特定距离范围内是否有人体存在
     """
-    def __init__(self, alpha_fast=0.8, alpha_slow=0.02, threshold=1.2):
+    def __init__(self, alpha_fast=0.8, alpha_slow=0.02, threshold=1.02):
         """
         初始化存在检测算法
         
         参数:
             alpha_fast: 快速平均滤波器系数 (0-1之间)
             alpha_slow: 慢速平均滤波器系数 (0-1之间)
-            threshold: 检测阈值，信号超过此阈值视为检测到人体
+            threshold: 检测阈值，信号超过此阈值视为检测到人体。
+                       原默认值 1.2，已降低约 15% 至 1.02，提高存在检测灵敏度。
         """
         self.alpha_fast = alpha_fast
         self.alpha_slow = alpha_slow

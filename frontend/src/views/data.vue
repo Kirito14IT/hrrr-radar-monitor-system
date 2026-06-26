@@ -60,7 +60,7 @@
             :data="store.tableData"
             class="history-table"
             stripe
-            empty-text="暂无历史数据，请先运行模拟板并在实时页积累数据。"
+            empty-text="暂无历史数据，请先连接真实开发板并在实时页积累数据。"
           >
             <el-table-column label="数据编号" prop="dataID" min-width="100" />
             <el-table-column label="用户编号" prop="userID" min-width="100" />

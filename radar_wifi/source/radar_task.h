@@ -39,6 +39,7 @@
 #define RESULT_ERROR    (-1)
 
 #define RADAR_DATA_COMMAND  (1)
+#define RADAR_STATUS_COMMAND (2)
 #define DUMMY_BYTE          (0xFF)
 
 /*******************************************************************************

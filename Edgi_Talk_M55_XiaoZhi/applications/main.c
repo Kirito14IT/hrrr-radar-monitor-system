@@ -63,15 +63,11 @@ int main(void)
         LOG_W("Alarm clock unavailable");
     }
 
-    /* Detect a board free fall as a non-verbal emergency signal when fitted. */
-#ifdef BSP_USING_LSM6DS3
+    /* Detect a board fall as a non-verbal emergency signal when fitted. */
     if (imu_fall_monitor_init() != RT_EOK)
     {
         LOG_W("IMU free-fall monitor unavailable");
     }
-#else
-    LOG_I("IMU free-fall monitor disabled (BSP_USING_LSM6DS3 is not set)");
-#endif
 
     return 0;
 }

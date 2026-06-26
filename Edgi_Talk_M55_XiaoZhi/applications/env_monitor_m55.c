@@ -19,8 +19,12 @@
 #define DBG_LVL DBG_INFO
 #include <rtdbg.h>
 
+#ifndef ENV_MONITOR_SERIAL_VERBOSE
+#define ENV_MONITOR_SERIAL_VERBOSE 0
+#endif
+
 #ifndef ENV_BACKEND_TARGET_IP
-#define ENV_BACKEND_TARGET_IP "192.168.0.101"
+#define ENV_BACKEND_TARGET_IP "192.168.0.102"
 #endif
 
 #ifndef ENV_BACKEND_TARGET_PORT
@@ -33,6 +37,7 @@
 #define ENV_MONITOR_PERIOD_MS        2000
 #define ENV_MONITOR_POST_MS          5000
 #define ENV_MONITOR_STALE_MS         10000
+#define ENV_HTTP_TIMEOUT_MS          1200
 
 typedef struct
 {
@@ -146,7 +151,7 @@ static int env_http_post_heartbeat(int16_t temperature_c_x10,
     }
 
     header_len = rt_snprintf(header, sizeof(header),
-                             "POST /mock/environment-heartbeat HTTP/1.1\r\n"
+                             "POST /hardware/environment-heartbeat HTTP/1.1\r\n"
                              "Host: %s:%d\r\n"
                              "Content-Type: application/json\r\n"
                              "Content-Length: %d\r\n"
@@ -167,6 +172,10 @@ static int env_http_post_heartbeat(int16_t temperature_c_x10,
         LOG_W("Environment heartbeat socket failed, errno=%d", errno);
         return -RT_ERROR;
     }
+
+    int timeout_ms = ENV_HTTP_TIMEOUT_MS;
+    (void)setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+    (void)setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
 
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
@@ -201,8 +210,10 @@ static int env_http_post_heartbeat(int16_t temperature_c_x10,
         return -RT_ERROR;
     }
 
+#if ENV_MONITOR_SERIAL_VERBOSE
     LOG_I("Environment heartbeat posted: temp=%s humidity=%s ok=%d",
           temp_text, humidity_text, sensor_ok);
+#endif
     return RT_EOK;
 }
 

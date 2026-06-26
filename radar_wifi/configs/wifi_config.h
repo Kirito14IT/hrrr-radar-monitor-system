@@ -34,9 +34,9 @@
 * Macros
 ********************************************************************************/
 /* SSID of the Wi-Fi Access Point to which the MQTT client connects. */
-#define WIFI_SSID                         "chen"
+#define WIFI_SSID                         "TP-LINK_3C45"
 
-#define WIFI_PASSWORD                     "chd8224856"
+#define WIFI_PASSWORD                     "2025609zz"
 
 /* Security type of the Wi-Fi access point. See 'cy_wcm_security_t' structure
  * in "cy_wcm.h" for more details.
