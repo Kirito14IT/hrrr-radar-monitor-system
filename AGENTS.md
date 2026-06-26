@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件记录当前项目的关键信息、已知约定、排障结论和后续维护注意事项。后续智能体或开发者接手本仓库时，应优先阅读本文件，再改代码。
+本文件记录当前项目的关键结构、运行约定、已完成改造、排障结论和后续维护注意事项。后续智能体或开发者接手本仓库时，应优先阅读本文件，再修改代码。
 
 ## 1. 项目概览
 
@@ -8,29 +8,27 @@
 
 ```text
 雷达板 UDP 数据
-        ↓
-Python 后端实时处理
-        ↓
-Vue 前端 / Android App 展示
-        ↓
-小智开发板提供守护、呼噜、关键词、对话等辅助能力
+  -> Python 后端实时处理
+  -> Vue 前端 / Android App 展示
+  -> 小智 M55 开发板提供守护、关键词、呼噜、对话和紧急事件能力
 ```
 
 主要目录：
 
-- `backend/`：Python 后端，负责 UDP 雷达数据接收、生命体征处理、HTTP API、用户数据、睡眠看护驾驶舱数据聚合。
-- `frontend/`：Vue + Vite 前端，展示心率、呼吸、睡眠看护驾驶舱、预警中心等页面。
-- `android_app/`：Android App，默认连接同一个后端 API。
+- `backend/`：Python 后端，负责 UDP 雷达数据接收、生命体征处理、HTTP API、用户数据、睡眠看护事件聚合。
+- `frontend/`：Vue + Vite 前端，展示心率、呼吸率、睡眠状态、环境、告警中心等页面。
+- `android_app/`：Android App，默认连接同一个后端 API，并展示心率、呼吸率、温湿度、打鼾情况。
 - `radar_wifi/`：英飞凌雷达 WiFi 固件，负责连接 WiFi 并向后端 UDP 发送雷达帧。
-- `Edgi_Talk_M55_XiaoZhi/`：小智 M55 工程，已加入守护模式/对话模式以及后端联动。
-- `Edgi_Talk_M33_AHT20/`、`M33_AHT20/`：环境温湿度相关工程。
-- `docs/`、`build_doc_assets/`：比赛文档、测试清单、报告生成脚本等。
+- `Edgi_Talk_M55_XiaoZhi/`：小智 M55 工程，已加入守护模式/对话模式、呼噜检测、关键词检测和后端联动。
+- `Edgi_Talk_M33_AHT20/`、`M33_AHT20/`：温湿度环境采集相关工程。
+- `docs/`：比赛文档、测试清单、PPT 大纲等。
+- `build_doc_assets/`：报告/文档生成脚本与本地渲染素材。只应提交脚本和必要源文件，不应提交大批渲染缓存。
 - `DEMO_README.md`：比赛演示测试清单。
-- `docs/competition_5min_ppt_outline.md`：约五分钟比赛 PPT 大纲。
+- `docs/competition_5min_ppt_outline.md`：约五分钟 PPT 大纲。
 
 ## 2. 当前统一 IP 与端口约定
 
-当前项目统一后端地址为：
+当前项目统一后端地址：
 
 ```text
 192.168.0.102:8081
@@ -52,15 +50,15 @@ UDP 雷达: 0.0.0.0:9988
 关键文件：
 
 - `radar_wifi/source/udp_server.c`
-  - `UDP_SERVER_IP_ADDRESS` 应为 `MAKE_IPV4_ADDRESS(192, 168, 0, 102)`
-  - `UDP_SERVER_PORT` 为 `9988`
+  - `UDP_SERVER_IP_ADDRESS` 应为 `MAKE_IPV4_ADDRESS(192, 168, 0, 102)`。
+  - `UDP_SERVER_PORT` 为 `9988`。
 - `frontend/src/utils/request.js`
-  - 默认 API 地址为 `http://192.168.0.102:8081`
-  - 仍允许通过 `VITE_API_BASE_URL` 覆盖
+  - 默认 API 地址为 `http://192.168.0.102:8081`。
+  - 仍允许通过 `VITE_API_BASE_URL` 覆盖。
 - `android_app/app/src/main/java/com/radarcare/guardian/GuardianPrefs.kt`
-  - Android 默认后端地址也是 `http://192.168.0.102:8081`
+  - Android 默认后端地址为 `http://192.168.0.102:8081`。
 - `Edgi_Talk_M55_XiaoZhi/applications/backend_target_config.c`
-  - 小智开发板默认后端为 `192.168.0.102:8081`
+  - 小智开发板默认后端为 `192.168.0.102:8081`。
 
 不要误改的地址：
 
@@ -87,27 +85,24 @@ C:\Users\toward\anaconda3\envs\radar\python.exe backend\realtime_radar_processin
 - `--port 9988` 是本机 UDP 监听端口。
 - `--api-port 8081` 是 HTTP API 端口。
 - `--ip 雷达板IP` 用于后端主动向雷达板发送 `{"radar_transmission":"enable"}` 控制包。
-- 如果不知道雷达板 IP，可以先看雷达板串口中的 `IP Address Assigned: ...`。
+- 如果不知道雷达板 IP，先看雷达板串口中的 `IP Address Assigned: ...`。
 
 重要 API：
 
 - `GET /status`：系统和设备在线状态。
-- `GET /sleep/overview?mode=live&seconds=1800`：睡眠看护驾驶舱聚合接口。
+- `GET /sleep/overview?mode=live&seconds=1800`：睡眠看护聚合接口。
 - `GET /target`、`GET /heartrate`、`GET /detailed`：实时数据接口。
 - `POST /hardware/snore-heartbeat`：呼噜检测心跳。
 - `POST /hardware/environment-heartbeat`：环境温湿度心跳。
-- `POST /emergency`、`POST /emergency/resolve`：小智紧急语音事件。
+- `POST /emergency`、`POST /emergency/resolve`：紧急事件接口。
 
-后端已知修复：
+已知后端修复：
 
-- `/sleep/overview` 曾因 `last_radar_received_at` 字符串参与 float 计算导致 500，已改为使用内部时间戳并增强 `_seconds_since()` 兼容性。
-- CORS 已允许：
-  - `http://localhost:5173`
-  - `http://127.0.0.1:5173`
-  - `http://192.168.0.102:5173`
-  - 以及 `localhost / 127.0.0.1 / 192.168.x.x` 的常见端口。
-- Windows UDP 可能因 ICMP Port Unreachable 抛 `ConnectionResetError [WinError 10054]`，后端已防护，避免主循环退出。
-- 后端已增加雷达包过滤：只有符合雷达固件格式的 UDP 数据帧才会被当成雷达数据，避免 JSON 控制包或广播包造成“假在线”。
+- `/sleep/overview` 曾因 `last_radar_received_at` 字符串参与 float 计算导致 500，已增强 `_seconds_since()` 兼容性。
+- CORS 已允许 `localhost:5173`、`127.0.0.1:5173`、`192.168.0.102:5173` 及局域网常见开发来源。
+- Windows UDP 可能因 ICMP Port Unreachable 抛 `ConnectionResetError [WinError 10054]`，后端已做防护，避免主循环退出。
+- 后端已增加雷达包过滤：只有符合固件格式的 UDP 数据帧才会被当作雷达数据，避免 JSON 控制包或广播包造成“假在线”。
+- 模型推理曾因 `backend/trained_models/DeepStateSpace_CWT_best.keras` 加载/路径问题异常，已修复推理链路，并可输出心率、呼吸率。
 
 数据库：
 
@@ -138,7 +133,7 @@ Successfully connected to Wi-Fi network 'chen'.
 IP Address Assigned: 10.166.247.149
 ```
 
-而电脑后端在：
+而后端电脑在：
 
 ```text
 192.168.0.102
@@ -155,7 +150,7 @@ Socket bound to port: 9988
 Radar data transmission is enabled
 ```
 
-### 4.2 陀螺仪/运动门控已删除
+### 4.2 陀螺仪/运动门控已从雷达侧删除
 
 用户要求删除雷达陀螺仪相关功能。当前已完成：
 
@@ -165,7 +160,7 @@ Radar data transmission is enabled
 - `radar_task.c` 不再 include 或调用 `motion_gate`。
 - 雷达帧不再因板子“未静止”而暂停。
 - 不再生成 `board_still / motion_delta / sensor_ready` 状态包。
-- BLE 状态包移除了 IMU/静止相关字段和 API：
+- BLE 状态包移除 IMU/静止相关字段和 API：
   - `RADAR_BLE_FLAG_BOARD_STILL`
   - `RADAR_BLE_FLAG_IMU_READY`
   - `motion_delta`
@@ -181,7 +176,7 @@ Radar data transmission is enabled
 
 ### 4.3 雷达固件编译注意
 
-曾尝试在当前 PowerShell/Modus shell 环境执行：
+曾在当前 PowerShell/Modus shell 环境执行：
 
 ```powershell
 make -j8
@@ -195,19 +190,25 @@ make -j8
 
 需要在正常 ModusToolbox 环境中编译、烧录。
 
+修改雷达目标 IP 或 UDP 逻辑后必须重新编译并烧录雷达固件，否则板子仍使用旧固件。
+
 ## 5. 小智 M55 双模式改造
 
 小智 M55 已做“双模式”：
 
-### 守护模式
+### 5.1 守护模式
 
 - 默认模式。
 - 进行关键词检测和呼噜检测。
 - 普通 LLM/TTS 对话被抑制。
 - 离线呼噜检测仍可运行。
 - 适合睡眠看护场景。
+- UI 文案：
+  - 在线：`守护模式在线`
+  - 离线：`守护模式离线`
+- 屏幕已增加当前时间显示。
 
-### 对话模式
+### 5.2 对话模式
 
 - 可与小智大模型聊天。
 - 进入对话模式时停止呼噜/关键词守护流程。
@@ -233,50 +234,81 @@ scons -Q -j8
 运行时注意：
 
 - M55 Flash 中旧配置会覆盖新编译默认值。
-- 烧录后如仍连接旧后端，执行：
+- 烧录后如果仍连接旧后端，执行：
 
 ```text
 backend_cfg_set 192.168.0.102 8081
 ```
 
-## 6. 前端与 Android
+## 6. 呼噜、报警、存在性检测
 
-前端：
+当前业务规则：
 
-- 目录：`frontend/`
-- 构建命令：
+- 呼噜持续时认为处于呼噜事件中。
+- 后续要求已改为：呼噜声音消失 1.5 秒以上才算停止。
+- 呼噜停止时，如果雷达呼吸信号正好处于下降趋势，则触发报警。
+- 当呼噜响起时，关闭/绕过存在性检测，避免存在性检测误干扰呼噜告警逻辑。
+- 存在性检测阈值已调低约 15%，对应 `backend/presence_detection.py` 中阈值从约 `1.2` 调到约 `1.02`。
+
+注意：
+
+- 修改后端报警/融合逻辑后必须重启后端进程。
+- 修改 M55 呼噜检测逻辑后必须重新编译并烧录 M55。
+
+## 7. 前端与 Android
+
+### 7.1 前端
+
+目录：
+
+```text
+frontend/
+```
+
+构建命令：
 
 ```powershell
 npm run build
 ```
 
-当前构建已通过。
-
-注意：
+当前要点：
 
 - Vite 开发服务器通常是 `http://localhost:5173`。
 - 默认 API 指向 `http://192.168.0.102:8081`。
 - 可通过 `VITE_API_BASE_URL` 覆盖。
 - 与雷达陀螺仪相关的前端默认状态已改为 `disabled`，不应再显示“雷达板未静止”。
 
-Android：
+### 7.2 Android
 
-- 目录：`android_app/`
-- 已将默认后端地址和输入提示改为 `http://192.168.0.102:8081`。
+目录：
+
+```text
+android_app/
+```
+
+当前要点：
+
+- 默认后端地址和输入提示均为 `http://192.168.0.102:8081`。
+- App 需要显示：
+  - 心率
+  - 呼吸率
+  - 温湿度
+  - 打鼾情况
 - 已安装的 App 可能缓存旧地址，需要在 App 内重新填写或清除应用数据。
+- 曾经手工生成过 debug APK，路径在本地构建目录中；构建产物不应提交到 Git。
 
-## 7. 比赛演示资料
+## 8. 比赛演示资料
 
 已新增/维护：
 
 - `DEMO_README.md`：测试比赛演示清单。
 - `docs/competition_5min_ppt_outline.md`：约五分钟 PPT 大纲。
-- 根 `README.md` 已链接这些材料。
+- 根 `README.md` 已链接相关资料。
 
 演示前建议检查：
 
 1. 后端 API：`http://192.168.0.102:8081/status`
-2. 前端页面是否能登录、读取状态。
+2. 前端页面是否能登录并读取状态。
 3. 雷达板串口是否显示拿到 `192.168.0.xxx`。
 4. `/status` 中：
    - `radar_board_online: true`
@@ -284,12 +316,13 @@ Android：
    - `total_frames` 持续增长
 5. 小智守护模式/对话模式切换是否正常。
 6. 呼噜、环境、紧急事件接口是否可用。
+7. Android App 是否显示心率、呼吸率、温湿度和打鼾情况。
 
-## 8. 常见问题与快速定位
+## 9. 常见问题与快速定位
 
-### 8.1 前端 CORS 报错
+### 9.1 前端 CORS 报错
 
-浏览器 CORS 报错不一定是 CORS 本身。曾经 `/login` 的真实原因是后端 500，而 500 又来自本机 MySQL 未运行。当前后端已支持 SQLite fallback。
+浏览器 CORS 报错不一定是 CORS 本身。曾经 `/login` 的真实原因是后端 500，而 500 又来自本地 MySQL 未运行。当前后端已支持 SQLite fallback。
 
 排查顺序：
 
@@ -297,7 +330,7 @@ Android：
 2. 看后端日志。
 3. 再看 CORS 配置。
 
-### 8.2 雷达 WiFi 显示连接成功但后端没数据
+### 9.2 雷达 WiFi 显示连接成功但后端没有数据
 
 优先看串口：
 
@@ -321,39 +354,92 @@ Invoke-RestMethod http://127.0.0.1:8081/status
 - `last_radar_received_at`
 - `radar_age_seconds`
 
-### 8.3 后端短暂假在线
+### 9.3 后端短暂假在线
 
 曾经广播 `{"radar_transmission":"enable"}` 会被后端误当雷达帧。现在已通过包头校验修复。不要删除 `_is_valid_radar_data_packet()`。
 
-### 8.4 雷达目标 IP 改动后必须重新烧录
+### 9.4 Windows 网络必须切到 Private
 
-修改 `radar_wifi/source/udp_server.c` 后，需要重新编译并烧录雷达固件，否则板子仍使用旧目标。
+如果雷达板已在同网段但 UDP 仍收不到，检查 Windows 当前 WLAN 网络是否为 Private。Public 网络配置下防火墙可能拦截局域网入站 UDP/HTTP。
 
-## 9. 开发维护约定
+## 10. GitHub 与版本库状态
+
+当前远端：
+
+```text
+https://github.com/Kirito14IT/hrrr-radar-monitor-system.git
+```
+
+当前主分支：
+
+```text
+main
+```
+
+最近一次已推送提交：
+
+```text
+ab109a0 chore: update project demo and device integration
+```
+
+推送经验：
+
+- 当前环境里 `gh` 命令不可用，因此没有创建 PR。
+- 普通 `git push origin main` 曾多次出现 GitHub HTTPS `HTTP 502`。
+- 最终使用以下命令推送成功：
+
+```powershell
+git push --no-thin origin main
+```
+
+`.gitignore` 已补充：
+
+- `~$*.docx`：忽略 Word 临时锁文件。
+- `mtb_shared/`：忽略 ModusToolbox 本地依赖缓存。
+- `build_doc_assets/chrome_screenshot_profile/`
+- `build_doc_assets/rendered*/`
+- `build_doc_assets/__pycache__/`
+- `build_doc_assets/*_render.pdf`
+- `build_doc_assets/*_temp.docx`
+- `build_doc_assets/competition_submission_render*.pdf`
+- `build_doc_assets/competition_submission_temp.docx`
+
+不要提交：
+
+- `build_doc_assets/` 下的大量截图、PDF、渲染目录、浏览器缓存。
+- `docs/~$*.docx` 这类 Word 临时锁文件。
+- `radar_wifi/error.txt`。
+- `mtb_shared/` 本地依赖缓存。
+- Android/M55/雷达固件构建产物。
+
+## 11. 开发维护约定
 
 - 搜索优先用 `rg`。
-- 本仓库已有大量历史/用户改动，未明确要求不要随意 commit、reset 或清理。
+- 本仓库已有大量用户改动，未明确要求不要随意 commit、reset 或清理。
 - 不要使用破坏性 git 命令，例如 `git reset --hard`。
-- 编辑文件优先用补丁方式，避免覆盖用户已有改动。
+- 修改文件优先用补丁方式，避免覆盖用户已有改动。
 - 雷达固件和小智固件改动后，必须提醒用户重新编译并烧录。
 - 后端改动后，必须重启后端进程才会生效。
 - 前端改动后，开发服务器可能需要重启或重新构建。
+- 推送到 GitHub 前，先看 `git status -sb`，确认没有临时文件/生成物混入。
 
-## 10. 当前验证记录
+## 12. 当前验证记录
 
 最近验证过：
 
 - `python -m py_compile backend/realtime_radar_processing.py backend/realtime_radar_processing_9988.py`：通过。
-- `frontend` 下 `npm run build`：通过。
+- `frontend` 中 `npm run build`：通过。
+- M55 中 `scons -Q -j8`：通过。
 - 雷达固件源码扫描：已无 `motion_gate / BMI270 / IMU / board_not_still / accel_delta` 等引用。
 - 雷达固件 `make -j8`：当前机器 ModusToolbox/MSYS 路径环境异常，未进入 C 编译阶段。
+- GitHub 推送：`git push --no-thin origin main` 成功。
 
-## 11. 重要提醒
+## 13. 最重要提醒
 
 当前项目最容易出问题的不是算法，而是“网络是否真在同一个局域网”：
 
 - 后端电脑 IP 必须是设备可达的地址。
 - 雷达板、M55、Android、前端浏览器都要指向同一个后端。
-- 雷达板 WiFi 成功不代表后端可达；一定看分配到的 IP 网段。
+- 雷达板 WiFi 成功不代表后端可达；一定要看分配到的 IP 网段。
 
 如果只记一条：雷达板串口拿到 `192.168.0.xxx`，后端是 `192.168.0.102`，UDP 目标是 `192.168.0.102:9988`，这条链路才是对的。
