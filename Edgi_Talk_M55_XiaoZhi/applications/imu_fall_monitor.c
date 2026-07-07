@@ -277,7 +277,7 @@ static void imu_fall_monitor_entry(void *parameter)
                   magnitude_sq);
             xz_trigger_emergency_event(
                 "xiaozhi_imu_board",
-                "设备跌落",
+                "设备摇晃",
                 "IMU检测到开发板低重力或撞击，疑似设备被打翻");
         }
 
@@ -328,7 +328,7 @@ int imu_fall_monitor_init(void)
         "imu_fall",
         imu_fall_monitor_entry,
         RT_NULL,
-        2048,
+        4096,
         19,
         10);
     if (s_monitor_thread == RT_NULL)
@@ -373,8 +373,8 @@ static void imu_fall_test(void)
 {
     xz_trigger_emergency_event(
         "xiaozhi_imu_board",
-        "设备跌落",
-        "手动测试IMU跌落报警");
+        "设备摇晃",
+        "手动测试IMU摇晃报警");
 }
 MSH_CMD_EXPORT(imu_fall_test, Trigger IMU fall emergency test);
 #endif

@@ -1,0 +1,236 @@
+{"kind":"deck","id":"pr/yxndg1","name":"Deck"}
+{"kind":"layout","layoutId":"11bf92ca-b249-4fce-92ea-4139b1755c5e","name":"Master","type":"master"}
+{"kind":"layout","layoutId":"b179835f-858d-4e1a-8ecd-d6dacb15dcc8","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/g0286y","slide":1,"title":"00","textShapes":14}
+{"kind":"shape","id":"sh/m58z25kb","slide":1,"bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/twra5gbq","slide":1,"text":"00","textPreview":"00","textChars":2,"textLines":1,"bbox":[58,34,68,48]}
+{"kind":"textbox","id":"sh/4byhgn29","slide":1,"text":"Video Package","textPreview":"Video Package","textChars":13,"textLines":1,"bbox":[132,42,420,30]}
+{"kind":"textbox","id":"sh/b2hwfyxo","slide":1,"text":"Radar Care · 生命体征监测","textPreview":"Radar Care · 生命体征监测","textChars":19,"textLines":1,"bbox":[960,42,260,24]}
+{"kind":"shape","id":"sh/mhk3q5o7","slide":1,"bbox":[58,96,1164,0]}
+{"kind":"textbox","id":"sh/t83itgfm","slide":1,"text":"非接触式\n睡眠看护","textPreview":"非接触式 | 睡眠看护","textChars":9,"textLines":2,"bbox":[82,176,300,118]}
+{"kind":"textbox","id":"sh/4nap4r65","slide":1,"text":"毫米波雷达 × 小智守护\nWeb/Android 告警闭环","textPreview":"毫米波雷达 × 小智守护 | Web/Android 告警闭环","textChars":29,"textLines":2,"bbox":[86,320,310,60]}
+{"kind":"shape","id":"sh/bat47y1k","slide":1,"bbox":[82,412,138,34]}
+{"kind":"textbox","id":"sh/mp0bi9s3","slide":1,"text":"无接触监测","textPreview":"无接触监测","textChars":5,"textLines":1,"bbox":[82,419,138,20]}
+{"kind":"shape","id":"sh/4byhgn29","slide":1,"bbox":[238,412,138,34]}
+{"kind":"textbox","id":"sh/twra5gbq","slide":1,"text":"多床位看护","textPreview":"多床位看护","textChars":5,"textLines":1,"bbox":[238,419,138,20]}
+{"kind":"shape","id":"sh/m58z25kb","slide":1,"bbox":[82,460,138,34]}
+{"kind":"textbox","id":"sh/bq1oryts","slide":1,"text":"告警闭环","textPreview":"告警闭环","textChars":4,"textLines":1,"bbox":[82,467,138,20]}
+{"kind":"shape","id":"sh/4nap4r65","slide":1,"bbox":[448,130,736,428]}
+{"kind":"shape","id":"sh/t83itgfm","slide":1,"bbox":[464,146,704,396]}
+{"kind":"shape","id":"sh/mhk3q5o7","slide":1,"bbox":[494,176,644,336]}
+{"kind":"textbox","id":"sh/b2hwfyxo","slide":1,"text":"▶","textPreview":"▶","textChars":1,"textLines":1,"bbox":[782,286,68,70]}
+{"kind":"textbox","id":"sh/4vmtwra5","slide":1,"text":"视频画面放置区","textPreview":"视频画面放置区","textChars":7,"textLines":1,"bbox":[544,376,544,36]}
+{"kind":"textbox","id":"sh/tgfmlkjm","slide":1,"text":"开场镜头：项目全景、设备亮相、主屏进入","textPreview":"开场镜头：项目全景、设备亮相、主屏进入","textChars":19,"textLines":1,"bbox":[534,420,564,26]}
+{"kind":"shape","id":"sh/xc3ylc7u","slide":1,"bbox":[498,500,636,8]}
+{"kind":"shape","id":"sh/4r65wjud","slide":1,"bbox":[498,500,118,8]}
+{"kind":"textbox","id":"sh/f6dcbulw","slide":1,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[464,564,704,22]}
+{"kind":"shape","id":"sh/mlkjm1cf","slide":1,"bbox":[74,568,148,94]}
+{"kind":"textbox","id":"sh/4zidonyd","slide":1,"text":"小智守护终端","textPreview":"小智守护终端","textChars":6,"textLines":1,"bbox":[82,662,132,20]}
+{"kind":"shape","id":"sh/fepkzupw","slide":1,"bbox":[238,568,148,94]}
+{"kind":"textbox","id":"sh/xobm58z2","slide":1,"text":"毫米波雷达板","textPreview":"毫米波雷达板","textChars":6,"textLines":1,"bbox":[246,662,132,20]}
+{"kind":"image","id":"im/yd0z6103","slide":1,"name":"","geometry":"roundRect","alt":"小智守护终端","bbox":[82,576,132,78]}
+{"kind":"image","id":"im/90je9cvi","slide":1,"name":"","geometry":"roundRect","alt":"毫米波雷达板","bbox":[246,576,132,78]}
+{"kind":"notes","id":"nt/g0286y","slide":1,"text":""}
+{"kind":"slide","id":"sl/mq6fsz","slide":2,"title":"01","textShapes":13}
+{"kind":"shape","id":"sh/72x4nap4","slide":2,"bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/0nuxc3yl","slide":2,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[58,34,68,48]}
+{"kind":"textbox","id":"sh/p8nqxs72","slide":2,"text":"Care Scene","textPreview":"Care Scene","textChars":10,"textLines":1,"bbox":[132,42,420,30]}
+{"kind":"textbox","id":"sh/itgfmlkj","slide":2,"text":"Radar Care · 生命体征监测","textPreview":"Radar Care · 生命体征监测","textChars":19,"textLines":1,"bbox":[960,42,260,24]}
+{"kind":"shape","id":"sh/7ed8bat4","slide":2,"bbox":[58,96,1164,0]}
+{"kind":"shape","id":"sh/0z61032l","slide":2,"bbox":[58,146,338,396]}
+{"kind":"shape","id":"sh/pkzupwb2","slide":2,"bbox":[84,174,56,56]}
+{"kind":"textbox","id":"sh/i5sneloj","slide":2,"text":"RC","textPreview":"RC","textChars":2,"textLines":1,"bbox":[84,188,56,24]}
+{"kind":"textbox","id":"sh/7qpg3ex0","slide":2,"text":"护理人员只需要看清\n哪张床正在出问题","textPreview":"护理人员只需要看清 | 哪张床正在出问题","textChars":18,"textLines":2,"bbox":[84,252,278,112]}
+{"kind":"shape","id":"sh/fu18jqh0","slide":2,"bbox":[86,395,8,8]}
+{"kind":"textbox","id":"sh/m94fu18j","slide":2,"text":"多床位统一监视","textPreview":"多床位统一监视","textChars":7,"textLines":1,"bbox":[104,386,250,30]}
+{"kind":"shape","id":"sh/x0nuxc3y","slide":2,"bbox":[86,435,8,8]}
+{"kind":"textbox","id":"sh/4fu18jqh","slide":2,"text":"床位状态一眼判断","textPreview":"床位状态一眼判断","textChars":8,"textLines":1,"bbox":[104,426,250,30]}
+{"kind":"shape","id":"sh/fil0rqd4","slide":2,"bbox":[86,475,8,8]}
+{"kind":"textbox","id":"sh/qxs72x4n","slide":2,"text":"异常事件集中呈现","textPreview":"异常事件集中呈现","textChars":8,"textLines":1,"bbox":[104,466,250,30]}
+{"kind":"shape","id":"sh/xobm58z2","slide":2,"bbox":[448,130,736,428]}
+{"kind":"shape","id":"sh/83itgfml","slide":2,"bbox":[464,146,704,396]}
+{"kind":"shape","id":"sh/fepkzupw","slide":2,"bbox":[494,176,644,336]}
+{"kind":"textbox","id":"sh/mtwra5gb","slide":2,"text":"▶","textPreview":"▶","textChars":1,"textLines":1,"bbox":[782,286,68,70]}
+{"kind":"textbox","id":"sh/u18jqh0f","slide":2,"text":"视频画面放置区","textPreview":"视频画面放置区","textChars":7,"textLines":1,"bbox":[544,376,544,36]}
+{"kind":"textbox","id":"sh/jm1cfa9w","slide":2,"text":"录制护士站首页：展示正常、关注、紧急床位","textPreview":"录制护士站首页：展示正常、关注、紧急床位","textChars":20,"textLines":1,"bbox":[534,420,564,26]}
+{"kind":"shape","id":"sh/c7u54zid","slide":2,"bbox":[498,500,636,8]}
+{"kind":"shape","id":"sh/1orytsvu","slide":2,"bbox":[498,500,118,8]}
+{"kind":"textbox","id":"sh/u9knih4b","slide":2,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[464,564,704,22]}
+{"kind":"shape","id":"sh/judg7ads","slide":2,"bbox":[66,566,300,86]}
+{"kind":"textbox","id":"sh/1032lszq","slide":2,"text":"护士站床位监视屏","textPreview":"护士站床位监视屏","textChars":8,"textLines":1,"bbox":[74,652,284,20]}
+{"kind":"image","id":"im/nap4r65w","slide":2,"name":"","geometry":"roundRect","alt":"护士站床位监视屏","bbox":[74,574,284,70]}
+{"kind":"notes","id":"nt/mq6fsz","slide":2,"text":""}
+{"kind":"slide","id":"sl/32w9xk","slide":3,"title":"02","textShapes":13}
+{"kind":"shape","id":"sh/ex0nuxc3","slide":3,"bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/loj2t83i","slide":3,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[58,34,68,48]}
+{"kind":"textbox","id":"sh/w3m94fu1","slide":3,"text":"Vitals","textPreview":"Vitals","textChars":6,"textLines":1,"bbox":[132,42,420,30]}
+{"kind":"textbox","id":"sh/3q5o7qpg","slide":3,"text":"Radar Care · 生命体征监测","textPreview":"Radar Care · 生命体征监测","textChars":19,"textLines":1,"bbox":[960,42,260,24]}
+{"kind":"shape","id":"sh/e9cvixcz","slide":3,"bbox":[58,96,1164,0]}
+{"kind":"shape","id":"sh/lwval87e","slide":3,"bbox":[58,146,338,396]}
+{"kind":"shape","id":"sh/wb2hwfyx","slide":3,"bbox":[84,174,56,56]}
+{"kind":"textbox","id":"sh/32lszqtc","slide":3,"text":"RC","textPreview":"RC","textChars":2,"textLines":1,"bbox":[84,188,56,24]}
+{"kind":"textbox","id":"sh/ahoza1gv","slide":3,"text":"生命体征和呼噜信号\n同步进入驾驶舱","textPreview":"生命体征和呼噜信号 | 同步进入驾驶舱","textChars":17,"textLines":2,"bbox":[84,252,278,112]}
+{"kind":"shape","id":"sh/cj6tovah","slide":3,"bbox":[86,395,8,8]}
+{"kind":"textbox","id":"sh/54zidony","slide":3,"text":"雷达无接触生命体征","textPreview":"雷达无接触生命体征","textChars":9,"textLines":1,"bbox":[104,386,250,30]}
+{"kind":"shape","id":"sh/udg7adsj","slide":3,"bbox":[86,435,8,8]}
+{"kind":"textbox","id":"sh/nyd0z610","slide":3,"text":"呼噜强度实时变化","textPreview":"呼噜强度实时变化","textChars":8,"textLines":1,"bbox":[104,426,250,30]}
+{"kind":"shape","id":"sh/cvixczed","slide":3,"bbox":[86,475,8,8]}
+{"kind":"textbox","id":"sh/5gbq1ory","slide":3,"text":"短暂抖动不误判离线","textPreview":"短暂抖动不误判离线","textChars":9,"textLines":1,"bbox":[104,466,250,30]}
+{"kind":"shape","id":"sh/upwb2hwf","slide":3,"bbox":[448,130,736,428]}
+{"kind":"shape","id":"sh/nap4r65w","slide":3,"bbox":[464,146,704,396]}
+{"kind":"shape","id":"sh/c7u54zid","slide":3,"bbox":[494,176,644,336]}
+{"kind":"textbox","id":"sh/1orytsvu","slide":3,"text":"▶","textPreview":"▶","textChars":1,"textLines":1,"bbox":[782,286,68,70]}
+{"kind":"textbox","id":"sh/5kb6xkf6","slide":3,"text":"视频画面放置区","textPreview":"视频画面放置区","textChars":7,"textLines":1,"bbox":[544,376,544,36]}
+{"kind":"textbox","id":"sh/czed8v6p","slide":3,"text":"录制生命体征页：心率、呼吸率、呼噜趋势实时刷新","textPreview":"录制生命体征页：心率、呼吸率、呼噜趋势实时刷新","textChars":23,"textLines":1,"bbox":[534,420,564,26]}
+{"kind":"shape","id":"sh/neloj2t8","slide":3,"bbox":[498,500,636,8]}
+{"kind":"shape","id":"sh/ytsvu9kn","slide":3,"bbox":[498,500,118,8]}
+{"kind":"textbox","id":"sh/5sneloj2","slide":3,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[464,564,704,22]}
+{"kind":"shape","id":"sh/cbulwval","slide":3,"bbox":[66,566,300,86]}
+{"kind":"textbox","id":"sh/u54zidon","slide":3,"text":"生命体征监测页面","textPreview":"生命体征监测页面","textChars":8,"textLines":1,"bbox":[74,652,284,20]}
+{"kind":"image","id":"im/cbulwval","slide":3,"name":"","geometry":"roundRect","alt":"生命体征监测页面","bbox":[74,574,284,70]}
+{"kind":"notes","id":"nt/32w9xk","slide":3,"text":""}
+{"kind":"slide","id":"sl/g89owi","slide":4,"title":"03","textShapes":13}
+{"kind":"shape","id":"sh/b6xkf6dc","slide":4,"bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/0rqd4vmt","slide":4,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[58,34,68,48]}
+{"kind":"textbox","id":"sh/tcj6tova","slide":4,"text":"Environment","textPreview":"Environment","textChars":11,"textLines":1,"bbox":[132,42,420,30]}
+{"kind":"textbox","id":"sh/idonyd0z","slide":4,"text":"Radar Care · 生命体征监测","textPreview":"Radar Care · 生命体征监测","textChars":19,"textLines":1,"bbox":[960,42,260,24]}
+{"kind":"shape","id":"sh/byhgn29g","slide":4,"bbox":[58,96,1164,0]}
+{"kind":"shape","id":"sh/0je9cvix","slide":4,"bbox":[58,146,338,396]}
+{"kind":"shape","id":"sh/t47y1kre","slide":4,"bbox":[84,174,56,56]}
+{"kind":"textbox","id":"sh/i9s36hcr","slide":4,"text":"RC","textPreview":"RC","textChars":2,"textLines":1,"bbox":[84,188,56,24]}
+{"kind":"textbox","id":"sh/bulwval8","slide":4,"text":"环境数据帮助判断\n睡眠舒适度","textPreview":"环境数据帮助判断 | 睡眠舒适度","textChars":14,"textLines":2,"bbox":[84,252,278,112]}
+{"kind":"shape","id":"sh/j6tovaho","slide":4,"bbox":[86,395,8,8]}
+{"kind":"textbox","id":"sh/ulwval87","slide":4,"text":"温湿度持续上报","textPreview":"温湿度持续上报","textChars":7,"textLines":1,"bbox":[104,386,250,30]}
+{"kind":"shape","id":"sh/1cfa9w3m","slide":4,"bbox":[86,435,8,8]}
+{"kind":"textbox","id":"sh/crmhk3q5","slide":4,"text":"环境声音趋势","textPreview":"环境声音趋势","textChars":6,"textLines":1,"bbox":[104,426,250,30]}
+{"kind":"shape","id":"sh/ji5snelo","slide":4,"bbox":[86,475,8,8]}
+{"kind":"textbox","id":"sh/uxc3ylc7","slide":4,"text":"舒适度评分提示","textPreview":"舒适度评分提示","textChars":7,"textLines":1,"bbox":[104,466,250,30]}
+{"kind":"shape","id":"sh/1kre1w7m","slide":4,"bbox":[448,130,736,428]}
+{"kind":"shape","id":"sh/c3ylc7u5","slide":4,"bbox":[464,146,704,396]}
+{"kind":"shape","id":"sh/jqh0fepk","slide":4,"bbox":[494,176,644,336]}
+{"kind":"textbox","id":"sh/q5o7qpg3","slide":4,"text":"▶","textPreview":"▶","textChars":1,"textLines":1,"bbox":[782,286,68,70]}
+{"kind":"textbox","id":"sh/itgfmlkj","slide":4,"text":"视频画面放置区","textPreview":"视频画面放置区","textChars":7,"textLines":1,"bbox":[544,376,544,36]}
+{"kind":"textbox","id":"sh/7ed8bat4","slide":4,"text":"录制睡眠环境分析：温度、湿度、声音数据同步变化","textPreview":"录制睡眠环境分析：温度、湿度、声音数据同步变化","textChars":23,"textLines":1,"bbox":[534,420,564,26]}
+{"kind":"shape","id":"sh/0z61032l","slide":4,"bbox":[498,500,636,8]}
+{"kind":"shape","id":"sh/pkzupwb2","slide":4,"bbox":[498,500,118,8]}
+{"kind":"textbox","id":"sh/ih4byhgn","slide":4,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[464,564,704,22]}
+{"kind":"shape","id":"sh/72x4nap4","slide":4,"bbox":[66,566,300,86]}
+{"kind":"textbox","id":"sh/p8nqxs72","slide":4,"text":"睡眠环境分析页面","textPreview":"睡眠环境分析页面","textChars":8,"textLines":1,"bbox":[74,652,284,20]}
+{"kind":"image","id":"im/bm58z25k","slide":4,"name":"","geometry":"roundRect","alt":"睡眠环境分析页面","bbox":[74,574,284,70]}
+{"kind":"notes","id":"nt/g89owi","slide":4,"text":""}
+{"kind":"slide","id":"sl/mmu9xw","slide":5,"title":"04","textShapes":13}
+{"kind":"shape","id":"sh/twra5gbq","slide":5,"bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/m58z25kb","slide":5,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[58,34,68,48]}
+{"kind":"textbox","id":"sh/bq1oryts","slide":5,"text":"Guard Mode","textPreview":"Guard Mode","textChars":10,"textLines":1,"bbox":[132,42,420,30]}
+{"kind":"textbox","id":"sh/4nap4r65","slide":5,"text":"Radar Care · 生命体征监测","textPreview":"Radar Care · 生命体征监测","textChars":19,"textLines":1,"bbox":[960,42,260,24]}
+{"kind":"shape","id":"sh/t83itgfm","slide":5,"bbox":[58,96,1164,0]}
+{"kind":"shape","id":"sh/mhk3q5o7","slide":5,"bbox":[58,146,338,396]}
+{"kind":"shape","id":"sh/b2hwfyxo","slide":5,"bbox":[84,174,56,56]}
+{"kind":"textbox","id":"sh/4vmtwra5","slide":5,"text":"RC","textPreview":"RC","textChars":2,"textLines":1,"bbox":[84,188,56,24]}
+{"kind":"textbox","id":"sh/tgfmlkjm","slide":5,"text":"小智终端默认守护\n呼噜和求助不中断","textPreview":"小智终端默认守护 | 呼噜和求助不中断","textChars":17,"textLines":2,"bbox":[84,252,278,112]}
+{"kind":"shape","id":"sh/xc3ylc7u","slide":5,"bbox":[86,395,8,8]}
+{"kind":"textbox","id":"sh/4r65wjud","slide":5,"text":"守护模式在线","textPreview":"守护模式在线","textChars":6,"textLines":1,"bbox":[104,386,250,30]}
+{"kind":"shape","id":"sh/f6dcbulw","slide":5,"bbox":[86,435,8,8]}
+{"kind":"textbox","id":"sh/mlkjm1cf","slide":5,"text":"本地呼噜检测","textPreview":"本地呼噜检测","textChars":6,"textLines":1,"bbox":[104,426,250,30]}
+{"kind":"shape","id":"sh/xkf6dcbu","slide":5,"bbox":[86,475,8,8]}
+{"kind":"textbox","id":"sh/4zidonyd","slide":5,"text":"求助语音触发 SOS","textPreview":"求助语音触发 SOS","textChars":10,"textLines":1,"bbox":[104,466,250,30]}
+{"kind":"shape","id":"sh/fepkzupw","slide":5,"bbox":[448,130,736,428]}
+{"kind":"shape","id":"sh/mtwra5gb","slide":5,"bbox":[464,146,704,396]}
+{"kind":"shape","id":"sh/xobm58z2","slide":5,"bbox":[494,176,644,336]}
+{"kind":"textbox","id":"sh/83itgfml","slide":5,"text":"▶","textPreview":"▶","textChars":1,"textLines":1,"bbox":[782,286,68,70]}
+{"kind":"textbox","id":"sh/4byhgn29","slide":5,"text":"视频画面放置区","textPreview":"视频画面放置区","textChars":7,"textLines":1,"bbox":[544,376,544,36]}
+{"kind":"textbox","id":"sh/twra5gbq","slide":5,"text":"录制开发板屏幕：守护模式在线、呼噜检测、时间显示","textPreview":"录制开发板屏幕：守护模式在线、呼噜检测、时间显示","textChars":24,"textLines":1,"bbox":[534,420,564,26]}
+{"kind":"shape","id":"sh/m58z25kb","slide":5,"bbox":[498,500,636,8]}
+{"kind":"shape","id":"sh/bq1oryts","slide":5,"bbox":[498,500,118,8]}
+{"kind":"textbox","id":"sh/4nap4r65","slide":5,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[464,564,704,22]}
+{"kind":"shape","id":"sh/t83itgfm","slide":5,"bbox":[66,566,300,86]}
+{"kind":"textbox","id":"sh/b2hwfyxo","slide":5,"text":"小智呼噜/守护终端","textPreview":"小智呼噜/守护终端","textChars":9,"textLines":1,"bbox":[74,652,284,20]}
+{"kind":"image","id":"im/h0fepkzu","slide":5,"name":"","geometry":"roundRect","alt":"小智呼噜/守护终端","bbox":[74,574,284,70]}
+{"kind":"notes","id":"nt/mmu9xw","slide":5,"text":""}
+{"kind":"slide","id":"sl/4i8tkl","slide":6,"title":"05","textShapes":13}
+{"kind":"shape","id":"sh/adsji5sn","slide":6,"bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/h4byhgn2","slide":6,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[58,34,68,48]}
+{"kind":"textbox","id":"sh/sji5snel","slide":6,"text":"Emergency","textPreview":"Emergency","textChars":9,"textLines":1,"bbox":[132,42,420,30]}
+{"kind":"textbox","id":"sh/3m94fu18","slide":6,"text":"Radar Care · 生命体征监测","textPreview":"Radar Care · 生命体征监测","textChars":19,"textLines":1,"bbox":[960,42,260,24]}
+{"kind":"shape","id":"sh/a5gbq1or","slide":6,"bbox":[58,96,1164,0]}
+{"kind":"shape","id":"sh/lszqtcj6","slide":6,"bbox":[58,146,338,396]}
+{"kind":"shape","id":"sh/s72x4nap","slide":6,"bbox":[84,174,56,56]}
+{"kind":"textbox","id":"sh/zidonyd0","slide":6,"text":"RC","textPreview":"RC","textChars":2,"textLines":1,"bbox":[84,188,56,24]}
+{"kind":"textbox","id":"sh/a1gvy90j","slide":6,"text":"紧急事件从开发板\n同步到前端处理","textPreview":"紧急事件从开发板 | 同步到前端处理","textChars":16,"textLines":2,"bbox":[84,252,278,112]}
+{"kind":"shape","id":"sh/8nqxs72x","slide":6,"bbox":[86,395,8,8]}
+{"kind":"textbox","id":"sh/18jqh0fe","slide":6,"text":"语音求助或摇晃触发","textPreview":"语音求助或摇晃触发","textChars":9,"textLines":1,"bbox":[104,386,250,30]}
+{"kind":"shape","id":"sh/qh0fepkz","slide":6,"bbox":[86,435,8,8]}
+{"kind":"textbox","id":"sh/j2t83itg","slide":6,"text":"大屏标红并语音播报","textPreview":"大屏标红并语音播报","textChars":9,"textLines":1,"bbox":[104,426,250,30]}
+{"kind":"shape","id":"sh/8bat47y1","slide":6,"bbox":[86,475,8,8]}
+{"kind":"textbox","id":"sh/1w7mp0bi","slide":6,"text":"处理后全端解除","textPreview":"处理后全端解除","textChars":7,"textLines":1,"bbox":[104,466,250,30]}
+{"kind":"shape","id":"sh/q5o7qpg3","slide":6,"bbox":[448,130,736,428]}
+{"kind":"shape","id":"sh/jqh0fepk","slide":6,"bbox":[464,146,704,396]}
+{"kind":"shape","id":"sh/c3ylc7u5","slide":6,"bbox":[494,176,644,336]}
+{"kind":"textbox","id":"sh/1kre1w7m","slide":6,"text":"▶","textPreview":"▶","textChars":1,"textLines":1,"bbox":[782,286,68,70]}
+{"kind":"textbox","id":"sh/58z25kb6","slide":6,"text":"视频画面放置区","textPreview":"视频画面放置区","textChars":7,"textLines":1,"bbox":[544,376,544,36]}
+{"kind":"textbox","id":"sh/gn29gr2p","slide":6,"text":"录制 SOS 闭环：触发告警、前端弹窗、确认处理、状态恢复","textPreview":"录制 SOS 闭环：触发告警、前端弹窗、确认处理、状态恢复","textChars":29,"textLines":1,"bbox":[534,420,564,26]}
+{"kind":"shape","id":"sh/n29gr2p8","slide":6,"bbox":[498,500,636,8]}
+{"kind":"shape","id":"sh/yhgn29gr","slide":6,"bbox":[498,500,118,8]}
+{"kind":"textbox","id":"sh/5wjudg7a","slide":6,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[464,564,704,22]}
+{"kind":"shape","id":"sh/gbq1oryt","slide":6,"bbox":[66,566,300,86]}
+{"kind":"textbox","id":"sh/y90je9cv","slide":6,"text":"看护预警中心","textPreview":"看护预警中心","textChars":6,"textLines":1,"bbox":[74,652,284,20]}
+{"kind":"image","id":"im/sfil0rqd","slide":6,"name":"","geometry":"roundRect","alt":"看护预警中心","bbox":[74,574,284,70]}
+{"kind":"notes","id":"nt/4i8tkl","slide":6,"text":""}
+{"kind":"slide","id":"sl/9742eo","slide":7,"title":"06","textShapes":13}
+{"kind":"shape","id":"sh/wjudg7ad","slide":7,"bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/7y1kre1w","slide":7,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[58,34,68,48]}
+{"kind":"textbox","id":"sh/ed8v6psf","slide":7,"text":"Architecture","textPreview":"Architecture","textChars":12,"textLines":1,"bbox":[132,42,420,30]}
+{"kind":"textbox","id":"sh/pwb2hwfy","slide":7,"text":"Radar Care · 生命体征监测","textPreview":"Radar Care · 生命体征监测","textChars":19,"textLines":1,"bbox":[960,42,260,24]}
+{"kind":"shape","id":"sh/0bi9s36h","slide":7,"bbox":[58,96,1164,0]}
+{"kind":"shape","id":"sh/7qpg3ex0","slide":7,"bbox":[58,146,338,396]}
+{"kind":"shape","id":"sh/i5sneloj","slide":7,"bbox":[84,174,56,56]}
+{"kind":"textbox","id":"sh/pkzupwb2","slide":7,"text":"RC","textPreview":"RC","textChars":2,"textLines":1,"bbox":[84,188,56,24]}
+{"kind":"textbox","id":"sh/0z61032l","slide":7,"text":"真实后端把雷达、小智\n和移动端连成闭环","textPreview":"真实后端把雷达、小智 | 和移动端连成闭环","textChars":19,"textLines":2,"bbox":[84,252,278,112]}
+{"kind":"shape","id":"sh/qpg3ex0n","slide":7,"bbox":[86,395,8,8]}
+{"kind":"textbox","id":"sh/fa9w3m94","slide":7,"text":"UDP 雷达数据","textPreview":"UDP 雷达数据","textChars":8,"textLines":1,"bbox":[104,386,250,30]}
+{"kind":"shape","id":"sh/8v6psfil","slide":7,"bbox":[86,435,8,8]}
+{"kind":"textbox","id":"sh/xczed8v6","slide":7,"text":"HTTP 设备心跳","textPreview":"HTTP 设备心跳","textChars":9,"textLines":1,"bbox":[104,426,250,30]}
+{"kind":"shape","id":"sh/qd4vmtwr","slide":7,"bbox":[86,475,8,8]}
+{"kind":"textbox","id":"sh/fyxobm58","slide":7,"text":"Web 与 Android 同步","textPreview":"Web 与 Android 同步","textChars":16,"textLines":1,"bbox":[104,466,250,30]}
+{"kind":"shape","id":"sh/8jqh0fep","slide":7,"bbox":[448,130,736,428]}
+{"kind":"shape","id":"sh/x4nap4r6","slide":7,"bbox":[464,146,704,396]}
+{"kind":"shape","id":"sh/q1orytsv","slide":7,"bbox":[494,176,644,336]}
+{"kind":"textbox","id":"sh/fmlkjm1c","slide":7,"text":"▶","textPreview":"▶","textChars":1,"textLines":1,"bbox":[782,286,68,70]}
+{"kind":"textbox","id":"sh/r2p8nqxs","slide":7,"text":"视频画面放置区","textPreview":"视频画面放置区","textChars":7,"textLines":1,"bbox":[544,376,544,36]}
+{"kind":"textbox","id":"sh/2hwfyxob","slide":7,"text":"录制接口联动：后端运行、设备在线、移动端/网页同步刷新","textPreview":"录制接口联动：后端运行、设备在线、移动端/网页同步刷新","textChars":27,"textLines":1,"bbox":[534,420,564,26]}
+{"kind":"shape","id":"sh/94fu18jq","slide":7,"bbox":[498,500,636,8]}
+{"kind":"shape","id":"sh/kjm1cfa9","slide":7,"bbox":[498,500,118,8]}
+{"kind":"textbox","id":"sh/ra5gbq1o","slide":7,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[464,564,704,22]}
+{"kind":"shape","id":"sh/2p8nqxs7","slide":7,"bbox":[66,566,300,86]}
+{"kind":"textbox","id":"sh/gvy90je9","slide":7,"text":"系统总体架构","textPreview":"系统总体架构","textChars":6,"textLines":1,"bbox":[74,652,284,20]}
+{"kind":"image","id":"im/qxs72x4n","slide":7,"name":"","geometry":"roundRect","alt":"系统总体架构","bbox":[74,574,284,70]}
+{"kind":"notes","id":"nt/9742eo","slide":7,"text":""}
+{"kind":"slide","id":"sl/fhv3v8","slide":8,"title":"07","textShapes":13}
+{"kind":"shape","id":"sh/j6tovaho","slide":8,"bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/crmhk3q5","slide":8,"text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[58,34,68,48]}
+{"kind":"textbox","id":"sh/1cfa9w3m","slide":8,"text":"Close","textPreview":"Close","textChars":5,"textLines":1,"bbox":[132,42,420,30]}
+{"kind":"textbox","id":"sh/uxc3ylc7","slide":8,"text":"Radar Care · 生命体征监测","textPreview":"Radar Care · 生命体征监测","textChars":19,"textLines":1,"bbox":[960,42,260,24]}
+{"kind":"shape","id":"sh/ji5snelo","slide":8,"bbox":[58,96,1164,0]}
+{"kind":"shape","id":"sh/c3ylc7u5","slide":8,"bbox":[58,146,338,396]}
+{"kind":"shape","id":"sh/1kre1w7m","slide":8,"bbox":[84,174,56,56]}
+{"kind":"textbox","id":"sh/q5o7qpg3","slide":8,"text":"RC","textPreview":"RC","textChars":2,"textLines":1,"bbox":[84,188,56,24]}
+{"kind":"textbox","id":"sh/jqh0fepk","slide":8,"text":"监测不打扰睡眠\n求助能及时听见","textPreview":"监测不打扰睡眠 | 求助能及时听见","textChars":15,"textLines":2,"bbox":[84,252,278,112]}
+{"kind":"shape","id":"sh/fmlkjm1c","slide":8,"bbox":[86,395,8,8]}
+{"kind":"textbox","id":"sh/q1orytsv","slide":8,"text":"适合医院与养老院","textPreview":"适合医院与养老院","textChars":8,"textLines":1,"bbox":[104,386,250,30]}
+{"kind":"shape","id":"sh/xs72x4na","slide":8,"bbox":[86,435,8,8]}
+{"kind":"textbox","id":"sh/87ed8bat","slide":8,"text":"支持多套设备扩展","textPreview":"支持多套设备扩展","textChars":8,"textLines":1,"bbox":[104,426,250,30]}
+{"kind":"shape","id":"sh/je9cvixc","slide":8,"bbox":[86,475,8,8]}
+{"kind":"textbox","id":"sh/qtcj6tov","slide":8,"text":"可演示、可部署、可迭代","textPreview":"可演示、可部署、可迭代","textChars":11,"textLines":1,"bbox":[104,466,250,30]}
+{"kind":"shape","id":"sh/1gvy90je","slide":8,"bbox":[448,130,736,428]}
+{"kind":"shape","id":"sh/8z25kb6x","slide":8,"bbox":[464,146,704,396]}
+{"kind":"shape","id":"sh/fa9w3m94","slide":8,"bbox":[494,176,644,336]}
+{"kind":"textbox","id":"sh/qpg3ex0n","slide":8,"text":"▶","textPreview":"▶","textChars":1,"textLines":1,"bbox":[782,286,68,70]}
+{"kind":"textbox","id":"sh/ytsvu9kn","slide":8,"text":"视频画面放置区","textPreview":"视频画面放置区","textChars":7,"textLines":1,"bbox":[544,376,544,36]}
+{"kind":"textbox","id":"sh/neloj2t8","slide":8,"text":"结尾镜头：护士站大屏、Android、开发板同框展示","textPreview":"结尾镜头：护士站大屏、Android、开发板同框展示","textChars":26,"textLines":1,"bbox":[534,420,564,26]}
+{"kind":"shape","id":"sh/czed8v6p","slide":8,"bbox":[498,500,636,8]}
+{"kind":"shape","id":"sh/5kb6xkf6","slide":8,"bbox":[498,500,118,8]}
+{"kind":"textbox","id":"sh/u54zidon","slide":8,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[464,564,704,22]}
+{"kind":"shape","id":"sh/nqxs72x4","slide":8,"bbox":[66,566,300,86]}
+{"kind":"textbox","id":"sh/5sneloj2","slide":8,"text":"Android 看护端","textPreview":"Android 看护端","textChars":11,"textLines":1,"bbox":[74,652,284,20]}
+{"kind":"image","id":"im/rmhk3q5o","slide":8,"name":"","geometry":"roundRect","alt":"Android 看护端","bbox":[74,574,284,70]}
+{"kind":"notes","id":"nt/fhv3v8","slide":8,"text":""}

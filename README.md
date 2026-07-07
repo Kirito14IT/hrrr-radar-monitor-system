@@ -21,14 +21,14 @@
 3. 配置 Edgi Talk M55 后端地址：
 
    ```text
-   backend_cfg_set 192.168.0.102 8081
+   backend_cfg_set 192.168.31.236 8081
    backend_cfg_status
    ```
 
 4. 雷达板、M55、安卓 App 和前端都连接到同一后端地址：
 
    ```text
-   http://192.168.0.102:8081
+   http://192.168.31.236:8081
    ```
 
 ## 真实硬件接口

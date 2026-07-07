@@ -1,60 +1,47 @@
-// stores/themeStore.js
 import { defineStore } from 'pinia'
 
 const STORAGE_KEY = 'hrrr-radar-theme'
+const FIXED_THEME = 'light'
 
-function readPersistedTheme() {
-  try {
-    const value = localStorage.getItem(STORAGE_KEY)
-    if (value === 'light' || value === 'dark') return value
-  } catch (error) {
-    console.warn('读取本地主题失败:', error)
-  }
-  if (typeof window !== 'undefined' && window.matchMedia) {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  }
-  return 'light'
-}
-
-function applyTheme(theme) {
+function applyLightTheme() {
   if (typeof document === 'undefined') return
+
   const root = document.documentElement
-  root.setAttribute('data-theme', theme)
-  // 同步给 Element Plus / 第三方组件用作兼容
-  root.classList.remove('dark', 'light')
-  root.classList.add(theme === 'dark' ? 'dark' : 'light')
-  // 给 meta 标签加 color-scheme，提示浏览器原生 UI 跟随
+  root.setAttribute('data-theme', FIXED_THEME)
+  root.classList.remove('dark')
+  root.classList.add('light')
+
   const meta = document.querySelector('meta[name="color-scheme"]')
-  if (meta) meta.setAttribute('content', theme === 'dark' ? 'dark' : 'light')
+  if (meta) meta.setAttribute('content', 'light')
+
+  try {
+    localStorage.setItem(STORAGE_KEY, FIXED_THEME)
+  } catch (error) {
+    console.warn('持久化浅色主题失败:', error)
+  }
 }
 
 export const useThemeStore = defineStore('theme', {
   state: () => ({
-    mode: readPersistedTheme() // 'light' | 'dark'
+    mode: FIXED_THEME
   }),
   getters: {
-    isDark: (state) => state.mode === 'dark',
-    isLight: (state) => state.mode === 'light'
+    isDark: () => false,
+    isLight: () => true
   },
   actions: {
-    setMode(next) {
-      const target = next === 'dark' ? 'dark' : 'light'
-      this.mode = target
-      try {
-        localStorage.setItem(STORAGE_KEY, target)
-      } catch (error) {
-        console.warn('持久化主题失败:', error)
-      }
-      applyTheme(target)
+    setMode() {
+      this.mode = FIXED_THEME
+      applyLightTheme()
     },
     toggle() {
-      this.setMode(this.mode === 'dark' ? 'light' : 'dark')
+      this.setMode()
     },
     applyToDom() {
-      applyTheme(this.mode)
+      this.mode = FIXED_THEME
+      applyLightTheme()
     }
   },
-  // pinia-plugin-persistedstate 兼容
   persist: {
     key: STORAGE_KEY,
     paths: ['mode']

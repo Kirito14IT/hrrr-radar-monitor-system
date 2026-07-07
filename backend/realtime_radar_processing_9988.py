@@ -242,7 +242,7 @@ class RealtimeRadarProcessor:
             allow_origins=[
                 "http://localhost:5173",
                 "http://127.0.0.1:5173",
-                "http://192.168.0.102:5173",
+                "http://192.168.31.236:5173",
             ],
             allow_origin_regex=r"https?://(?:localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3})(?::\d+)?",
             allow_credentials=True,

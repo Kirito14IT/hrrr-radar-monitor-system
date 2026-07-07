@@ -5,9 +5,9 @@
     </el-button>
 
     <div class="breath-layout">
-      <div id="breath-chart" class="breath-chart care-glass-card"></div>
+      <div id="breath-chart" class="breath-chart care-glass-card care-icon-card" data-icon="BR"></div>
 
-      <div class="breath-monitor care-glass-card">
+      <div class="breath-monitor care-glass-card care-icon-card" data-icon="肺">
         <BreathRateMonitor :rate="currentBreathRate" :is-present="isUserPresent" />
       </div>
     </div>

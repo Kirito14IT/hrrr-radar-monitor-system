@@ -1,10 +1,10 @@
-# Edgi Talk M55 IMU 跌落 SOS 真实环境运行与测试
+# Edgi Talk M55 IMU 摇晃 SOS 真实环境运行与测试
 
 本文用于验证：Edgi Talk M55 检测到低重力、撞击或被打翻时，会进入 SOS 紧急状态，播放报警声，屏幕显示解除按钮，并同步上报真实后端。
 
 ## 1. 电脑端准备
 
-1. 确认电脑和开发板在同一 Wi-Fi 下，电脑 IPv4 为 `192.168.0.102`。
+1. 确认电脑和开发板在同一 Wi-Fi 下，电脑 IPv4 为 `192.168.0.101`。
 2. 启动真实后端：
 
    ```powershell
@@ -27,7 +27,7 @@
 2. 串口进入 `msh` 后配置后端：
 
    ```text
-   backend_cfg_set 192.168.0.102 8081
+   backend_cfg_set 192.168.0.101 8081
    backend_cfg_status
    ```
 
@@ -49,7 +49,7 @@ imu_fall_test
 预期现象：
 
 - 串口出现 `emergency event triggered: source=xiaozhi_imu_board`。
-- 开发板屏幕进入 SOS 界面，显示“设备跌落”或对应紧急原因。
+- 开发板屏幕进入 SOS 界面，显示“设备摇晃”或对应紧急原因。
 - 开发板播放紧急报警声。
 - 屏幕出现“解除紧急状态”按钮。
 - 后端 `/sleep/overview` 的 `events` 中出现 `emergency_voice`、`critical` 事件，`source` 为 `xiaozhi_imu_board`。
@@ -68,7 +68,7 @@ imu_fall_test
 
 1. 用手托住板子，快速做短促下落再接住，模拟低重力。
 2. 或将板子从很低高度放倒到软垫上，模拟被打翻。
-3. 每次触发后等待至少 60 秒，让 IMU 跌落检测重新 armed。
+3. 每次触发后等待至少 60 秒，让 IMU 摇晃检测重新 armed。
 
 触发成功后的现象应与 `imu_fall_test` 一致。
 

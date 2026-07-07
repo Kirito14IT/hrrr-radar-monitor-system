@@ -24,11 +24,11 @@
 #endif
 
 #ifndef ENV_BACKEND_TARGET_IP
-#define ENV_BACKEND_TARGET_IP "192.168.0.102"
+#define ENV_BACKEND_TARGET_IP BOARD_BACKEND_HOST
 #endif
 
 #ifndef ENV_BACKEND_TARGET_PORT
-#define ENV_BACKEND_TARGET_PORT 8081
+#define ENV_BACKEND_TARGET_PORT BOARD_BACKEND_PORT
 #endif
 
 #define ENV_MONITOR_THREAD_STACK     4096
@@ -120,11 +120,14 @@ static int env_http_post_heartbeat(int16_t temperature_c_x10,
                                    int16_t humidity_pct_x10,
                                    rt_bool_t sensor_ok)
 {
-    char body[192];
+    char body[320];
     char header[256];
     char response[96];
     char temp_text[16];
     char humidity_text[16];
+    char bed_id[DEVICE_CONFIG_BED_ID_LEN] = {0};
+    char device_id[DEVICE_CONFIG_ID_LEN] = {0};
+    char source[DEVICE_CONFIG_SOURCE_LEN] = {0};
     char backend_host[BACKEND_TARGET_HOST_LEN] = {0};
     int backend_port = ENV_BACKEND_TARGET_PORT;
     struct sockaddr_in server_addr;
@@ -137,13 +140,21 @@ static int env_http_post_heartbeat(int16_t temperature_c_x10,
 
     env_format_x10(temp_text, sizeof(temp_text), temperature_c_x10);
     env_format_x10(humidity_text, sizeof(humidity_text), humidity_pct_x10);
+    device_identity_get(BOARD_BED_ID, BOARD_DEVICE_ID, BOARD_ENV_SOURCE,
+                        bed_id, sizeof(bed_id),
+                        device_id, sizeof(device_id),
+                        source, sizeof(source));
 
     body_len = rt_snprintf(body, sizeof(body),
                            "{\"temperature_c\":%s,\"humidity_pct\":%s,"
-                           "\"sensor_ok\":%s,\"source\":\"edgi_talk_m55\"}",
+                           "\"sensor_ok\":%s,\"bed_id\":\"%s\","
+                           "\"device_id\":\"%s\",\"source\":\"%s\"}",
                            temp_text,
                            humidity_text,
-                           sensor_ok ? "true" : "false");
+                           sensor_ok ? "true" : "false",
+                           bed_id,
+                           device_id,
+                           source);
     if (body_len <= 0 || body_len >= (int)sizeof(body))
     {
         LOG_W("Environment heartbeat body overflow");

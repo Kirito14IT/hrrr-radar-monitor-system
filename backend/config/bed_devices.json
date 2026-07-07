@@ -1,0 +1,47 @@
+{
+  "comment": "床位/设备绑定配置。后端启动时会同步到 bed_registry；雷达按来源 IP 匹配，小智/Edgi 按 bed_id 或 device_id/source 匹配。",
+  "beds": [
+    {
+      "bed_id": "bed-001",
+      "bed_label": "01床",
+      "room": "护理房间",
+      "patient_name": "患者01",
+      "patient_gender": "男",
+      "patient_age": 24,
+      "patient_note": "真实默认床位；旧设备未带 bed_id 时默认落到这里。",
+      "radar_ip": null,
+      "radar_port": 9988,
+      "edgi_device_id": "xiaozhi-bed-001",
+      "edgi_source": "xiaozhi_board_001",
+      "sort_order": 1
+    },
+    {
+      "bed_id": "bed-002",
+      "bed_label": "02床",
+      "room": "护理房间",
+      "patient_name": "患者02",
+      "patient_gender": null,
+      "patient_age": null,
+      "patient_note": "第二套真实设备示例；部署时把 radar_ip 改成该雷达板实际 IP。",
+      "radar_ip": "192.168.0.121",
+      "radar_port": 9988,
+      "edgi_device_id": "xiaozhi-bed-002",
+      "edgi_source": "xiaozhi_board_002",
+      "sort_order": 2
+    },
+    {
+      "bed_id": "bed-sim-001",
+      "bed_label": "03床",
+      "room": "护理房间",
+      "patient_name": "患者03",
+      "patient_gender": "女",
+      "patient_age": 23,
+      "patient_note": "独立模拟开发板上报使用。",
+      "radar_ip": "simulated-radar",
+      "radar_port": 9988,
+      "edgi_device_id": "sim-edgi-001",
+      "edgi_source": "simulated_bed_board",
+      "sort_order": 999
+    }
+  ]
+}

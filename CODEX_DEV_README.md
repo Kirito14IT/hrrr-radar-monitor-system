@@ -453,7 +453,7 @@ hrrr-radar-monitor-system/
 
 ### 6.5 API 客户端 ([src/utils/request.js](frontend/src/utils/request.js))
 
-- `API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://192.168.0.102:8081'`
+- `API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://192.168.31.236:8081'`
 - `request` = `axios.create({ baseURL, timeout: 30000 })`
 - 请求拦截器: 强写 `Content-Type: application/json;charset=utf-8`
 - 响应拦截器: 返回 `response.data`;若字符串则 `JSON.parse`
@@ -510,7 +510,7 @@ hrrr-radar-monitor-system/
   - `backend_cfg_set <ip> [port]` — 改写 (缺省 port 8081)
   - `backend_cfg_status` — 打印当前值
   - `backend_cfg_clear` — 删除文件,回退编译时默认
-- 编译时默认: `ENV_BACKEND_TARGET_IP` / `ENV_BACKEND_TARGET_PORT` 宏 (无则 `192.168.0.102:8081`)
+- 编译时默认: `ENV_BACKEND_TARGET_IP` / `ENV_BACKEND_TARGET_PORT` 宏 (无则 `192.168.31.236:8081`)
 - **热重载语义**: env_monitor **每个 tick 重新读** (无内存缓存、无回调),改完 MSH 命令等下一次 5 s POST 即可生效;不要去改 env_monitor 代码
 - **原子保存**: `cJSON_Print` → 写 `/flash/backend_config.tmp` → `unlink` 原文件 + `rename` tmp → 校验读回;若 rename 失败,直接 `O_TRUNC` 重写。完整代码 [backend_target_config.c:212-310](Edgi_Talk_M55_XiaoZhi/applications/backend_target_config.c#L212)
 - **改后端 IP 不需要重新编译固件**。
@@ -602,7 +602,7 @@ void xz_trigger_alarm_clock(void);                        // 行 230
 | 线程 | 入口 (行号) | 周期 | 行为 |
 |---|---|---|---|
 | 检测 | `snore_detect_thread_entry` ([snore_detect.cpp:910](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp#L910)) | 2 s 滑窗 | mic0 → CMSIS-DSP `arm_rfft_fast_f32` (512, [snore_detect.cpp:117](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp#L117) `kFFTSize`) → Hann ([snore_detect.cpp:368](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp#L368)) → 20 维 Mel → 60 帧 log-Mel → TFLite Micro 推理 ([snore_detect.cpp:275](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp#L275) `tflite::MicroInterpreter`) → `xiaozhi_ui_set_snore_result(detected, score)`;命中时蓝色 LED (P16.5) 闪 |
-| 上行音频 | `audio_send_thread_entry` ([snore_detect.cpp:564](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp#L564)) | 10 s | 累计 10 s mono 16 kHz PCM → TCP socket `POST <backend>:<port>/audio`,`Content-Type: audio/wav`;**默认目标 `192.168.0.102:8081`** (与 env_monitor 共用 backend_target) |
+| 上行音频 | `audio_send_thread_entry` ([snore_detect.cpp:564](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp#L564)) | 10 s | 累计 10 s mono 16 kHz PCM → TCP socket `POST <backend>:<port>/audio`,`Content-Type: audio/wav`;**默认目标 `192.168.31.236:8081`** (与 env_monitor 共用 backend_target) |
 | 心跳 | `heartbeat_thread_entry` ([snore_detect.cpp:843](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp#L843)) | 1 s | `POST <backend>:<port>/mock/snore-heartbeat` `{snore_score, snore_detected, dbfs}`;开始/结束时各打 `/mock/snore-session/start` 和 `/mock/snore-session/stop` |
 
 > **关键预处理常量** ([snore_detect.cpp:112-138](Edgi_Talk_M55_XiaoZhi/applications/xiaozhi/wake_word/snore_detect.cpp#L112)):
@@ -894,7 +894,7 @@ cd radar_wifi
 make program TOOLCHAIN=GCC_ARM
 ```
 
-输出 `mtb-example-wifi-udp-client.{elf,hex,bin}` (ModusToolbox, BSP=`TARGET=APP_CY8CKIT-062S2-AI`, BGT60TR13C shield)。UDP 目标 `192.168.0.102:9988` 硬编码在 [udp_server.c:175](radar_wifi/source/udp_server.c#L175)。
+输出 `mtb-example-wifi-udp-client.{elf,hex,bin}` (ModusToolbox, BSP=`TARGET=APP_CY8CKIT-062S2-AI`, BGT60TR13C shield)。UDP 目标 `192.168.31.236:9988` 硬编码在 [udp_server.c:175](radar_wifi/source/udp_server.c#L175)。
 
 ---
 
@@ -1119,7 +1119,7 @@ pytest tests/ -v
 15. **M55 有顶层双模式**: 上电默认 Guard（snore + cloud always-on STT 求助词）；Dialogue 严格暂停守护并启用多轮 LLM/TTS。不要再把 `g_snore_guard_enabled` 当成完整设备模式，真值是 `g_app.operating_mode`。
 16. **`M33_AHT20/` 是 SDK blink 模板,不是本项目代码**: 仅 [Edgi_Talk_M33_AHT20/](Edgi_Talk_M33_AHT20/) 才是真项目 (带 env_sensor_m33 + shared mem)。两个目录 boards/libraries **完全相同**,只 applications 层不同——别烧错。
 17. **M33 烧录走 extended-boot 流程**: `SConstruct` post-build 调 `edgeprotecttools run-config`,两阶段 (relocate + merge),少了它 secure-M33 不会带 NS app。Secure M33 (`proj_cm33_s_signed.hex`) 是一次性预签名产物,通常不重烧。
-18. **`radar_wifi/source/udp_server.c` 目标 IP 硬编码 `192.168.0.102:9988`**: 更换后端电脑地址时必须同步修改并重烧。仓库里的 `udp_server.py` 是 upstream mtb-example 的 LED toggle 脚本,跟雷达固件无关。
+18. **`radar_wifi/source/udp_server.c` 目标 IP 硬编码 `192.168.31.236:9988`**: 更换后端电脑地址时必须同步修改并重烧。仓库里的 `udp_server.py` 是 upstream mtb-example 的 LED toggle 脚本,跟雷达固件无关。
 19. **`/api/...` REST 端点不存在**: M55 WebNet 只挂 `wifi_connect` 和 `wifi_scan` 两个 CGI (表单调 URL 提交,不是 JSON);`/flash/backend_config.json` **不**走 webnet,只能 MSH 改。
 20. **ADC 是电池电压,不是 MIC**: `adc1` ch0 测 P8.4 上的分压电阻;MIC 走 ES8388 codec。`INIT_APP_EXPORT` 默认注释掉,线程不启。
 21. **PWM 是 LCD 背光,不是 LED 调色**: `pwm18` ch0 给 LCD;LED 是 GPIO (P16.5/6/7),亮度不能调只能开关。

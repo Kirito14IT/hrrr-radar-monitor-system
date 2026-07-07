@@ -8,6 +8,9 @@ import sleep_dashboard from '../views/sleep_dashboard.vue'
 import alert_center from '../views/alert_center.vue'
 import project_intro from '../views/project_intro.vue'
 import environment_analysis from '../views/environment_analysis.vue'
+import nurse_station from '../views/nurse_station.vue'
+import bed_detail from '../views/bed_detail.vue'
+import ward_big_screen from '../views/ward_big_screen.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -18,6 +21,18 @@ const router = createRouter({
       component: manage,
       redirect: '/manage/project_intro',
       children: [
+        {
+          path: 'nurse_station',
+          name: 'nurse_station',
+          meta: { title: '床位监视屏' },
+          component: nurse_station,
+        },
+        {
+          path: 'bed/:bedId',
+          name: 'bed_detail',
+          meta: { title: '床位详情' },
+          component: bed_detail,
+        },
         {
           path: 'project_intro',
           name: 'project_intro',
@@ -61,6 +76,12 @@ const router = createRouter({
           component: breath_pic,
         },
       ],
+    },
+    {
+      path: '/ward-screen',
+      name: 'ward_big_screen',
+      meta: { title: '床位监护大屏' },
+      component: ward_big_screen,
     },
     { path: '/login', component: login },
   ],

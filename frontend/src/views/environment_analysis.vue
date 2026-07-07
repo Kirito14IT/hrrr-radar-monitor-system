@@ -17,7 +17,7 @@
       <span>{{ status.active_emergency?.message || '请立即确认床旁情况' }}</span>
     </section>
 
-    <section class="score-band" :class="scoreLevel">
+    <section class="score-band care-icon-card" :class="scoreLevel" data-icon="ENV">
       <div class="score-gauge" :style="scoreGaugeStyle">
         <div>
           <strong>{{ environmentScore ?? '--' }}</strong>
@@ -29,16 +29,39 @@
         <h2>{{ scoreLabel }}</h2>
       </div>
       <div class="score-factors">
-        <div v-for="factor in scoreFactors" :key="factor.key">
-          <span>{{ factor.label }}</span>
-          <strong>{{ factor.value === null ? '--' : factor.value }}</strong>
+        <div v-for="factor in scoreFactors" :key="factor.key" class="score-factor" :class="factor.key">
+          <span class="factor-icon" aria-hidden="true">
+            <svg v-if="factor.key === 'temperature'" viewBox="0 0 24 24">
+              <path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0Z" />
+              <path d="M12 8v8" />
+            </svg>
+            <svg v-else-if="factor.key === 'humidity'" viewBox="0 0 24 24">
+              <path d="M12 3.5s6 6.12 6 10.25A6 6 0 0 1 6 13.75C6 9.62 12 3.5 12 3.5Z" />
+              <path d="M9.5 15.2c.72 1.14 1.62 1.7 2.7 1.7" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24">
+              <path d="M12 20V9" />
+              <path d="M12 13c-4.2 0-6.8-2.4-7.5-7.2 4.8.5 7.5 2.8 7.5 7.2Z" />
+              <path d="M12 14c4.2 0 6.8-2.4 7.5-7.2-4.8.5-7.5 2.8-7.5 7.2Z" />
+            </svg>
+          </span>
+          <div>
+            <span>{{ factor.label }}</span>
+            <strong>{{ factor.value === null ? '--' : factor.value }}</strong>
+          </div>
         </div>
       </div>
     </section>
 
     <section class="metric-grid">
       <article class="metric-card temperature">
-        <div class="metric-icon" aria-hidden="true">°C</div>
+        <div class="metric-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M14 14.76V5a2 2 0 0 0-4 0v9.76a4 4 0 1 0 4 0Z" />
+            <path d="M12 8v8" />
+          </svg>
+          <span>°C</span>
+        </div>
         <div class="metric-heading">
           <span>室内温度</span>
           <strong>{{ formatNumber(status.temperature_c, '°C') }}</strong>
@@ -50,7 +73,13 @@
       </article>
 
       <article class="metric-card humidity">
-        <div class="metric-icon" aria-hidden="true">%RH</div>
+        <div class="metric-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 3.5s6 6.12 6 10.25A6 6 0 0 1 6 13.75C6 9.62 12 3.5 12 3.5Z" />
+            <path d="M9.5 15.2c.72 1.14 1.62 1.7 2.7 1.7" />
+          </svg>
+          <span>%RH</span>
+        </div>
         <div class="metric-heading">
           <span>相对湿度</span>
           <strong>{{ formatNumber(status.humidity_pct, '%') }}</strong>
@@ -62,7 +91,14 @@
       </article>
 
       <article class="metric-card sound">
-        <div class="metric-icon" aria-hidden="true">dB</div>
+        <div class="metric-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24">
+            <path d="M4 13h3l4 5V6l-4 5H4v2Z" />
+            <path d="M15.5 9.5a4 4 0 0 1 0 5" />
+            <path d="M18.5 7a8 8 0 0 1 0 10" />
+          </svg>
+          <span>dB</span>
+        </div>
         <div class="metric-heading">
           <span>环境声音</span>
           <strong>{{ formatDbfs(currentDbfs) }}</strong>
@@ -102,56 +138,6 @@
         <div v-if="!hasSoundData" class="chart-empty">等待麦克风上传相对声级</div>
       </article>
 
-      <article class="device-panel care-glass-card">
-        <div class="section-heading">
-          <div>
-            <h2>开发板连接状态</h2>
-          </div>
-          <span class="overall-dot" :class="{ online: edgiOnline }"></span>
-        </div>
-
-        <div class="device-list">
-          <div class="device-row">
-            <span class="device-status" :class="{ online: status.environment_board_online }"></span>
-            <div>
-              <strong>AHT20 温湿度采集</strong>
-            </div>
-            <span>{{ formatAge(status.environment_age_seconds) }}</span>
-          </div>
-          <div class="device-row">
-            <span class="device-status" :class="{ online: status.snore_board_online, paused: status.snore_paused && edgiOnline }"></span>
-            <div>
-              <strong>M55 麦克风分析</strong>
-            </div>
-            <span>{{ snoreStatusText }}</span>
-          </div>
-          <div class="device-row">
-            <span class="device-status" :class="{ online: status.voice_board_online }"></span>
-            <div>
-              <strong>小智语音服务</strong>
-            </div>
-            <span>{{ formatAge(status.voice_age_seconds) }}</span>
-          </div>
-        </div>
-      </article>
-    </section>
-
-    <section class="recommendation-band">
-      <div class="section-heading">
-        <div>
-          <h2>环境改善建议</h2>
-        </div>
-        <span class="advice-count">{{ recommendations.length }} 项</span>
-      </div>
-      <div class="recommendation-list">
-        <article v-for="item in recommendations" :key="item.title" :class="item.level">
-          <span class="priority">{{ item.priority }}</span>
-          <div>
-            <strong>{{ item.title }}</strong>
-            <p>{{ item.detail }}</p>
-          </div>
-        </article>
-      </div>
     </section>
 
     <p v-if="error" class="page-error">{{ error }}</p>
@@ -164,8 +150,10 @@ import { Refresh } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import request from '@/utils/request'
 import { useThemeStore } from '@/stores/themeStore'
+import { useBedStore } from '@/stores/bedStore'
 
 const theme = useThemeStore()
+const bedStore = useBedStore()
 const loading = ref(false)
 const error = ref('')
 const updatedAt = ref(null)
@@ -201,7 +189,7 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 const currentDbfs = computed(() => {
   if (isNumber(status.snore_dbfs)) return Number(status.snore_dbfs)
   if (isNumber(status.last_audio_dbfs)) return Number(status.last_audio_dbfs)
-  const values = timeline.value.map(row => row.snore_dbfs).filter(isNumber)
+  const values = timeline.value.map(row => row.snore_dbfs ?? row.last_audio_dbfs).filter(isNumber)
   return values.length ? Number(values[values.length - 1]) : null
 })
 
@@ -314,49 +302,10 @@ const soundAssessment = computed(() => {
   return '声音较强，可能干扰入睡或造成觉醒。'
 })
 
-const edgiOnline = computed(() => (
-  status.edgi_board_online ||
-  status.environment_board_online ||
-  status.snore_board_online ||
-  status.voice_board_online
-))
-const snoreStatusText = computed(() => {
-  if (status.snore_monitoring || status.snore_board_online) return '监测中'
-  if (edgiOnline.value && status.snore_paused) return '已暂停'
-  return edgiOnline.value ? '待启动' : '离线'
-})
 const hasClimateData = computed(() => timeline.value.some(row =>
   row.environment_online && (isNumber(row.temperature_c) || isNumber(row.humidity_pct))
 ))
-const hasSoundData = computed(() => timeline.value.some(row => row.snore_online && isNumber(row.snore_dbfs)))
-
-const recommendations = computed(() => {
-  const items = []
-  if (!status.environment_board_online) {
-    items.push({ level: edgiOnline.value ? 'normal' : 'critical', priority: '环境', title: '等待温湿度采样', detail: '确认 AHT20 与环境上报线程运行。' })
-  } else if (isNumber(status.temperature_c) && Number(status.temperature_c) < 18) {
-    items.push({ level: 'warning', priority: '温度', title: '适度提高室温', detail: '建议将卧室温度缓慢调整到 18–24°C，并避免暖风直吹。' })
-  } else if (isNumber(status.temperature_c) && Number(status.temperature_c) > 24) {
-    items.push({ level: 'warning', priority: '温度', title: '降低闷热感', detail: '适当降温或提前通风，睡前避免持续高温环境。' })
-  }
-
-  if (status.environment_board_online && isNumber(status.humidity_pct) && Number(status.humidity_pct) < 40) {
-    items.push({ level: 'warning', priority: '湿度', title: '改善空气干燥', detail: '可使用加湿器或放置清水，目标湿度建议保持在 40–60%。' })
-  } else if (status.environment_board_online && isNumber(status.humidity_pct) && Number(status.humidity_pct) > 60) {
-    items.push({ level: 'warning', priority: '湿度', title: '加强通风或除湿', detail: '高湿环境可能增加闷热感，建议控制在 40–60%。' })
-  }
-
-  if (!status.snore_board_online) {
-    items.push({ level: 'normal', priority: '声音', title: status.snore_paused ? '呼噜监测已暂停' : '等待声音监测', detail: '可在开发板主页继续呼噜监测。' })
-  } else if (isNumber(currentDbfs.value) && Number(currentDbfs.value) > -45) {
-    items.push({ level: 'warning', priority: '声音', title: '排查持续环境声源', detail: '关注空调、风扇、窗外交通或设备震动；当前数值越接近 0，声音通常越强。' })
-  }
-
-  if (!items.length) {
-    items.push({ level: 'good', priority: '保持', title: '继续维持当前环境', detail: '温度、湿度与声音均处于较适宜状态，建议保持稳定并减少睡前频繁调整。' })
-  }
-  return items
-})
+const hasSoundData = computed(() => timeline.value.some(row => isNumber(row.snore_dbfs ?? row.last_audio_dbfs)))
 
 const updatedText = computed(() => updatedAt.value
   ? `更新于 ${updatedAt.value.toLocaleTimeString('zh-CN', { hour12: false })}`
@@ -480,7 +429,7 @@ function soundChartOption() {
         smooth: true,
         showSymbol: false,
         connectNulls: false,
-        data: timeline.value.map(row => row.snore_online && isNumber(row.snore_dbfs) ? Number(row.snore_dbfs) : null),
+        data: timeline.value.map(row => isNumber(row.snore_dbfs ?? row.last_audio_dbfs) ? Number(row.snore_dbfs ?? row.last_audio_dbfs) : null),
         lineStyle: { width: 2, color: '#f59e0b' },
         areaStyle: { color: 'rgba(245,158,11,.08)' }
       }
@@ -506,8 +455,8 @@ async function loadEnvironment() {
   error.value = ''
   try {
     const [statusResult, timelineResult] = await Promise.all([
-      request.get('/status'),
-      request.get('/timeline', { params: { seconds: 1800 } })
+      request.get('/status', { params: { bed_id: bedStore.selectedBedId } }),
+      request.get('/timeline', { params: { seconds: 1800, bed_id: bedStore.selectedBedId } })
     ])
     Object.assign(status, {
       environment_board_online: !!statusResult.environment_board_online,
@@ -602,8 +551,7 @@ onBeforeUnmount(() => {
 .environment-header p,
 .score-copy p,
 .metric-card p,
-.data-note p,
-.recommendation-list p {
+.data-note p {
   margin: 0;
   color: var(--care-muted);
   line-height: 1.65;
@@ -696,11 +644,50 @@ onBeforeUnmount(() => {
   border-left: 1px solid var(--care-divider);
 }
 
-.score-factors > div {
+.score-factor {
   display: grid;
-  gap: 5px;
+  grid-template-columns: 54px 1fr;
+  align-items: center;
+  gap: 14px;
   padding: 8px 22px;
   border-right: 1px solid var(--care-divider);
+}
+
+.factor-icon {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #eef4ff;
+  color: var(--care-primary);
+  box-shadow: inset 0 0 0 1px rgba(50, 91, 242, .08);
+}
+
+.factor-icon svg,
+.metric-icon svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.score-factor.temperature .factor-icon {
+  background: #eef4ff;
+  color: #325bf2;
+}
+
+.score-factor.humidity .factor-icon {
+  background: #eef8ff;
+  color: #0ea5e9;
+}
+
+.score-factor.sound .factor-icon {
+  background: #eefcf4;
+  color: #22c55e;
 }
 
 .score-factors span,
@@ -710,7 +697,7 @@ onBeforeUnmount(() => {
 
 .score-factors strong {
   color: var(--care-text-strong);
-  font-size: 26px;
+  font-size: 24px;
 }
 
 .metric-grid {
@@ -734,17 +721,28 @@ onBeforeUnmount(() => {
   width: 58px;
   height: 58px;
   display: grid;
+  grid-template-rows: 1fr auto;
   place-items: center;
   border-radius: 8px;
-  color: var(--care-text-inverse);
-  background: var(--care-text-strong);
-  font-size: 14px;
+  color: var(--care-primary);
+  background: #eef4ff;
+  font-size: 12px;
   font-weight: 900;
+  box-shadow: inset 0 0 0 1px rgba(50, 91, 242, .08);
 }
 
-.temperature .metric-icon { background: #ef4444; color: #fff; }
-.humidity .metric-icon { background: #0284c7; color: #fff; }
-.sound .metric-icon { background: #ca8a04; color: #fff; }
+.metric-icon svg {
+  margin-top: 7px;
+}
+
+.metric-icon span {
+  margin-bottom: 7px;
+  line-height: 1;
+}
+
+.temperature .metric-icon { background: #fff1f2; color: #fb7185; }
+.humidity .metric-icon { background: #eff8ff; color: #38bdf8; }
+.sound .metric-icon { background: #fff7ed; color: #fdba74; }
 
 .metric-heading {
   display: grid;
@@ -778,8 +776,10 @@ onBeforeUnmount(() => {
   background: var(--care-primary);
 }
 
-.temperature .metric-scale i { background: #ef4444; }
-.humidity .metric-scale i { background: #38bdf8; }
+.temperature .metric-scale { background: #ffe4e6; }
+.humidity .metric-scale { background: #e0f2fe; }
+.temperature .metric-scale i { background: #fda4af; }
+.humidity .metric-scale i { background: #93c5fd; }
 
 .sound-bars {
   height: 28px;
@@ -798,23 +798,18 @@ onBeforeUnmount(() => {
 .sound-bars i:nth-child(2n) { height: 42%; }
 .sound-bars i:nth-child(3n) { height: 68%; }
 .sound-bars i:nth-child(5n) { height: 92%; }
-.sound-bars i.active { background: var(--care-warning); }
+.sound-bars i.active { background: #fed7aa; }
 
 .analysis-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(330px, .75fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
 }
 
-.trend-panel,
-.device-panel {
+.trend-panel {
   position: relative;
   padding: 20px;
   border-radius: 8px;
-}
-
-.climate-panel {
-  grid-column: 1 / -1;
 }
 
 .section-heading {
@@ -847,73 +842,14 @@ onBeforeUnmount(() => {
 
 .environment-chart {
   width: 100%;
-  height: 300px;
-}
-
-.climate-chart {
-  height: 340px;
+  height: 260px;
 }
 
 .chart-empty {
   position: absolute;
-  inset: 155px 20px auto;
+  inset: 138px 20px auto;
   color: var(--care-muted);
   text-align: center;
-}
-
-.overall-dot,
-.device-status {
-  border-radius: 50%;
-  background: var(--care-danger);
-}
-
-.overall-dot {
-  width: 14px;
-  height: 14px;
-  box-shadow: 0 0 0 6px var(--care-danger-soft);
-}
-
-.overall-dot.online,
-.device-status.online {
-  background: var(--care-success);
-}
-
-.device-status.paused {
-  background: var(--care-warning);
-}
-
-.device-list {
-  display: grid;
-  margin-top: 12px;
-}
-
-.device-row {
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 16px 0;
-  border-bottom: 1px solid var(--care-divider);
-}
-
-.device-status {
-  width: 10px;
-  height: 10px;
-}
-
-.device-row div {
-  display: grid;
-  gap: 3px;
-}
-
-.device-row strong {
-  color: var(--care-text-strong);
-}
-
-.device-row small,
-.device-row > span:last-child {
-  color: var(--care-muted);
-  font-size: 12px;
 }
 
 .data-note {
@@ -930,61 +866,6 @@ onBeforeUnmount(() => {
 .data-note p {
   margin-top: 6px;
   font-size: 12px;
-}
-
-.recommendation-band {
-  padding: 20px;
-  border: 1px solid var(--care-border);
-  border-radius: 8px;
-  background: var(--care-surface);
-  box-shadow: var(--care-shadow-card);
-}
-
-.advice-count {
-  padding: 5px 10px;
-  border-radius: 4px;
-  color: var(--care-primary-strong) !important;
-  background: var(--care-primary-soft);
-}
-
-.recommendation-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 10px;
-}
-
-.recommendation-list article {
-  display: grid;
-  grid-template-columns: 52px 1fr;
-  gap: 14px;
-  padding: 15px;
-  border: 1px solid var(--care-border-soft);
-  border-left: 4px solid var(--care-primary);
-  background: var(--care-surface-soft);
-}
-
-.recommendation-list article.warning { border-left-color: var(--care-warning); }
-.recommendation-list article.critical { border-left-color: var(--care-danger); }
-
-.priority {
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border-radius: 4px;
-  color: var(--care-text-strong);
-  background: var(--care-surface-muted);
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.recommendation-list strong {
-  color: var(--care-text-strong);
-}
-
-.recommendation-list p {
-  margin-top: 4px;
-  font-size: 13px;
 }
 
 .page-error {
@@ -1015,8 +896,7 @@ onBeforeUnmount(() => {
     flex-direction: column;
   }
 
-  .metric-grid,
-  .recommendation-list {
+  .metric-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1043,7 +923,7 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
-  .score-factors > div {
+  .score-factor {
     border-right: 0;
     border-bottom: 1px solid var(--care-divider);
   }
@@ -1056,7 +936,7 @@ onBeforeUnmount(() => {
   }
 
   .environment-chart {
-    height: 330px;
+    height: 240px;
   }
 }
 </style>

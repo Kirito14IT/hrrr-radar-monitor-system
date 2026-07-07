@@ -218,7 +218,7 @@ def create_software_diagram():
     text_box(d, audio, ["唯一打开 mic0", "PCM 环形缓冲分发"], title="共享音频采集中心", title_size=28, body_size=25)
     text_box(d, voice, ["唤醒词 / 用户按键", "Opus 上传 / STT / TTS"], title="小智语音任务", title_size=30, body_size=25)
     text_box(d, snore, ["2 s 滑窗", "INT8 Conv2D 推理", "分数 / dBFS"], title="呼噜检测任务", title_size=30, body_size=25)
-    text_box(d, imu, ["I2C 读取 LSM6DS3", "自由落体 / 跌落判断"], title="IMU 监测任务", title_size=30, body_size=25)
+    text_box(d, imu, ["I2C 读取 LSM6DS3", "自由落体 / 摇晃判断"], title="IMU 监测任务", title_size=30, body_size=25)
     text_box(d, ui, ["主页 / SOS / 解除", "闹钟 / 报警 / 推理结果"], title="LVGL UI 状态机", title_size=30, body_size=25)
     text_box(d, report, ["Wi-Fi 管理 / Flash 配置", "hardware/* / emergency"], title="网络上报任务", title_size=30, body_size=25)
     arrow(d, [(430, 682), (470, 682)])

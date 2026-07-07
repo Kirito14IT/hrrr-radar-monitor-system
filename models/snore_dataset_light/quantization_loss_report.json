@@ -1,0 +1,241 @@
+{
+  "dataset": "D:\\STUDY\\Snoring Dataset",
+  "test_split": {
+    "train_files": 700,
+    "val_files": 150,
+    "test_files": 150,
+    "train_features_with_augmentation": 3500,
+    "class_balance_test": {
+      "no_snore": 75,
+      "snore": 75
+    }
+  },
+  "threshold": 0.6,
+  "float_model": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_dataset_light\\snore_dataset_light.keras",
+  "int8_model": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_dataset_light\\snore_dataset_light_int8.tflite",
+  "float_model_bytes": 110759,
+  "int8_model_bytes": 13512,
+  "model_size_delta_bytes": -97247,
+  "model_size_reduction_pct": 87.80053991097789,
+  "float_expanded_metrics": {
+    "count": 150,
+    "positive": 75,
+    "negative": 75,
+    "tp": 72,
+    "fp": 4,
+    "fn": 3,
+    "tn": 71,
+    "accuracy": 0.9533333333333334,
+    "precision_ppv": 0.9473684210526315,
+    "recall_sensitivity": 0.96,
+    "specificity_tnr": 0.9466666666666667,
+    "npv": 0.9594594594594594,
+    "f1": 0.9536423841059603,
+    "f0_5": 0.9498680738786277,
+    "f2": 0.957446808510638,
+    "balanced_accuracy": 0.9533333333333334,
+    "mcc": 0.9067472700065305,
+    "fpr": 0.05333333333333334,
+    "fnr": 0.04,
+    "false_alarm_rate": 0.05333333333333334,
+    "miss_rate": 0.04,
+    "roc_auc": 0.9873777777777778,
+    "threshold": 0.6
+  },
+  "int8_expanded_metrics": {
+    "count": 150,
+    "positive": 75,
+    "negative": 75,
+    "tp": 72,
+    "fp": 4,
+    "fn": 3,
+    "tn": 71,
+    "accuracy": 0.9533333333333334,
+    "precision_ppv": 0.9473684210526315,
+    "recall_sensitivity": 0.96,
+    "specificity_tnr": 0.9466666666666667,
+    "npv": 0.9594594594594594,
+    "f1": 0.9536423841059603,
+    "f0_5": 0.9498680738786277,
+    "f2": 0.957446808510638,
+    "balanced_accuracy": 0.9533333333333334,
+    "mcc": 0.9067472700065305,
+    "fpr": 0.05333333333333334,
+    "fnr": 0.04,
+    "false_alarm_rate": 0.05333333333333334,
+    "miss_rate": 0.04,
+    "roc_auc": 0.9883555555555555,
+    "threshold": 0.6
+  },
+  "current_deployed_expanded_metrics": {
+    "count": 150,
+    "positive": 75,
+    "negative": 75,
+    "tp": 17,
+    "fp": 0,
+    "fn": 58,
+    "tn": 75,
+    "accuracy": 0.6133333333333333,
+    "precision_ppv": 1.0,
+    "recall_sensitivity": 0.22666666666666666,
+    "specificity_tnr": 1.0,
+    "npv": 0.5639097744360902,
+    "f1": 0.3695652173913044,
+    "f0_5": 0.5944055944055944,
+    "f2": 0.26813880126182965,
+    "balanced_accuracy": 0.6133333333333333,
+    "mcc": 0.35751859933740576,
+    "fpr": 0.0,
+    "fnr": 0.7733333333333333,
+    "false_alarm_rate": 0.0,
+    "miss_rate": 0.7733333333333333,
+    "roc_auc": 0.8575111111111111,
+    "threshold": 0.6
+  },
+  "quantization_delta": [
+    {
+      "metric": "accuracy",
+      "float": 0.9533333333333334,
+      "int8": 0.9533333333333334,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "precision_ppv",
+      "float": 0.9473684210526315,
+      "int8": 0.9473684210526315,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "recall_sensitivity",
+      "float": 0.96,
+      "int8": 0.96,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "specificity_tnr",
+      "float": 0.9466666666666667,
+      "int8": 0.9466666666666667,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "npv",
+      "float": 0.9594594594594594,
+      "int8": 0.9594594594594594,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "f1",
+      "float": 0.9536423841059603,
+      "int8": 0.9536423841059603,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "f0_5",
+      "float": 0.9498680738786277,
+      "int8": 0.9498680738786277,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "f2",
+      "float": 0.957446808510638,
+      "int8": 0.957446808510638,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "balanced_accuracy",
+      "float": 0.9533333333333334,
+      "int8": 0.9533333333333334,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "mcc",
+      "float": 0.9067472700065305,
+      "int8": 0.9067472700065305,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "fpr",
+      "float": 0.05333333333333334,
+      "int8": 0.05333333333333334,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "fnr",
+      "float": 0.04,
+      "int8": 0.04,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "false_alarm_rate",
+      "float": 0.05333333333333334,
+      "int8": 0.05333333333333334,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "miss_rate",
+      "float": 0.04,
+      "int8": 0.04,
+      "delta_int8_minus_float": 0.0,
+      "relative_delta_pct": 0.0
+    },
+    {
+      "metric": "roc_auc",
+      "float": 0.9873777777777778,
+      "int8": 0.9883555555555555,
+      "delta_int8_minus_float": 0.000977777777777744,
+      "relative_delta_pct": 0.09902772776377045
+    }
+  ],
+  "source_report": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_dataset_light\\snore_dataset_light_report.json",
+  "float_score_metrics": {
+    "average_precision_pr_auc": 0.9825587628125798,
+    "roc_auc_recomputed": 0.9873777777777778,
+    "brier_score": 0.036688619136089264,
+    "log_loss": 0.17140143197826016,
+    "mean_snore_score_positive": 0.9619045853614807,
+    "mean_snore_score_negative": 0.0615423321723938,
+    "median_snore_score_positive": 0.999934196472168,
+    "median_snore_score_negative": 0.0011814506724476814
+  },
+  "int8_score_metrics": {
+    "average_precision_pr_auc": 0.9811404569406288,
+    "roc_auc_recomputed": 0.9883555555555555,
+    "brier_score": 0.03793304443359375,
+    "log_loss": 0.13847889995242807,
+    "mean_snore_score_positive": 0.9589583277702332,
+    "mean_snore_score_negative": 0.0636979192495346,
+    "median_snore_score_positive": 0.99609375,
+    "median_snore_score_negative": 0.0
+  },
+  "score_metric_delta_int8_minus_float": {
+    "average_precision_pr_auc": -0.00141830587195102,
+    "roc_auc_recomputed": 0.000977777777777744,
+    "brier_score": 0.0012444252975044867,
+    "log_loss": -0.03292253202583209,
+    "mean_snore_score_positive": -0.0029462575912475586,
+    "mean_snore_score_negative": 0.002155587077140808,
+    "median_snore_score_positive": -0.0038404464721679688,
+    "median_snore_score_negative": -0.0011814506724476814
+  },
+  "score_alignment": {
+    "mean_abs_score_diff": 0.0033202923368662596,
+    "median_abs_score_diff": 0.00253140926361084,
+    "max_abs_score_diff": 0.06217336654663086,
+    "mean_signed_score_diff": -0.00039536296389997005,
+    "pearson_corr": 0.9998766188564069,
+    "spearman_corr": 0.9055389128405708
+  }
+}

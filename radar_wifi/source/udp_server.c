@@ -172,12 +172,12 @@ void udp_server_task(void *arg)
                                           ((uint32_t) a))
 
 // 目标服务器IP和端口配置
-#define UDP_SERVER_IP_ADDRESS             MAKE_IPV4_ADDRESS(192, 168, 0, 102)
+#define UDP_SERVER_IP_ADDRESS             MAKE_IPV4_ADDRESS(192, 168, 31, 236)
 #define UDP_SERVER_PORT                   (9988)
     cy_socket_sockaddr_t udp_server_addr = {
-            .ip_address.ip.v4 = UDP_SERVER_IP_ADDRESS,
+            .ip_address.ip.v4 = RADAR_UDP_SERVER_IP_ADDRESS,
             .ip_address.version = CY_SOCKET_IP_VER_V4,
-            .port = UDP_SERVER_PORT
+            .port = RADAR_UDP_SERVER_PORT
         };
 
     void radar_init();
@@ -198,7 +198,7 @@ void udp_server_task(void *arg)
                                              &udp_server_addr, sizeof(cy_socket_sockaddr_t), &bytes_sent);
                     if(result == CY_RSLT_SUCCESS )
                     {
-                        //printf("Data with length:%" PRIu32 " sent to udp client\n", bytes_sent);
+                        printf("Data with length:%" PRIu32 " sent to udp client\n", bytes_sent);
                         if (msg->cmd == RADAR_DATA_COMMAND)
                         {
                             radar_status_led_set_transmitting();

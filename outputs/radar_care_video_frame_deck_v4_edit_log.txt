@@ -1,0 +1,9 @@
+changed=8
+after={"kind":"textbox","id":"sh/kb6xkf6d","slide":1,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[426,596,790,22]}
+{"kind":"textbox","id":"sh/l0rqd4vm","slide":2,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[426,596,790,22]}
+{"kind":"textbox","id":"sh/e1w7mp0b","slide":3,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[426,596,790,22]}
+{"kind":"textbox","id":"sh/orytsvu9","slide":4,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[426,596,790,22]}
+{"kind":"textbox","id":"sh/6psfil0r","slide":5,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[426,596,790,22]}
+{"kind":"textbox","id":"sh/gvy90je9","slide":6,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[426,596,790,22]}
+{"kind":"textbox","id":"sh/psfil0rq","slide":7,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[426,596,790,22]}
+{"kind":"textbox","id":"sh/sfil0rqd","slide":8,"text":"把录好的视频拖入此框，保持 16:9 裁切","textPreview":"把录好的视频拖入此框，保持 16:9 裁切","textChars":21,"textLines":1,"bbox":[426,596,790,22]}

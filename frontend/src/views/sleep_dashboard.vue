@@ -1,6 +1,6 @@
 <template>
   <div class="sleep-page care-page-shell">
-    <div class="hero-panel care-glass-card">
+    <div class="hero-panel care-glass-card care-icon-card" data-icon="BR">
       <div>
         <h1>睡眠看护驾驶舱</h1>
       </div>
@@ -19,27 +19,8 @@
       </div>
     </div>
 
-    <div class="device-row">
-      <div class="device-pill" :class="{ online: radarBoardReady, warning: radarBoardUnstable }">
-        <span class="pulse"></span>
-        雷达板 {{ radarDeviceText }}
-      </div>
-      <div class="device-pill" :class="{ online: edgiBoardOnline, warning: edgiBoardNeedsAttention }">
-        <span class="pulse"></span>
-        Edgi E84 {{ edgiDeviceText }}
-      </div>
-      <div v-if="devices.emergency_active" class="device-pill emergency">
-        紧急求助
-      </div>
-      <div v-if="apneaCount > 0" class="device-pill apnea">
-        疑似暂停 {{ apneaCount }}
-      </div>
-      <div class="device-pill muted">音频片段 {{ devices.audio_upload_count ?? '--' }} 次</div>
-      <div class="device-pill muted">数据点 {{ overview.stats?.points ?? 0 }}</div>
-    </div>
-
     <div class="dashboard-grid">
-      <section class="score-card care-glass-card">
+      <section class="score-card care-glass-card care-icon-card" data-icon="评">
         <div class="section-title">睡眠评分</div>
         <div class="score-layout">
           <div class="score-ring" :style="scoreStyle">
@@ -61,7 +42,7 @@
         </div>
       </section>
 
-      <section class="event-card care-glass-card">
+      <section class="event-card care-glass-card care-icon-card" data-icon="事">
         <div class="section-header">
           <div class="section-title">夜间守护事件流</div>
           <select v-model="eventFilter" class="dark-select">
@@ -102,12 +83,14 @@
       <section class="heat-card care-glass-card">
         <div class="section-header">
           <div>
-            <div class="section-title">呼噜扰动地图</div>
+            <div class="section-title">呼噜影响时间轴</div>
+            <p class="section-subtitle">每个格子代表一个时间段；颜色越深，说明呼噜越明显或伴随生命体征波动越大。</p>
           </div>
-          <div class="worst-box">
-            <span>最强扰动</span>
-            <strong>{{ worstLabel }}</strong>
-          </div>
+        </div>
+        <div class="heat-legend" aria-label="呼噜影响程度图例">
+          <span><i class="normal"></i>轻微</span>
+          <span><i class="warning"></i>需关注</span>
+          <span><i class="critical"></i>明显影响</span>
         </div>
         <div class="heatmap">
           <div
@@ -119,16 +102,21 @@
             :title="heatTooltip(cell)"
           >
             <span>{{ cell.label }}</span>
+            <strong>{{ heatPercent(cell) }}%</strong>
+            <small>{{ heatEvents(cell) }}</small>
           </div>
           <div v-if="heatmap.length === 0" class="empty-state wide">
-            暂无呼噜数据
+            暂无呼噜片段。若开发板在线但这里为空，表示当前时间范围内没有确认呼噜事件。
           </div>
+        </div>
+        <div v-if="heatmap.length" class="heat-summary">
+          {{ heatSummary }}
         </div>
       </section>
     </div>
 
     <div class="stability-grid">
-      <div v-for="card in stabilityCards" :key="card.key" class="stability-card care-glass-card">
+      <div v-for="card in stabilityCards" :key="card.key" class="stability-card care-glass-card care-icon-card" :data-icon="stabilityIcon(card)">
         <div class="mini-title">{{ card.title }}</div>
         <div class="mini-value">{{ card.value }}<span>{{ card.unit }}</span></div>
         <div class="mini-bar"><i :style="{ width: `${card.value}%` }"></i></div>
@@ -141,8 +129,10 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import request from '@/utils/request'
 import { useUserStore } from '@/stores/userStore'
+import { useBedStore } from '@/stores/bedStore'
 
 const userStore = useUserStore()
+const bedStore = useBedStore()
 
 const mode = ref('live')
 const seconds = ref(1800)
@@ -165,72 +155,16 @@ const devices = computed(() => overview.devices || {})
 const score = computed(() => overview.score || { score: 0, label: '等待数据', summary: '', penalties: [] })
 const heatmap = computed(() => overview.heatmap || [])
 const stabilityCards = computed(() => overview.stability_cards || [])
-const apneaCount = computed(() => Number(overview.stats?.suspected_apnea_count || 0))
 const topPenalties = computed(() => (score.value.penalties || []).slice(0, 4))
-const radarBoardUnstable = computed(() => Boolean(devices.value.radar_board_online && devices.value.radar_board_stationary === false))
-const radarBoardReady = computed(() => Boolean(devices.value.radar_board_online && !radarBoardUnstable.value))
-const radarDeviceText = computed(() => {
-  if (devices.value.radar_board_online === null || devices.value.radar_board_online === undefined) return '历史模式'
-  if (!devices.value.radar_board_online) return '离线'
-  return radarBoardUnstable.value ? '未静止' : '在线'
-})
 
-const comfortLabelMap = {
-  comfortable: '舒适',
-  cold: '偏冷',
-  hot: '偏热',
-  dry: '偏干',
-  humid: '偏湿',
-  cold_dry: '偏冷偏干',
-  cold_humid: '偏冷偏湿',
-  hot_dry: '偏热偏干',
-  hot_humid: '偏热偏湿',
-  cold_critical: '过冷',
-  hot_critical: '过热',
-  dry_critical: '过干',
-  humid_critical: '过湿',
-  cold_dry_critical: '过冷过干',
-  cold_humid_critical: '过冷过湿',
-  hot_dry_critical: '过热过干',
-  hot_humid_critical: '过热过湿',
-  sensor_error: '传感器异常',
-  no_data: '暂无数据',
-  offline: '离线'
+const stabilityIcon = card => {
+  const key = String(card?.key || card?.title || '').toLowerCase()
+  if (key.includes('heart') || key.includes('心')) return 'HR'
+  if (key.includes('breath') || key.includes('呼')) return 'BR'
+  if (key.includes('snore') || key.includes('鼾')) return 'SN'
+  if (key.includes('env') || key.includes('温') || key.includes('湿')) return 'ENV'
+  return 'OK'
 }
-
-const environmentNeedsAttention = computed(() => {
-  return devices.value.environment_board_online && devices.value.comfort_status !== 'comfortable'
-})
-
-const edgiBoardOnline = computed(() => (
-  devices.value.edgi_board_online ||
-  devices.value.snore_board_online ||
-  devices.value.environment_board_online ||
-  devices.value.voice_board_online
-))
-
-const edgiBoardNeedsAttention = computed(() => {
-  return Boolean(edgiBoardOnline.value && (
-    environmentNeedsAttention.value ||
-    devices.value.emergency_active
-  ))
-})
-
-const environmentDeviceText = computed(() => {
-  if (!devices.value.environment_board_online) return '暂无温湿度'
-  const temp = numberText(devices.value.temperature_c, 'C')
-  const humidity = numberText(devices.value.humidity_pct, '%RH')
-  const status = comfortLabelMap[devices.value.comfort_status] || devices.value.comfort_status || '状态未知'
-  return `${temp} / ${humidity}，${status}`
-})
-
-const edgiDeviceText = computed(() => {
-  if (!edgiBoardOnline.value) return '离线'
-  if (devices.value.emergency_active) return '紧急状态'
-  if (devices.value.snore_monitoring || devices.value.snore_board_online) return '在线 · 呼噜监测中'
-  return devices.value.snore_paused ? '在线 · 呼噜已暂停' : '在线'
-})
-
 const scoreStyle = computed(() => {
   const value = Math.max(0, Math.min(100, Number(score.value.score || 0)))
   const color = value >= 86 ? '#16a34a' : value >= 68 ? '#f59e0b' : '#ef4444'
@@ -246,6 +180,21 @@ const worstLabel = computed(() => {
   const worst = overview.worst_disturbance
   if (!worst) return '暂无'
   return `${worst.label} · ${Math.round((worst.intensity || 0) * 100)}%`
+})
+
+const heatSummary = computed(() => {
+  const cells = heatmap.value || []
+  if (!cells.length) return ''
+  const critical = cells.filter(cell => cell.severity === 'critical').length
+  const warning = cells.filter(cell => cell.severity === 'warning').length
+  const snoreEvents = cells.reduce((sum, cell) => sum + Number(cell.snore_events || 0), 0)
+  if (critical > 0) {
+    return `结论：发现 ${critical} 个明显影响时段，建议优先查看红色格子对应的事件记录。`
+  }
+  if (warning > 0) {
+    return `结论：发现 ${warning} 个需关注时段，共 ${snoreEvents} 次呼噜相关事件，建议结合呼吸暂停事件判断。`
+  }
+  return `结论：当前时间范围内呼噜影响较轻，共 ${snoreEvents} 次呼噜相关记录。`
 })
 
 const filteredEvents = computed(() => {
@@ -280,8 +229,8 @@ async function loadOverview() {
   loading.value = true
   try {
     const params = mode.value === 'history'
-      ? { mode: 'history', date: date.value, userID: userID() }
-      : { mode: 'live', seconds: seconds.value }
+      ? { mode: 'history', date: date.value, userID: userID(), bed_id: bedStore.selectedBedId }
+      : { mode: 'live', seconds: seconds.value, bed_id: bedStore.selectedBedId }
     const response = await request.get('/sleep/overview', { params })
     overview.score = response.score || overview.score
     overview.stats = response.stats || {}
@@ -329,16 +278,6 @@ function stopAutoRefresh() {
   }
 }
 
-function deviceText(value) {
-  if (value === null || value === undefined) return '历史模式'
-  return value ? '在线' : '离线'
-}
-
-function numberText(value, unit) {
-  const number = Number(value)
-  return Number.isFinite(number) ? `${number.toFixed(1)} ${unit}` : `-- ${unit}`
-}
-
 function formatTime(value) {
   if (!value) return '--:--'
   const dateValue = new Date(value)
@@ -362,7 +301,22 @@ function heatTooltip(cell) {
   const snore = Math.round((cell.avg_snore_level || 0) * 100)
   const heart = cell.heart_delta === null || cell.heart_delta === undefined ? '--' : `${cell.heart_delta >= 0 ? '+' : ''}${cell.heart_delta} BPM`
   const breath = cell.breath_delta === null || cell.breath_delta === undefined ? '--' : `${cell.breath_delta >= 0 ? '+' : ''}${cell.breath_delta} RPM`
-  return `${cell.label} 呼噜强度 ${snore}%；事件 ${cell.snore_events}；心率变化 ${heart}；呼吸变化 ${breath}`
+  return `${cell.label}：${severityText(cell)}；呼噜强度 ${snore}%；事件 ${cell.snore_events || 0}；心率变化 ${heart}；呼吸变化 ${breath}`
+}
+
+function heatPercent(cell) {
+  return Math.round(((cell?.intensity ?? cell?.avg_snore_level) || 0) * 100)
+}
+
+function heatEvents(cell) {
+  const count = Number(cell?.snore_events || 0)
+  return count > 0 ? `${count}次` : '无事件'
+}
+
+function severityText(cell) {
+  if (cell?.severity === 'critical') return '明显影响'
+  if (cell?.severity === 'warning') return '需关注'
+  return '轻微'
 }
 
 onMounted(() => {
@@ -456,69 +410,10 @@ h1 {
   box-shadow: 0 0 18px var(--care-primary-soft);
 }
 
-.device-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.device-pill {
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 13px;
-  border: 1px solid var(--care-border);
-  background: var(--care-surface-strong);
-  color: var(--care-muted);
-  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-}
-
-.device-pill.online {
-  color: var(--care-success);
-  border-color: var(--care-success);
-  background: var(--care-success-soft);
-}
-
-.device-pill.warning {
-  color: var(--care-warning);
-  border-color: var(--care-warning);
-  background: var(--care-warning-soft);
-}
-
-.device-pill.emergency {
-  color: #fff;
-  border-color: var(--care-danger);
-  background: var(--care-danger);
-}
-
-.device-pill.apnea {
-  color: #fff;
-  border-color: #dc2626;
-  background: #dc2626;
-}
-
-.device-pill.muted {
-  color: var(--care-muted-strong);
-}
-
-.pulse {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  margin-right: 7px;
-  background: var(--care-muted);
-}
-
-.online .pulse {
-  background: var(--care-success);
-  box-shadow: 0 0 12px var(--care-success);
-}
-
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(310px, 0.88fr);
-  grid-template-rows: 184px 210px;
+  grid-template-rows: 184px 246px;
   gap: 10px;
 }
 
@@ -739,42 +634,99 @@ h1 {
 .heat-card {
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .worst-box {
   text-align: right;
   color: var(--care-muted);
   font-size: 12px;
+  flex: 0 0 auto;
 }
 
 .worst-box strong {
-  display: inline;
-  margin-left: 5px;
+  display: block;
+  margin-top: 3px;
   color: var(--care-warning);
   font-size: 15px;
 }
 
+.heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 7px;
+  color: var(--care-muted);
+  font-size: 11px;
+}
+
+.heat-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid var(--care-border-soft);
+  border-radius: 999px;
+  background: var(--care-surface-2);
+}
+
+.heat-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #38bdf8;
+}
+
+.heat-legend i.warning {
+  background: #a855f7;
+}
+
+.heat-legend i.critical {
+  background: #ef4444;
+}
+
 .heatmap {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
-  gap: 5px;
-  margin-top: 6px;
-  max-height: 156px;
+  grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  gap: 6px;
+  margin-top: 0;
+  max-height: 132px;
   overflow: auto;
+  padding-right: 2px;
 }
 
 .heat-cell {
-  min-height: 34px;
-  border-radius: 6px;
+  min-height: 58px;
+  border-radius: 10px;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: 4px;
-  font-size: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 7px;
+  font-size: 11px;
   color: var(--care-text-strong);
   background: linear-gradient(180deg, rgba(56, 189, 248, calc(.18 + var(--level) * .3)), var(--care-surface-2));
   border: 1px solid var(--care-border-soft);
   transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.heat-cell span {
+  color: var(--care-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.heat-cell strong {
+  color: var(--care-text-strong);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.heat-cell small {
+  color: var(--care-muted-strong);
+  font-size: 10px;
+  line-height: 1;
 }
 
 .heat-cell.warning {
@@ -786,6 +738,17 @@ h1 {
   background: linear-gradient(180deg, rgba(239, 68, 68, calc(.32 + var(--level) * .38)), var(--care-surface-2));
   border-color: var(--care-danger);
   box-shadow: 0 0 18px var(--care-danger-soft);
+}
+
+.heat-summary {
+  margin-top: 7px;
+  padding: 7px 9px;
+  border: 1px solid var(--care-border-soft);
+  border-radius: 10px;
+  color: var(--care-muted-strong);
+  background: var(--care-surface-2);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .stability-grid {

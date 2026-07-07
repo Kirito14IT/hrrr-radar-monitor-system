@@ -1,21 +1,17 @@
 <template>
   <div class="history-workspace care-page-shell">
-    <section class="history-hero care-glass-card">
+    <section class="history-hero care-glass-card care-icon-card" data-icon="LOG">
       <div>
         <h1>历史数据</h1>
       </div>
-      <div class="hero-status" :class="analysisStatusClass">
-        <span>{{ analysisStatusText }}</span>
-        <strong>{{ store.aiLoading ? '生成中' : reportStateLabel }}</strong>
-      </div>
     </section>
 
-    <div v-if="!userID" class="login-empty care-glass-card">
+    <div v-if="!userID" class="login-empty care-glass-card care-icon-card" data-icon="LOCK">
       <h2>请先登录以查看数据</h2>
     </div>
 
     <template v-else>
-      <section class="toolbar-card care-glass-card">
+      <section class="toolbar-card care-glass-card care-icon-card" data-icon="筛">
         <div class="field-block">
           <label for="history-date">日期筛选</label>
           <el-date-picker
@@ -31,8 +27,8 @@
           <el-button type="primary" :loading="store.loading" @click="load">
             查询数据
           </el-button>
-          <el-button type="success" :loading="store.aiLoading" @click="runAiAnalysis">
-            AI 分析
+          <el-button type="success" :loading="store.aiLoading" @click="runAiAnalysisStream">
+            AI 流式分析
           </el-button>
           <el-button @click="reset">重置</el-button>
         </div>
@@ -40,14 +36,14 @@
       </section>
 
       <section class="metric-grid">
-        <article v-for="card in metricCards" :key="card.key" class="metric-card care-glass-card">
+        <article v-for="card in metricCards" :key="card.key" class="metric-card care-glass-card care-icon-card" :data-icon="card.icon">
           <span>{{ card.title }}</span>
           <strong>{{ card.value }}</strong>
         </article>
       </section>
 
       <section class="content-grid">
-        <article class="table-card care-glass-card">
+        <article class="table-card care-glass-card care-icon-card" data-icon="表">
           <div class="section-heading">
             <div>
               <h2>历史生命体征记录</h2>
@@ -89,6 +85,16 @@
                 </span>
               </template>
             </el-table-column>
+            <el-table-column label="呼噜" min-width="150">
+              <template #default="{ row }">
+                <span class="vital-cell">
+                  <el-tag size="small" :type="snoreTag(row).type">
+                    {{ snoreTag(row).label }}
+                  </el-tag>
+                  <strong v-if="snoreTag(row).scoreText">{{ snoreTag(row).scoreText }}</strong>
+                </span>
+              </template>
+            </el-table-column>
           </el-table>
 
           <div class="pagination-row">
@@ -104,41 +110,45 @@
             />
           </div>
         </article>
+      </section>
 
-        <aside class="ai-panel care-glass-card">
-          <div class="section-heading compact">
-            <div>
-              <h2>AI / 本地健康分析</h2>
-            </div>
+      <section class="ai-panel care-glass-card care-icon-card" data-icon="AI">
+        <div class="section-heading compact">
+          <div>
+            <h2>AI / 本地健康分析</h2>
           </div>
+        </div>
 
-          <div class="provider-row">
-            <span v-if="store.aiProvider" class="provider-badge" :class="{ fallback: store.aiFallback }">
-              {{ store.aiProviderLabel }}
-            </span>
-            <span v-if="store.lastAnalyzedAt" class="time-badge">
-              {{ formatDateTime(store.lastAnalyzedAt) }}
-            </span>
-          </div>
+        <div class="provider-row">
+          <span v-if="store.aiProvider" class="provider-badge" :class="{ fallback: store.aiFallback }">
+            {{ store.aiProviderLabel }}
+          </span>
+          <span v-if="store.lastAnalyzedAt" class="time-badge">
+            {{ formatDateTime(store.lastAnalyzedAt) }}
+          </span>
+        </div>
 
-          <div v-if="store.aiLoading" class="analysis-loading">
-            <el-skeleton :rows="7" animated />
+        <div v-if="store.aiLoading && !store.AiData" class="analysis-loading">
+          <el-skeleton :rows="7" animated />
+        </div>
+        <div v-else-if="store.AiData" class="report-box">
+          <div v-if="store.aiStreaming" class="stream-indicator">
+            <span class="stream-dot"></span>
+            <span>正在实时编译 DeepSeek 输出...</span>
           </div>
-          <div v-else-if="store.AiData" class="report-box">
-            <pre>{{ store.AiData }}</pre>
-          </div>
-          <div v-else class="analysis-empty">
-            <h3>尚未生成报告</h3>
-            <el-button type="primary" :disabled="store.tableData.length === 0" @click="runAiAnalysis">
-              生成报告
-            </el-button>
-          </div>
+          <div class="report-md" v-html="compiledReport"></div>
+        </div>
+        <div v-else class="analysis-empty">
+          <h3>尚未生成报告</h3>
+          <el-button type="primary" :disabled="store.tableData.length === 0" @click="runAiAnalysisStream">
+            生成报告
+          </el-button>
+        </div>
 
-          <div v-if="store.aiError" class="retry-row">
-            <span>{{ store.aiError }}</span>
-            <el-button size="small" type="warning" @click="runAiAnalysis">重试</el-button>
-          </div>
-        </aside>
+        <div v-if="store.aiError" class="retry-row">
+          <span>{{ store.aiError }}</span>
+          <el-button size="small" type="warning" @click="runAiAnalysisStream">重试</el-button>
+        </div>
       </section>
     </template>
   </div>
@@ -146,11 +156,33 @@
 
 <script setup>
 import { computed, onMounted } from 'vue'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import { useUserStore } from '@/stores/userStore'
 import { useHistoryAnalysisStore } from '@/stores/historyAnalysisStore'
+import { useBedStore } from '@/stores/bedStore'
 
 const userStore = useUserStore()
 const store = useHistoryAnalysisStore()
+const bedStore = useBedStore()
+
+// Configure marked once: GitHub-flavoured markdown, line breaks preserved,
+// HTML escaped by DOMPurify on the output side.
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  pedantic: false
+})
+
+const compiledReport = computed(() => {
+  const text = store.AiData
+  if (!text) return ''
+  const html = marked.parse(text)
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ['target', 'rel']
+  })
+})
 
 const userID = computed(() => userStore.userInfo?.userID || userStore.userInfo?.user_id || null)
 
@@ -167,6 +199,7 @@ const heartValues = computed(() => numericValues('bpm_rader'))
 const breathValues = computed(() => numericValues('bpm_finger'))
 const avgHeart = computed(() => average(heartValues.value))
 const avgBreath = computed(() => average(breathValues.value))
+const snoreCount = computed(() => store.tableData.filter(row => isSnoreDetected(row)).length)
 
 const abnormalCount = computed(() => store.tableData.filter(row => {
   const heart = Number(row.bpm_rader)
@@ -178,48 +211,40 @@ const abnormalCount = computed(() => store.tableData.filter(row => {
 const metricCards = computed(() => [
   {
     key: 'rows',
+    icon: 'NUM',
     title: '当前页样本',
     value: `${store.tableData.length}`,
     detail: `数据库总计 ${store.total} 条记录`
   },
   {
     key: 'heart',
+    icon: 'HR',
     title: '平均心率',
     value: avgHeart.value === null ? '--' : `${avgHeart.value.toFixed(1)} BPM`,
     detail: heartValues.value.length ? '正常参考：55-100 BPM' : '等待有效心率样本'
   },
   {
     key: 'breath',
+    icon: 'BR',
     title: '平均呼吸率',
     value: avgBreath.value === null ? '--' : `${avgBreath.value.toFixed(1)} RPM`,
     detail: breathValues.value.length ? '正常参考：10-24 RPM' : '等待有效呼吸样本'
   },
   {
     key: 'abnormal',
+    icon: '!',
     title: '异常提示',
     value: `${abnormalCount.value}`,
     detail: abnormalCount.value ? '建议结合 AI 报告复核' : '当前页未见明显异常'
+  },
+  {
+    key: 'snore',
+    icon: 'SN',
+    title: '呼噜记录',
+    value: `${snoreCount.value}`,
+    detail: snoreCount.value ? '当前页存在呼噜记录' : '当前页未记录呼噜'
   }
 ])
-
-const reportStateLabel = computed(() => {
-  const map = {
-    idle: '未分析',
-    running: '生成中',
-    done: '已完成',
-    fallback: '本地兜底',
-    failed: '请求失败',
-    empty: '暂无数据'
-  }
-  return map[store.lastAnalysisStatus] || '未分析'
-})
-
-const analysisStatusText = computed(() => store.aiLoading ? '跨页面任务保持中' : '最近分析状态')
-const analysisStatusClass = computed(() => ({
-  running: store.aiLoading,
-  fallback: store.aiFallback,
-  failed: store.lastAnalysisStatus === 'failed'
-}))
 
 function pad(value) {
   return String(value ?? '--').padStart(2, '0')
@@ -246,6 +271,21 @@ function breathTag(value) {
   return vitalTag(value, 10, 24)
 }
 
+function isSnoreDetected(row) {
+  return row?.snore_detected === true || row?.snore_detected === 1 || row?.snore_detected === '1'
+}
+
+function snoreTag(row) {
+  const detected = isSnoreDetected(row)
+  const score = Number(row?.snore_score)
+  const scoreText = Number.isFinite(score) ? `${Math.round(score * 100)}%` : ''
+  return {
+    label: detected ? '有呼噜' : '无',
+    type: detected ? 'danger' : 'success',
+    scoreText: detected ? scoreText : ''
+  }
+}
+
 function formatDateTime(value) {
   if (!value) return ''
   const date = new Date(value)
@@ -254,11 +294,15 @@ function formatDateTime(value) {
 }
 
 async function load() {
-  await store.loadHistory(userID.value)
+  await store.loadHistory(userID.value, bedStore.selectedBedId)
 }
 
 async function runAiAnalysis() {
-  await store.runAiAnalysis(userID.value)
+  await store.runAiAnalysis(userID.value, bedStore.selectedBedId)
+}
+
+async function runAiAnalysisStream() {
+  await store.runAiAnalysisStream(userID.value, bedStore.selectedBedId)
 }
 
 function handleSizeChange() {
@@ -285,7 +329,7 @@ onMounted(() => {
 .history-hero {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 20px;
   padding: 26px;
 }
@@ -305,42 +349,10 @@ onMounted(() => {
   line-height: 1.7;
 }
 
-.hero-status {
-  min-width: 168px;
-  border-radius: 18px;
-  padding: 14px 16px;
-  color: var(--care-primary-strong);
-  background: var(--care-primary-soft);
-  border: 1px solid var(--care-primary-border);
-}
-
-.hero-status span,
 .metric-card span {
   display: block;
   color: var(--care-muted);
   font-size: 13px;
-}
-
-.hero-status strong {
-  display: block;
-  margin-top: 6px;
-  font-size: 22px;
-  color: inherit;
-}
-
-.hero-status.running {
-  color: var(--care-link);
-  background: var(--care-accent-soft);
-}
-
-.hero-status.fallback {
-  color: var(--care-warning);
-  background: var(--care-warning-soft);
-}
-
-.hero-status.failed {
-  color: var(--care-danger);
-  background: var(--care-danger-soft);
 }
 
 .login-empty {
@@ -381,7 +393,7 @@ onMounted(() => {
 
 .metric-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 14px;
 }
 
@@ -401,9 +413,8 @@ onMounted(() => {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(560px, 1.35fr) minmax(340px, 0.65fr);
+  grid-template-columns: 1fr;
   gap: 18px;
-  align-items: start;
 }
 
 .table-card,
@@ -496,6 +507,101 @@ onMounted(() => {
   color: var(--care-text);
   line-height: 1.75;
   font-family: inherit;
+}
+
+.report-md {
+  color: var(--care-text);
+  line-height: 1.75;
+  font-family: inherit;
+  word-break: break-word;
+}
+
+.report-md :deep(h1),
+.report-md :deep(h2),
+.report-md :deep(h3),
+.report-md :deep(h4) {
+  margin: 1.1em 0 0.5em;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--care-text-strong);
+}
+
+.report-md :deep(h2) { font-size: 18px; }
+.report-md :deep(h3) { font-size: 16px; }
+
+.report-md :deep(p) {
+  margin: 0 0 0.8em;
+}
+
+.report-md :deep(ul),
+.report-md :deep(ol) {
+  margin: 0 0 0.8em;
+  padding-left: 1.4em;
+}
+
+.report-md :deep(li) {
+  margin: 0.25em 0;
+}
+
+.report-md :deep(strong) {
+  color: var(--care-text-strong);
+  font-weight: 600;
+}
+
+.report-md :deep(code) {
+  background: var(--care-surface-muted);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.92em;
+}
+
+.report-md :deep(blockquote) {
+  margin: 0.4em 0 0.8em;
+  padding: 4px 12px;
+  border-left: 3px solid var(--care-primary-border);
+  color: var(--care-muted);
+  background: var(--care-surface-muted);
+  border-radius: 0 8px 8px 0;
+}
+
+.report-md :deep(table) {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  width: 100%;
+}
+
+.report-md :deep(th),
+.report-md :deep(td) {
+  border: 1px solid var(--care-border-soft);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.stream-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--care-primary-strong);
+  background: var(--care-primary-soft);
+  border: 1px solid var(--care-primary-border);
+  border-radius: 999px;
+}
+
+.stream-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--care-primary);
+  animation: stream-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes stream-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.1); }
 }
 
 .retry-row {

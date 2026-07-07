@@ -1,0 +1,153 @@
+{
+  "meta": {
+    "input_quantization": {
+      "scale": 0.03960784524679184,
+      "zero_point": 77
+    },
+    "output_quantization": {
+      "scale": 0.00390625,
+      "zero_point": -128
+    },
+    "threshold": 0.99609375,
+    "sample_rate": 16000,
+    "input_samples": 32000,
+    "feature_window_samples": 9952,
+    "window_hop_seconds": 1.0
+  },
+  "sample_level_all": {
+    "count": 145,
+    "positive": 66,
+    "negative": 79,
+    "accuracy": 0.8551724137931035,
+    "precision": 0.7710843373493976,
+    "recall": 0.9696969696969697,
+    "f1": 0.8590604026845637,
+    "specificity": 0.759493670886076,
+    "tp": 64,
+    "fp": 19,
+    "fn": 2,
+    "tn": 60,
+    "roc_auc": 0.8661296509397776,
+    "average_precision": 0.765682023937523
+  },
+  "window_level_all": {
+    "count": 4813,
+    "positive": 66,
+    "negative": 4747,
+    "accuracy": 0.9792229378765842,
+    "precision": 0.3950617283950617,
+    "recall": 0.9696969696969697,
+    "f1": 0.5614035087719298,
+    "specificity": 0.9793553823467454,
+    "tp": 64,
+    "fp": 98,
+    "fn": 2,
+    "tn": 4649,
+    "roc_auc": 0.9874530006192108,
+    "average_precision": 0.3873886294731148
+  },
+  "by_split": {
+    "test_set": {
+      "sample_level": {
+        "count": 30,
+        "positive": 26,
+        "negative": 4,
+        "accuracy": 0.8666666666666667,
+        "precision": 0.9230769230769231,
+        "recall": 0.9230769230769231,
+        "f1": 0.9230769230769231,
+        "specificity": 0.5,
+        "tp": 24,
+        "fp": 2,
+        "fn": 2,
+        "tn": 2,
+        "roc_auc": 0.7115384615384616,
+        "average_precision": 0.9208944238785088
+      },
+      "window_level": {
+        "count": 215,
+        "positive": 26,
+        "negative": 189,
+        "accuracy": 0.8837209302325582,
+        "precision": 0.5106382978723404,
+        "recall": 0.9230769230769231,
+        "f1": 0.6575342465753424,
+        "specificity": 0.8783068783068783,
+        "tp": 24,
+        "fp": 23,
+        "fn": 2,
+        "tn": 166,
+        "roc_auc": 0.9283679283679284,
+        "average_precision": 0.5022728695557436
+      }
+    },
+    "train_set": {
+      "sample_level": {
+        "count": 84,
+        "positive": 20,
+        "negative": 64,
+        "accuracy": 0.8095238095238095,
+        "precision": 0.5555555555555556,
+        "recall": 1.0,
+        "f1": 0.7142857142857143,
+        "specificity": 0.75,
+        "tp": 20,
+        "fp": 16,
+        "fn": 0,
+        "tn": 48,
+        "roc_auc": 0.875,
+        "average_precision": 0.5555555555555556
+      },
+      "window_level": {
+        "count": 3712,
+        "positive": 20,
+        "negative": 3692,
+        "accuracy": 0.9800646551724138,
+        "precision": 0.2127659574468085,
+        "recall": 1.0,
+        "f1": 0.3508771929824561,
+        "specificity": 0.9799566630552546,
+        "tp": 20,
+        "fp": 74,
+        "fn": 0,
+        "tn": 3618,
+        "roc_auc": 0.9899783315276273,
+        "average_precision": 0.2127659574468085
+      }
+    },
+    "validation_set": {
+      "sample_level": {
+        "count": 31,
+        "positive": 20,
+        "negative": 11,
+        "accuracy": 0.967741935483871,
+        "precision": 0.9523809523809523,
+        "recall": 1.0,
+        "f1": 0.975609756097561,
+        "specificity": 0.9090909090909091,
+        "tp": 20,
+        "fp": 1,
+        "fn": 0,
+        "tn": 10,
+        "roc_auc": 0.9545454545454546,
+        "average_precision": 0.9523809523809523
+      },
+      "window_level": {
+        "count": 886,
+        "positive": 20,
+        "negative": 866,
+        "accuracy": 0.9988713318284425,
+        "precision": 0.9523809523809523,
+        "recall": 1.0,
+        "f1": 0.975609756097561,
+        "specificity": 0.9988452655889145,
+        "tp": 20,
+        "fp": 1,
+        "fn": 0,
+        "tn": 865,
+        "roc_auc": 0.9994226327944573,
+        "average_precision": 0.9523809523809523
+      }
+    }
+  }
+}

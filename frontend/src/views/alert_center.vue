@@ -1,30 +1,5 @@
 <template>
   <div class="alert-workspace care-page-shell">
-    <section class="alert-hero">
-      <div class="risk-card care-glass-card" :class="overallRisk.level">
-        <h1>看护预警中心</h1>
-        <div class="risk-summary">
-          <span>{{ overallRisk.label }}</span>
-          <strong>{{ overallRisk.score }}</strong>
-        </div>
-      </div>
-
-      <div class="status-stack">
-        <div class="status-card care-glass-card" :class="{ online: radarBoardReady, warning: radarBoardUnstable }">
-          <span>雷达板</span>
-          <strong>{{ radarStatusText }}</strong>
-        </div>
-        <div class="status-card care-glass-card" :class="{ online: edgiBoardOnline, warning: edgiBoardNeedsAttention }">
-          <span>Edgi E84</span>
-          <strong>{{ edgiStatusText }}</strong>
-        </div>
-        <div class="status-card care-glass-card">
-          <span>音频片段</span>
-          <strong>{{ status.audio_upload_count ?? 0 }}</strong>
-        </div>
-      </div>
-    </section>
-
     <section
       v-if="latestEmergencyEvent"
       class="emergency-workspace"
@@ -34,7 +9,7 @@
         <div class="sos-mark">SOS</div>
         <div>
           <span>待处理紧急事件</span>
-          <h2>请立即确认床旁情况</h2>
+          <h2>{{ emergencyTitle }}</h2>
           <p>{{ emergencyPhrase }}</p>
         </div>
         <el-tag type="danger" effect="dark">最高优先级</el-tag>
@@ -46,12 +21,12 @@
           <strong>{{ formatDateTime(latestEmergencyEvent.timestamp) }}</strong>
         </div>
         <div>
-          <span>触发话术</span>
+          <span>{{ emergencyDetailLabel }}</span>
           <strong>{{ emergencyPhrase }}</strong>
         </div>
         <div>
           <span>事件来源</span>
-          <strong>小智语音开发板</strong>
+          <strong>{{ emergencySourceText }}</strong>
         </div>
       </div>
 
@@ -92,7 +67,7 @@
       </div>
     </section>
 
-    <section class="control-row care-glass-card">
+    <section class="control-row care-glass-card care-icon-card" data-icon="策">
       <div>
         <strong>实时策略窗口</strong>
         <span>30 分钟 · {{ overview.stats?.points || timelineRows.length }} 点</span>
@@ -112,6 +87,7 @@
         <div class="section-title">
           <div>
             <h2>异常归因矩阵</h2>
+            <p class="section-caption">横向汇总紧急事件、生命体征、呼噜、环境、离床和设备链路状态。</p>
           </div>
         </div>
         <div class="matrix-list">
@@ -125,7 +101,7 @@
         </div>
       </article>
 
-      <article class="actions-card care-glass-card">
+      <article class="actions-card care-glass-card care-icon-card" data-icon="护">
         <div class="section-title">
           <div>
             <h2>照护动作队列</h2>
@@ -136,7 +112,11 @@
         </div>
 
         <div v-if="activeActions.length === 0" class="empty-actions">
-          当前没有待处理动作。若需要重新查看已处理事项，请点击“恢复已处理动作”。
+          <div class="empty-illustration" aria-hidden="true">
+            <span class="clip-board"></span>
+            <span class="search-lens"></span>
+          </div>
+          <p>当前没有待处理动作。若需要重新查看已处理事项，请点击“恢复已处理动作”。</p>
         </div>
         <div v-else class="action-list">
           <div v-for="action in activeActions" :key="action.key" class="action-item" :class="action.level">
@@ -148,7 +128,7 @@
         </div>
       </article>
 
-      <article v-if="policyVisible" class="policy-card care-glass-card">
+      <article v-if="policyVisible" class="policy-card care-glass-card care-icon-card" data-icon="阈">
         <div class="section-title">
           <div>
             <h2>阈值策略</h2>
@@ -200,28 +180,19 @@
         </div>
       </article>
 
-      <article class="trend-card care-glass-card">
-        <div class="section-title">
-          <div>
-            <h2>趋势小窗</h2>
-          </div>
-        </div>
-        <div ref="trendChartEl" class="trend-chart" role="img" :aria-label="chartSummary"></div>
-      </article>
     </section>
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import * as echarts from 'echarts'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import request from '@/utils/request'
 import { useAlertPolicyStore } from '@/stores/alertPolicyStore'
-import { useThemeStore } from '@/stores/themeStore'
+import { useBedStore } from '@/stores/bedStore'
 
 const policy = useAlertPolicyStore()
-const themeStore = useThemeStore()
+const bedStore = useBedStore()
 
 const loading = ref(false)
 const error = ref('')
@@ -263,19 +234,15 @@ const status = reactive({
   snore_detected: false
 })
 
-const trendChartEl = ref(null)
-let trendChart = null
 let refreshTimer = null
 
 const latestRow = computed(() => timelineRows.value[timelineRows.value.length - 1] || {})
 
 const latestHeart = computed(() => numberOrNull(latestRow.value.heart_rate))
 const latestBreath = computed(() => numberOrNull(latestRow.value.breath_rate))
+const latestVitalsState = computed(() => latestRow.value.vitals_state || status.vitals_state || 'lost')
 const latestSnore = computed(() => {
-  const level = numberOrNull(latestRow.value.snore_level)
-  if (level !== null) return Math.round(level * 100)
-  const score = numberOrNull(latestRow.value.snore_score)
-  return score === null ? null : Math.round(score * 100)
+  return snoreIntensityValue(latestRow.value)
 })
 const latestTemperature = computed(() => numberOrNull(latestRow.value.temperature_c ?? status.temperature_c))
 const latestHumidity = computed(() => numberOrNull(latestRow.value.humidity_pct ?? status.humidity_pct))
@@ -305,12 +272,6 @@ const comfortLabelMap = {
 
 const comfortStatusLabel = computed(() => comfortLabelMap[status.comfort_status] || status.comfort_status || '离线')
 const radarBoardUnstable = computed(() => Boolean(status.radar_board_online && status.radar_board_stationary === false))
-const radarBoardReady = computed(() => Boolean(status.radar_board_online && !radarBoardUnstable.value))
-const radarStatusText = computed(() => {
-  if (!status.radar_board_online) return '离线'
-  return radarBoardUnstable.value ? '未静止' : '在线'
-})
-
 const environmentNeedsAttention = computed(() => {
   return status.environment_board_online && status.comfort_status !== 'comfortable'
 })
@@ -322,43 +283,28 @@ const edgiBoardOnline = computed(() => (
   status.voice_board_online
 ))
 
-const edgiBoardNeedsAttention = computed(() => {
-  return Boolean(edgiBoardOnline.value && (
-    status.snore_detected ||
-    environmentNeedsAttention.value ||
-    status.emergency_active
-  ))
-})
+const emergencyEventTypes = new Set([
+  'emergency_voice',
+  'board_fall',
+  'suspected_apnea',
+  'snore_stop_breath_drop',
+  'night_absence'
+])
 
-const edgiStatusText = computed(() => {
-  if (!edgiBoardOnline.value) return '离线'
-  if (status.emergency_active) return '紧急状态'
-  if (status.snore_monitoring || status.snore_board_online) return '在线 · 呼噜监测中'
-  return status.snore_paused ? '在线 · 呼噜已暂停' : '在线'
-})
-
-const environmentStatusText = computed(() => {
-  if (!status.environment_board_online) return formatAge(status.environment_age_seconds)
-  const temp = latestTemperature.value === null ? '-- C' : `${latestTemperature.value.toFixed(1)} C`
-  const humidity = latestHumidity.value === null ? '-- %RH' : `${latestHumidity.value.toFixed(1)} %RH`
-  return `${temp} · ${humidity}`
-})
-
-const eventPressure = computed(() => {
-  const events = (overview.events || []).filter(event => (event.status || 'active') === 'active')
-  return {
-    critical: events.filter(event => event.severity === 'critical').length,
-    warning: events.filter(event => event.severity === 'warning').length
-  }
-})
+const isActiveEmergencyEvent = event => Boolean(event && (event.status || 'active') === 'active')
+const isCriticalEmergencyEvent = event => Boolean(
+  event &&
+  emergencyEventTypes.has(event.type) &&
+  event.severity === 'critical' &&
+  isActiveEmergencyEvent(event)
+)
 
 const latestEmergencyEvent = computed(() => {
   const events = overview.events || []
-  return events.find(event =>
-    event.type === 'emergency_voice' &&
-    event.severity === 'critical' &&
-    (event.status || 'active') === 'active'
-  ) || status.active_emergency || null
+  const activeStatusEmergency = isCriticalEmergencyEvent(status.active_emergency)
+    ? status.active_emergency
+    : null
+  return activeStatusEmergency || events.find(isCriticalEmergencyEvent) || null
 })
 
 const latestApneaEvent = computed(() => {
@@ -366,13 +312,48 @@ const latestApneaEvent = computed(() => {
   return events.find(event =>
     event.type === 'suspected_apnea' &&
     ['warning', 'critical'].includes(event.severity) &&
-    (event.status || 'active') === 'active'
+    isActiveEmergencyEvent(event)
   ) || null
 })
 
 const emergencyPhrase = computed(() => {
   const event = latestEmergencyEvent.value
+  if (event?.type === 'suspected_apnea') {
+    return event.message || event.title || '检测到疑似呼吸暂停风险'
+  }
+  if (event?.type === 'snore_stop_breath_drop') {
+    return event.message || event.title || '呼噜停止伴随呼吸信号跌破阈值'
+  }
+  if (event?.type === 'night_absence') return event.message || event.title || '夜间存在性检测超过 1 小时未检测到在床'
+  if (event?.type === 'board_fall') {
+    return event.message || event.title || '开发板检测到疑似摇晃'
+  }
   return event?.details?.transcript || event?.details?.phrase || '求助语音'
+})
+
+const emergencyTitle = computed(() => {
+  const event = latestEmergencyEvent.value
+  if (event?.type === 'suspected_apnea') return '疑似呼吸暂停，请立即观察'
+  if (event?.type === 'snore_stop_breath_drop') return '呼噜停止伴随呼吸信号跌破阈值'
+  if (event?.type === 'night_absence') return '夜间疑似离床，请立即确认'
+  if (event?.type === 'board_fall') return '开发板摇晃报警'
+  if (event?.type === 'emergency_voice') return '紧急求助已触发'
+  return '请立即确认床旁情况'
+})
+
+const emergencyDetailLabel = computed(() => {
+  const event = latestEmergencyEvent.value
+  return event?.type === 'emergency_voice' ? '触发话术' : '事件说明'
+})
+
+const emergencySourceText = computed(() => {
+  const event = latestEmergencyEvent.value
+  if (event?.type === 'suspected_apnea' && event?.details?.demo) return '疑似呼吸暂停'
+  if (event?.type === 'suspected_apnea') return '雷达与呼噜融合检测'
+  if (event?.type === 'snore_stop_breath_drop') return '呼噜与雷达融合检测'
+  if (event?.type === 'night_absence') return '雷达存在性夜间离床监护'
+  if (event?.type === 'board_fall') return '小智摇晃检测'
+  return '小智语音开发板'
 })
 
 const riskItems = computed(() => {
@@ -385,38 +366,6 @@ const riskItems = computed(() => {
   const presence = buildPresenceRisk()
   const devices = buildDeviceRisk()
   return [emergency, apnea, heart, breath, snore, environment, presence, devices]
-})
-
-const overallRisk = computed(() => {
-  const score = riskItems.value.reduce((sum, item) => sum + riskWeight(item.level), 0) +
-    Math.min(16, eventPressure.value.critical * 4 + eventPressure.value.warning * 2)
-  const maxLevel = riskItems.value.some(item => item.level === 'critical')
-    ? 'critical'
-    : riskItems.value.some(item => item.level === 'warning')
-      ? 'warning'
-      : 'normal'
-  if (maxLevel === 'critical') {
-    return {
-      level: 'critical',
-      label: '立即关注',
-      score: Math.min(100, score + 40),
-      reason: '存在设备离线、离床、环境或生命体征越界风险。'
-    }
-  }
-  if (maxLevel === 'warning') {
-    return {
-      level: 'warning',
-      label: '继续观察',
-      score: Math.min(100, score + 20),
-      reason: '出现呼噜扰动或轻度生命体征波动。'
-    }
-  }
-  return {
-    level: 'normal',
-    label: '稳定',
-    score: Math.max(0, score),
-    reason: '当前窗口内未见明显看护风险。'
-  }
 })
 
 const actionQueue = computed(() => riskItems.value
@@ -435,21 +384,22 @@ const actionQueue = computed(() => riskItems.value
 
 const activeActions = computed(() => actionQueue.value.filter(action => !policy.acknowledgedKeys.includes(action.key)))
 
-const chartSummary = computed(() => {
-  if (timelineRows.value.length === 0) return '暂无趋势数据，请确认真实后端服务或开发板已启动。'
-  const heart = latestHeart.value === null ? '心率无数据' : `心率 ${latestHeart.value.toFixed(1)} BPM`
-  const breath = latestBreath.value === null ? '呼吸无数据' : `呼吸 ${latestBreath.value.toFixed(1)} RPM`
-  const snore = latestSnore.value === null ? '呼噜无数据' : `呼噜强度 ${latestSnore.value}%`
-  const environment = latestTemperature.value === null || latestHumidity.value === null
-    ? '环境无数据'
-    : `环境 ${latestTemperature.value.toFixed(1)} C / ${latestHumidity.value.toFixed(1)} %RH`
-  return `最新状态：${heart}，${breath}，${snore}，${environment}。`
-})
-
 function numberOrNull(value) {
   if (value === null || value === undefined || value === '') return null
   const number = Number(value)
   return Number.isFinite(number) ? number : null
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function snoreIntensityValue(row) {
+  if (!row?.snore_online && !row?.snore_board_online) return null
+
+  const energy = numberOrNull(row.snore_level)
+  const confidence = numberOrNull(row.snore_score)
+  return Math.round(clamp(energy ?? 0, 0, 1) * clamp(confidence ?? 0, 0, 1) * 50)
 }
 
 function riskWeight(level) {
@@ -461,6 +411,7 @@ function riskWeight(level) {
 function riskPriority(key) {
   const order = {
     emergency_voice: 0,
+    board_fall: 0,
     suspected_apnea: 1,
     breath: 2,
     heart: 3,
@@ -475,7 +426,43 @@ function riskPriority(key) {
 function buildEmergencyRisk() {
   const event = latestEmergencyEvent.value
   if (!event) {
-    return risk('emergency_voice', '语音求助', 'normal', '暂无求助', '当前窗口内未检测到小智语音求助。', '无需处理', '未触发语音求助。', 'SOS')
+    return risk('emergency_voice', '紧急事件', 'normal', '暂无事件', '当前窗口内未检测到语音求助或摇晃报警。', '无需处理', '未触发紧急事件。', 'SOS')
+  }
+  if (event.type === 'snore_stop_breath_drop') {
+    return risk(
+      'snore_stop_breath_drop',
+      '呼吸异常',
+      'critical',
+      '呼噜停止后异常',
+      event.message || '呼噜停止后呼吸/存在性信号跌破阈值。',
+      '立即观察呼吸状态',
+      '优先确认患者呼吸、体位和雷达位置；确认安全后在告警中心解除事件。',
+      'AP'
+    )
+  }
+  if (event.type === 'night_absence') {
+    return risk(
+      'night_absence',
+      '离床报警',
+      'critical',
+      '超过 1 小时未在床',
+      event.message || '夜间存在性检测连续超过 1 小时未检测到病人在床。',
+      '立即确认床位情况',
+      '优先确认患者是否离床、跌倒或误离监护范围；确认安全后在告警中心解除事件。',
+      'OUT'
+    )
+  }
+  if (event.type === 'board_fall') {
+    return risk(
+      'board_fall',
+      '开发板摇晃',
+      'critical',
+      '摇晃触发',
+      event.message || '开发板检测到疑似摇晃。',
+      '立即确认人员与设备状态',
+      '优先到现场确认是否摔倒、设备是否脱落；如存在受伤风险，及时联系看护人员或急救。',
+      'FALL'
+    )
   }
   const phrase = event.details?.phrase || event.details?.transcript || '求助语音'
   return risk(
@@ -532,6 +519,9 @@ function formatAge(value) {
 
 function buildHeartRisk() {
   const value = latestHeart.value
+  if (latestVitalsState.value === 'recovering' && value !== null) {
+    return risk('heart', '心率', 'normal', `${value.toFixed(1)} BPM`, '雷达信号短暂恢复中，沿用最近有效心率。', '继续观察', '若 8 秒内未恢复，系统会自动转为暂无生命体征。', 'HR')
+  }
   if (value === null) {
     return risk('heart', '心率', 'warning', '暂无心率', '雷达心率暂未形成有效数据。', '检查雷达距离与目标存在', '确认目标位于雷达有效距离内，并观察实时生命体征页是否恢复心率。', 'HR')
   }
@@ -543,6 +533,9 @@ function buildHeartRisk() {
 
 function buildBreathRisk() {
   const value = latestBreath.value
+  if (latestVitalsState.value === 'recovering' && value !== null) {
+    return risk('breath', '呼吸', 'normal', `${value.toFixed(1)} RPM`, '雷达信号短暂恢复中，沿用最近有效呼吸率。', '继续观察', '恢复期数据不会参与呼吸暂停报警判定。', 'BR')
+  }
   if (value === null) {
     return risk('breath', '呼吸', 'warning', '暂无呼吸率', '雷达呼吸率暂未形成有效数据。', '观察呼吸波形恢复', '确认雷达板在线，并检查实时呼吸曲线是否恢复。', 'BR')
   }
@@ -587,8 +580,9 @@ async function resolveEmergency() {
 
   handlingEmergency.value = true
   try {
-    const response = await request.post('/emergency/resolve', {
+    const response = await request.post(`/beds/${bedStore.selectedBedId}/emergency/resolve`, {
       event_id: event.eventID,
+      bed_id: bedStore.selectedBedId,
       source: event.source || 'xiaozhi_voice_board',
       resolved_by: resolvedBy.value.trim(),
       resolution_note: resolutionNote.value.trim()
@@ -685,16 +679,16 @@ async function loadData() {
   error.value = ''
   try {
     const [overviewResult, timelineResult, statusResult] = await Promise.allSettled([
-      request.get('/sleep/overview', { params: { mode: 'live', seconds: 1800 } }),
-      request.get('/timeline', { params: { seconds: 1800 } }),
-      request.get('/status')
+      request.get('/sleep/overview', { params: { mode: 'live', seconds: 1800, bed_id: bedStore.selectedBedId } }),
+      request.get('/timeline', { params: { seconds: 1800, bed_id: bedStore.selectedBedId } }),
+      request.get('/status', { params: { bed_id: bedStore.selectedBedId } })
     ])
 
     if (overviewResult.status === 'fulfilled') {
       Object.assign(overview, {
         stats: overviewResult.value.stats || {},
         score: overviewResult.value.score || {},
-        events: overviewResult.value.events || [],
+        events: (overviewResult.value.events || []).filter(isActiveEmergencyEvent),
         devices: overviewResult.value.devices || {}
       })
     }
@@ -713,124 +707,16 @@ async function loadData() {
     error.value = '看护预警中心无法连接真实后端服务，请先启动 backend/realtime_radar_processing.py。'
   } finally {
     loading.value = false
-    await nextTick()
-    renderChart()
   }
 }
-
-function renderChart() {
-  if (!trendChartEl.value) return
-  if (!trendChart) {
-    trendChart = echarts.init(trendChartEl.value)
-  }
-  const rows = timelineRows.value
-  const labels = rows.map(row => formatTimeLabel(row.timestamp))
-  const muted = readToken('--care-muted', '#64748b')
-  const grid = readToken('--care-grid-line-soft', 'rgba(100,116,139,.14)')
-  const strongText = readToken('--care-muted-strong', '#41576b')
-  trendChart.setOption({
-    backgroundColor: 'transparent',
-    color: ['#ef4444', '#38bdf8', '#f59e0b', '#16a34a', '#0ea5e9'],
-    tooltip: { trigger: 'axis' },
-    legend: {
-      top: 0,
-      textStyle: { color: strongText },
-      data: ['心率', '呼吸率', '呼噜强度', '温度', '湿度']
-    },
-    grid: { left: 42, right: 24, top: 42, bottom: 34 },
-    xAxis: {
-      type: 'category',
-      boundaryGap: false,
-      data: labels,
-      axisLabel: { color: muted }
-    },
-    yAxis: {
-      type: 'value',
-      splitLine: { lineStyle: { color: grid } },
-      axisLabel: { color: muted }
-    },
-    series: [
-      {
-        name: '心率',
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        connectNulls: false,
-        data: rows.map(row => row.radar_online ? numberOrNull(row.heart_rate) : null)
-      },
-      {
-        name: '呼吸率',
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        connectNulls: false,
-        data: rows.map(row => row.radar_online ? numberOrNull(row.breath_rate) : null)
-      },
-      {
-        name: '呼噜强度',
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        connectNulls: false,
-        data: rows.map(row => {
-          const level = numberOrNull(row.snore_level)
-          return level === null ? null : Math.round(level * 100)
-        })
-      },
-      {
-        name: '温度',
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        connectNulls: false,
-        data: rows.map(row => row.environment_online ? numberOrNull(row.temperature_c) : null)
-      },
-      {
-        name: '湿度',
-        type: 'line',
-        smooth: true,
-        showSymbol: false,
-        connectNulls: false,
-        data: rows.map(row => row.environment_online ? numberOrNull(row.humidity_pct) : null)
-      }
-    ]
-  })
-}
-
-function readToken(name, fallback) {
-  if (typeof window === 'undefined') return fallback
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return value || fallback
-}
-
-function formatTimeLabel(value) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
-}
-
-function resizeChart() {
-  trendChart?.resize()
-}
-
-watch(timelineRows, () => nextTick(renderChart))
-watch(() => themeStore.mode, () => nextTick(renderChart))
-watch(policyVisible, () => nextTick(() => {
-  renderChart()
-  resizeChart()
-}))
 
 onMounted(() => {
   loadData()
   refreshTimer = window.setInterval(loadData, 5000)
-  window.addEventListener('resize', resizeChart)
 })
 
 onBeforeUnmount(() => {
   if (refreshTimer) window.clearInterval(refreshTimer)
-  window.removeEventListener('resize', resizeChart)
-  trendChart?.dispose()
 })
 </script>
 
@@ -841,115 +727,12 @@ onBeforeUnmount(() => {
   gap: 18px;
 }
 
-.alert-hero {
-  display: grid;
-  grid-template-columns: minmax(460px, 1fr) minmax(300px, 0.55fr);
-  gap: 18px;
-}
-
-.risk-card {
-  position: relative;
-  padding: 28px;
-  overflow: hidden;
-}
-
-.risk-card::after {
-  content: "";
-  position: absolute;
-  right: -60px;
-  top: -70px;
-  width: 240px;
-  height: 240px;
-  border-radius: 50%;
-  background: var(--care-primary-soft);
-}
-
-.risk-card.warning::after {
-  background: var(--care-warning-soft);
-}
-
-.risk-card.critical::after {
-  background: var(--care-danger-soft);
-}
-
-.risk-card h1 {
-  margin: 10px 0;
-  font-size: 36px;
-}
-
-.risk-card p {
-  max-width: 720px;
-  color: var(--care-muted);
-  line-height: 1.7;
-}
-
-.risk-summary {
-  display: grid;
-  width: fit-content;
-  min-width: 210px;
-  margin-top: 22px;
-  padding: 16px;
-  border-radius: 18px;
-  background: var(--care-surface-2);
-  border: 1px solid var(--care-border-soft);
-}
-
-.risk-summary span {
-  color: var(--care-muted);
-  font-weight: 800;
-}
-
-.risk-summary strong {
-  font-size: 46px;
-  line-height: 1;
-  color: var(--care-primary-strong);
-}
-
-.risk-card.warning .risk-summary strong {
-  color: var(--care-warning);
-}
-
-.risk-card.critical .risk-summary strong {
-  color: var(--care-danger);
-}
-
-.risk-summary small,
-.status-card small,
 .section-title p,
 .matrix-item small,
 .action-item p,
 .control-row span {
   color: var(--care-muted);
   line-height: 1.55;
-}
-
-.status-stack {
-  display: grid;
-  gap: 12px;
-}
-
-.status-card {
-  padding: 18px;
-  border-left: 5px solid var(--care-warning);
-}
-
-.status-card.online {
-  border-left-color: var(--care-success);
-}
-
-.status-card.warning {
-  border-left-color: var(--care-warning);
-}
-
-.status-card span {
-  color: var(--care-muted);
-  font-size: 13px;
-}
-
-.status-card strong {
-  display: block;
-  margin: 6px 0;
-  font-size: 24px;
 }
 
 .control-row {
@@ -1076,15 +859,27 @@ onBeforeUnmount(() => {
 
 .alert-grid {
   display: grid;
-  grid-template-columns: minmax(360px, 0.9fr) minmax(360px, 1fr);
+  grid-template-columns: 1fr;
   gap: 18px;
 }
 
 .matrix-card,
 .actions-card,
-.policy-card,
-.trend-card {
+.policy-card {
   padding: 20px;
+}
+
+.matrix-card {
+  position: relative;
+  overflow: hidden;
+  min-height: 420px;
+  padding: 30px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, .98) 0%, rgba(255, 255, 255, .96) 68%, rgba(235, 243, 255, .92) 100%);
+}
+
+.actions-card {
+  padding: 30px;
 }
 
 .section-title {
@@ -1100,20 +895,35 @@ onBeforeUnmount(() => {
   font-size: 22px;
 }
 
+.section-caption {
+  margin: 0;
+  color: var(--care-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .matrix-list {
   display: grid;
-  gap: 12px;
+  position: relative;
+  z-index: 1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-width: 1020px;
+  gap: 14px 16px;
+  margin-top: 32px;
 }
 
 .matrix-item {
   display: grid;
-  grid-template-columns: 48px 1fr;
+  grid-template-columns: 44px minmax(0, 1fr);
   gap: 12px;
   align-items: center;
-  padding: 14px;
-  border-radius: 18px;
+  min-height: 88px;
+  padding: 14px 16px;
+  border-radius: 16px;
   border: 1px solid var(--care-border-soft);
-  background: var(--care-surface-soft);
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 10px 26px rgba(34, 46, 97, .05);
+  backdrop-filter: blur(10px);
 }
 
 .matrix-item.warning {
@@ -1127,24 +937,29 @@ onBeforeUnmount(() => {
 }
 
 .matrix-icon {
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
-  border-radius: 16px;
+  border-radius: 13px;
   color: var(--care-link);
-  background: var(--care-accent-soft);
+  background: linear-gradient(135deg, rgba(50, 91, 242, .14), rgba(96, 165, 250, .18));
+  font-size: 12px;
   font-weight: 900;
+  animation: matrixIconFloat 2.8s ease-in-out infinite;
+  will-change: transform, box-shadow;
 }
 
 .matrix-item.warning .matrix-icon {
   color: var(--care-warning);
   background: var(--care-warning-soft);
+  animation-name: matrixIconWarning;
 }
 
 .matrix-item.critical .matrix-icon {
   color: var(--care-danger);
   background: var(--care-danger-soft);
+  animation-name: matrixIconCritical;
 }
 
 .matrix-item strong,
@@ -1153,12 +968,101 @@ onBeforeUnmount(() => {
 }
 
 .matrix-item span {
-  margin: 3px 0;
+  margin: 2px 0 0;
   font-weight: 800;
+  font-size: 14px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.matrix-item strong {
+  color: var(--care-text-strong);
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.matrix-visual {
+  position: absolute;
+  top: 26px;
+  right: 42px;
+  width: 260px;
+  height: 126px;
+  pointer-events: none;
+}
+
+.visual-ring {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 190px;
+  height: 58px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(50, 91, 242, .28), rgba(50, 91, 242, .08) 46%, transparent 70%);
+  filter: blur(.1px);
+}
+
+.ring-b {
+  right: 34px;
+  bottom: 20px;
+  width: 150px;
+  height: 46px;
+  opacity: .72;
+}
+
+.visual-shield {
+  position: absolute;
+  right: 68px;
+  top: 0;
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  border-radius: 24px 24px 34px 34px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #6ba7ff, #325bf2);
+  box-shadow: 0 18px 38px rgba(50, 91, 242, .22);
+  font-size: 38px;
+  font-weight: 900;
+}
+
+@keyframes matrixIconFloat {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 rgba(50, 91, 242, 0);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.04);
+    box-shadow: 0 8px 18px rgba(50, 91, 242, .12);
+  }
+}
+
+@keyframes matrixIconWarning {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 rgba(245, 158, 11, 0);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.05);
+    box-shadow: 0 8px 18px rgba(245, 158, 11, .18);
+  }
+}
+
+@keyframes matrixIconCritical {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, .18);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.06);
+    box-shadow: 0 0 0 7px rgba(239, 68, 68, .08), 0 8px 18px rgba(239, 68, 68, .18);
+  }
 }
 
 .action-list {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
 }
 
@@ -1186,11 +1090,86 @@ onBeforeUnmount(() => {
 }
 
 .empty-actions {
-  padding: 28px;
+  min-height: 230px;
+  display: grid;
+  place-items: center;
+  gap: 14px;
+  padding: 34px;
   border-radius: 18px;
+  text-align: center;
   color: var(--care-muted);
-  background: var(--care-primary-soft);
-  border: 1px dashed var(--care-primary-border);
+  background: rgba(248, 250, 255, .78);
+  border: 1px solid var(--care-border-soft);
+}
+
+.empty-actions p {
+  max-width: 520px;
+  margin: 0;
+  color: var(--care-muted-strong);
+  line-height: 1.75;
+}
+
+.empty-illustration {
+  position: relative;
+  width: 156px;
+  height: 108px;
+}
+
+.clip-board {
+  position: absolute;
+  left: 46px;
+  top: 10px;
+  width: 62px;
+  height: 78px;
+  border: 8px solid rgba(50, 91, 242, .24);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .8);
+}
+
+.clip-board::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: -18px;
+  width: 32px;
+  height: 18px;
+  border-radius: 10px 10px 4px 4px;
+  background: rgba(50, 91, 242, .3);
+}
+
+.clip-board::after {
+  content: '';
+  position: absolute;
+  left: 13px;
+  right: 13px;
+  top: 22px;
+  height: 6px;
+  border-radius: 999px;
+  background:
+    linear-gradient(#c7d7ff, #c7d7ff) 0 0 / 100% 6px no-repeat,
+    linear-gradient(#dbe6ff, #dbe6ff) 0 18px / 72% 6px no-repeat;
+}
+
+.search-lens {
+  position: absolute;
+  right: 22px;
+  bottom: 20px;
+  width: 38px;
+  height: 38px;
+  border: 7px solid rgba(50, 91, 242, .24);
+  border-radius: 50%;
+}
+
+.search-lens::after {
+  content: '';
+  position: absolute;
+  right: -18px;
+  bottom: -12px;
+  width: 28px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(50, 91, 242, .24);
+  transform: rotate(42deg);
 }
 
 .policy-grid {
@@ -1207,26 +1186,23 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 
-.policy-card,
-.trend-card {
+.policy-card {
   grid-column: 1 / -1;
 }
 
-.trend-card {
-  min-height: 360px;
-}
-
-.trend-chart {
-  width: 100%;
-  height: 280px;
-}
-
 @media (max-width: 1180px) {
-  .alert-hero,
   .alert-grid,
   .policy-grid,
   .emergency-process {
     grid-template-columns: 1fr;
+  }
+
+  .matrix-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .matrix-visual {
+    opacity: .36;
   }
 }
 
@@ -1268,6 +1244,19 @@ onBeforeUnmount(() => {
 
   .emergency-process {
     padding: 18px;
+  }
+
+  .matrix-card,
+  .actions-card {
+    padding: 20px;
+  }
+
+  .matrix-list {
+    grid-template-columns: 1fr;
+  }
+
+  .matrix-visual {
+    display: none;
   }
 }
 </style>

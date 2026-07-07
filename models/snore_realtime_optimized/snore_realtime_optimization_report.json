@@ -1,0 +1,818 @@
+{
+  "dataset": "D:\\STUDY\\Snoring Dataset",
+  "old_first_model_bytes_limit": 34592,
+  "threshold": 0.6,
+  "splits": {
+    "train_files": 700,
+    "val_files": 150,
+    "test_files": 150,
+    "train_features_with_augmentation": 3500,
+    "class_balance_test": {
+      "no_snore": 75,
+      "snore": 75
+    }
+  },
+  "best_candidate": "rt_12_24_40_d24",
+  "candidates": [
+    {
+      "name": "rt_12_24_32_d24",
+      "keras": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_12_24_32_d24\\rt_12_24_32_d24.keras",
+      "tflite": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_12_24_32_d24\\rt_12_24_32_d24_int8.tflite",
+      "header": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_12_24_32_d24\\rt_12_24_32_d24_snore_model_data.h",
+      "keras_bytes": 175079,
+      "tflite_bytes": 19432,
+      "smaller_than_old_first_model": true,
+      "tflite_sha256": "4c5e36adaab688d37bbaaa3f0a9f546ef6c97f17a244be82dcfda3c8ab158cad",
+      "operators": [
+        "SHAPE",
+        "STRIDED_SLICE",
+        "PACK",
+        "RESHAPE",
+        "CONV_2D",
+        "MAX_POOL_2D",
+        "CONV_2D",
+        "MAX_POOL_2D",
+        "CONV_2D",
+        "MEAN",
+        "FULLY_CONNECTED",
+        "FULLY_CONNECTED",
+        "SOFTMAX"
+      ],
+      "unsupported_ops": [],
+      "float_fixed_threshold": {
+        "accuracy": 0.96,
+        "precision": 0.9726027397260274,
+        "recall": 0.9466666666666667,
+        "f1": 0.9594594594594594,
+        "auc": 0.9959111111111111,
+        "threshold": 0.6,
+        "confusion_matrix": [
+          [
+            73,
+            2
+          ],
+          [
+            4,
+            71
+          ]
+        ]
+      },
+      "int8_fixed_threshold": {
+        "accuracy": 0.9533333333333334,
+        "precision": 0.9722222222222222,
+        "recall": 0.9333333333333333,
+        "specificity": 0.9733333333333334,
+        "npv": 0.9358974358974359,
+        "f1": 0.9523809523809523,
+        "balanced_accuracy": 0.9533333333333334,
+        "mcc": 0.9073928715621604,
+        "fpr": 0.02666666666666667,
+        "fnr": 0.06666666666666667,
+        "roc_auc": 0.9957333333333334,
+        "average_precision": 0.9954964469560357,
+        "tp": 70,
+        "fp": 2,
+        "fn": 5,
+        "tn": 73,
+        "confusion_matrix": [
+          [
+            73,
+            2
+          ],
+          [
+            5,
+            70
+          ]
+        ],
+        "threshold": 0.6
+      },
+      "int8_best_threshold": {
+        "accuracy": 0.9733333333333334,
+        "precision": 0.961038961038961,
+        "recall": 0.9866666666666667,
+        "specificity": 0.96,
+        "npv": 0.9863013698630136,
+        "f1": 0.9736842105263158,
+        "balanced_accuracy": 0.9733333333333334,
+        "mcc": 0.9470034388817546,
+        "fpr": 0.04,
+        "fnr": 0.013333333333333334,
+        "roc_auc": 0.9957333333333334,
+        "average_precision": 0.9954964469560357,
+        "tp": 74,
+        "fp": 3,
+        "fn": 1,
+        "tn": 72,
+        "confusion_matrix": [
+          [
+            72,
+            3
+          ],
+          [
+            1,
+            74
+          ]
+        ],
+        "threshold": 0.3828125
+      },
+      "benchmark": {
+        "runs": 400,
+        "mean_ms": 0.09189150000153745,
+        "median_ms": 0.0851000000352542,
+        "p95_ms": 0.09822999999187193,
+        "max_ms": 0.5806000000347922
+      },
+      "epochs_ran": 26,
+      "best_val_accuracy": 0.9733333587646484,
+      "best_val_loss": 0.06514590233564377
+    },
+    {
+      "name": "rt_16_24_32_d24",
+      "keras": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_24_32_d24\\rt_16_24_32_d24.keras",
+      "tflite": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_24_32_d24\\rt_16_24_32_d24_int8.tflite",
+      "header": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_24_32_d24\\rt_16_24_32_d24_snore_model_data.h",
+      "keras_bytes": 185927,
+      "tflite_bytes": 20448,
+      "smaller_than_old_first_model": true,
+      "tflite_sha256": "3880da5d98a1b8c3664058b39f90f1bf913d3dd6e3c14bf31b8318879f1d28f4",
+      "operators": [
+        "SHAPE",
+        "STRIDED_SLICE",
+        "PACK",
+        "RESHAPE",
+        "CONV_2D",
+        "MAX_POOL_2D",
+        "CONV_2D",
+        "MAX_POOL_2D",
+        "CONV_2D",
+        "MEAN",
+        "FULLY_CONNECTED",
+        "FULLY_CONNECTED",
+        "SOFTMAX"
+      ],
+      "unsupported_ops": [],
+      "float_fixed_threshold": {
+        "accuracy": 0.9733333333333334,
+        "precision": 0.9733333333333334,
+        "recall": 0.9733333333333334,
+        "f1": 0.9733333333333334,
+        "auc": 0.9967999999999999,
+        "threshold": 0.6,
+        "confusion_matrix": [
+          [
+            73,
+            2
+          ],
+          [
+            2,
+            73
+          ]
+        ]
+      },
+      "int8_fixed_threshold": {
+        "accuracy": 0.9733333333333334,
+        "precision": 0.9733333333333334,
+        "recall": 0.9733333333333334,
+        "specificity": 0.9733333333333334,
+        "npv": 0.9733333333333334,
+        "f1": 0.9733333333333334,
+        "balanced_accuracy": 0.9733333333333334,
+        "mcc": 0.9466666666666667,
+        "fpr": 0.02666666666666667,
+        "fnr": 0.02666666666666667,
+        "roc_auc": 0.9914666666666666,
+        "average_precision": 0.9837455716788043,
+        "tp": 73,
+        "fp": 2,
+        "fn": 2,
+        "tn": 73,
+        "confusion_matrix": [
+          [
+            73,
+            2
+          ],
+          [
+            2,
+            73
+          ]
+        ],
+        "threshold": 0.6
+      },
+      "int8_best_threshold": {
+        "accuracy": 0.98,
+        "precision": 0.9615384615384616,
+        "recall": 1.0,
+        "specificity": 0.96,
+        "npv": 1.0,
+        "f1": 0.9803921568627451,
+        "balanced_accuracy": 0.98,
+        "mcc": 0.9607689228305228,
+        "fpr": 0.04,
+        "fnr": 0.0,
+        "roc_auc": 0.9914666666666666,
+        "average_precision": 0.9837455716788043,
+        "tp": 75,
+        "fp": 3,
+        "fn": 0,
+        "tn": 72,
+        "confusion_matrix": [
+          [
+            72,
+            3
+          ],
+          [
+            0,
+            75
+          ]
+        ],
+        "threshold": 0.09375
+      },
+      "benchmark": {
+        "runs": 400,
+        "mean_ms": 0.09096924999823841,
+        "median_ms": 0.08620000005521433,
+        "p95_ms": 0.0967749999745137,
+        "max_ms": 0.332400000047528
+      },
+      "epochs_ran": 36,
+      "best_val_accuracy": 0.9866666793823242,
+      "best_val_loss": 0.05439713969826698
+    },
+    {
+      "name": "rt_16_32_32_d32",
+      "keras": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_32_32_d32\\rt_16_32_32_d32.keras",
+      "tflite": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_32_32_d32\\rt_16_32_32_d32_int8.tflite",
+      "header": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_32_32_d32\\rt_16_32_32_d32_snore_model_data.h",
+      "keras_bytes": 230855,
+      "tflite_bytes": 24624,
+      "smaller_than_old_first_model": true,
+      "tflite_sha256": "1273a33c4e48f1de3848a3929e8f780b92b83861140bd7516a0893d93b8d672b",
+      "operators": [
+        "SHAPE",
+        "STRIDED_SLICE",
+        "PACK",
+        "RESHAPE",
+        "CONV_2D",
+        "MAX_POOL_2D",
+        "CONV_2D",
+        "MAX_POOL_2D",
+        "CONV_2D",
+        "MEAN",
+        "FULLY_CONNECTED",
+        "FULLY_CONNECTED",
+        "SOFTMAX"
+      ],
+      "unsupported_ops": [],
+      "float_fixed_threshold": {
+        "accuracy": 0.96,
+        "precision": 0.948051948051948,
+        "recall": 0.9733333333333334,
+        "f1": 0.9605263157894737,
+        "auc": 0.9852444444444444,
+        "threshold": 0.6,
+        "confusion_matrix": [
+          [
+            71,
+            4
+          ],
+          [
+            2,
+            73
+          ]
+        ]
+      },
+      "int8_fixed_threshold": {
+        "accuracy": 0.96,
+        "precision": 0.948051948051948,
+        "recall": 0.9733333333333334,
+        "specificity": 0.9466666666666667,
+        "npv": 0.9726027397260274,
+        "f1": 0.9605263157894737,
+        "balanced_accuracy": 0.96,
+        "mcc": 0.9203272856738179,
+        "fpr": 0.05333333333333334,
+        "fnr": 0.02666666666666667,
+        "roc_auc": 0.9874666666666666,
+        "average_precision": 0.9794299618927759,
+        "tp": 73,
+        "fp": 4,
+        "fn": 2,
+        "tn": 71,
+        "confusion_matrix": [
+          [
+            71,
+            4
+          ],
+          [
+            2,
+            73
+          ]
+        ],
+        "threshold": 0.6
+      },
+      "int8_best_threshold": {
+        "accuracy": 0.9666666666666667,
+        "precision": 0.9605263157894737,
+        "recall": 0.9733333333333334,
+        "specificity": 0.96,
+        "npv": 0.972972972972973,
+        "f1": 0.9668874172185431,
+        "balanced_accuracy": 0.9666666666666667,
+        "mcc": 0.9334163073596637,
+        "fpr": 0.04,
+        "fnr": 0.02666666666666667,
+        "roc_auc": 0.9874666666666666,
+        "average_precision": 0.9794299618927759,
+        "tp": 73,
+        "fp": 3,
+        "fn": 2,
+        "tn": 72,
+        "confusion_matrix": [
+          [
+            72,
+            3
+          ],
+          [
+            2,
+            73
+          ]
+        ],
+        "threshold": 0.71
+      },
+      "benchmark": {
+        "runs": 400,
+        "mean_ms": 0.1084917500014626,
+        "median_ms": 0.10429999997541017,
+        "p95_ms": 0.1369200000283399,
+        "max_ms": 0.18130000000837754
+      },
+      "epochs_ran": 21,
+      "best_val_accuracy": 0.9733333587646484,
+      "best_val_loss": 0.08928821980953217
+    },
+    {
+      "name": "rt_12_24_40_d24",
+      "keras": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_12_24_40_d24\\rt_12_24_40_d24.keras",
+      "tflite": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_12_24_40_d24\\rt_12_24_40_d24_int8.tflite",
+      "header": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_12_24_40_d24\\rt_12_24_40_d24_snore_model_data.h",
+      "keras_bytes": 198215,
+      "tflite_bytes": 21576,
+      "smaller_than_old_first_model": true,
+      "tflite_sha256": "364598a3233e506e2048cd19da921160ed8d1417400188634b0562ad27df1e6e",
+      "operators": [
+        "SHAPE",
+        "STRIDED_SLICE",
+        "PACK",
+        "RESHAPE",
+        "CONV_2D",
+        "MAX_POOL_2D",
+        "CONV_2D",
+        "MAX_POOL_2D",
+        "CONV_2D",
+        "MEAN",
+        "FULLY_CONNECTED",
+        "FULLY_CONNECTED",
+        "SOFTMAX"
+      ],
+      "unsupported_ops": [],
+      "float_fixed_threshold": {
+        "accuracy": 0.98,
+        "precision": 0.9864864864864865,
+        "recall": 0.9733333333333334,
+        "f1": 0.9798657718120806,
+        "auc": 0.9948444444444444,
+        "threshold": 0.6,
+        "confusion_matrix": [
+          [
+            74,
+            1
+          ],
+          [
+            2,
+            73
+          ]
+        ]
+      },
+      "int8_fixed_threshold": {
+        "accuracy": 0.98,
+        "precision": 0.9864864864864865,
+        "recall": 0.9733333333333334,
+        "specificity": 0.9866666666666667,
+        "npv": 0.9736842105263158,
+        "f1": 0.9798657718120806,
+        "balanced_accuracy": 0.98,
+        "mcc": 0.9600853447127969,
+        "fpr": 0.013333333333333334,
+        "fnr": 0.02666666666666667,
+        "roc_auc": 0.9895111111111112,
+        "average_precision": 0.9820235041565126,
+        "tp": 73,
+        "fp": 1,
+        "fn": 2,
+        "tn": 74,
+        "confusion_matrix": [
+          [
+            74,
+            1
+          ],
+          [
+            2,
+            73
+          ]
+        ],
+        "threshold": 0.6
+      },
+      "int8_best_threshold": {
+        "accuracy": 0.9866666666666667,
+        "precision": 0.9866666666666667,
+        "recall": 0.9866666666666667,
+        "specificity": 0.9866666666666667,
+        "npv": 0.9866666666666667,
+        "f1": 0.9866666666666667,
+        "balanced_accuracy": 0.9866666666666667,
+        "mcc": 0.9733333333333334,
+        "fpr": 0.013333333333333334,
+        "fnr": 0.013333333333333334,
+        "roc_auc": 0.9895111111111112,
+        "average_precision": 0.9820235041565126,
+        "tp": 74,
+        "fp": 1,
+        "fn": 1,
+        "tn": 74,
+        "confusion_matrix": [
+          [
+            74,
+            1
+          ],
+          [
+            1,
+            74
+          ]
+        ],
+        "threshold": 0.5625
+      },
+      "benchmark": {
+        "runs": 400,
+        "mean_ms": 0.0904747499981795,
+        "median_ms": 0.08820000005016482,
+        "p95_ms": 0.094600000011269,
+        "max_ms": 0.17400000001543958
+      },
+      "epochs_ran": 24,
+      "best_val_accuracy": 0.9800000190734863,
+      "best_val_loss": 0.07639546692371368
+    }
+  ],
+  "baseline_current_deployed_same_split": {
+    "source_header": "D:\\STUDY\\hrrr-radar-monitor-system\\Edgi_Talk_M55_XiaoZhi\\edge-impulse\\tflite-model\\snore_model_data.h",
+    "tflite_bytes": 13512,
+    "operators": [
+      "SHAPE",
+      "STRIDED_SLICE",
+      "PACK",
+      "RESHAPE",
+      "CONV_2D",
+      "MAX_POOL_2D",
+      "CONV_2D",
+      "MAX_POOL_2D",
+      "CONV_2D",
+      "MEAN",
+      "FULLY_CONNECTED",
+      "FULLY_CONNECTED",
+      "SOFTMAX"
+    ],
+    "unsupported_ops": [],
+    "int8_fixed_threshold": {
+      "accuracy": 0.9866666666666667,
+      "precision": 0.9866666666666667,
+      "recall": 0.9866666666666667,
+      "specificity": 0.9866666666666667,
+      "npv": 0.9866666666666667,
+      "f1": 0.9866666666666667,
+      "balanced_accuracy": 0.9866666666666667,
+      "mcc": 0.9733333333333334,
+      "fpr": 0.013333333333333334,
+      "fnr": 0.013333333333333334,
+      "roc_auc": 0.9994666666666666,
+      "average_precision": 0.9994871794871795,
+      "tp": 74,
+      "fp": 1,
+      "fn": 1,
+      "tn": 74,
+      "confusion_matrix": [
+        [
+          74,
+          1
+        ],
+        [
+          1,
+          74
+        ]
+      ],
+      "threshold": 0.6
+    },
+    "int8_best_threshold": {
+      "accuracy": 0.9933333333333333,
+      "precision": 1.0,
+      "recall": 0.9866666666666667,
+      "specificity": 1.0,
+      "npv": 0.9868421052631579,
+      "f1": 0.9932885906040269,
+      "balanced_accuracy": 0.9933333333333334,
+      "mcc": 0.9867543820659302,
+      "fpr": 0.0,
+      "fnr": 0.013333333333333334,
+      "roc_auc": 0.9994666666666666,
+      "average_precision": 0.9994871794871795,
+      "tp": 74,
+      "fp": 0,
+      "fn": 1,
+      "tn": 75,
+      "confusion_matrix": [
+        [
+          75,
+          0
+        ],
+        [
+          1,
+          74
+        ]
+      ],
+      "threshold": 0.88
+    },
+    "benchmark": {
+      "runs": 400,
+      "mean_ms": 0.05588475000024573,
+      "median_ms": 0.05160000000614673,
+      "p95_ms": 0.06480500001657674,
+      "max_ms": 0.7641999999350446
+    }
+  },
+  "baseline_snore_dataset_light_same_split": {
+    "source_tflite": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_dataset_light\\snore_dataset_light_int8.tflite",
+    "tflite_bytes": 13512,
+    "operators": [
+      "SHAPE",
+      "STRIDED_SLICE",
+      "PACK",
+      "RESHAPE",
+      "CONV_2D",
+      "MAX_POOL_2D",
+      "CONV_2D",
+      "MAX_POOL_2D",
+      "CONV_2D",
+      "MEAN",
+      "FULLY_CONNECTED",
+      "FULLY_CONNECTED",
+      "SOFTMAX"
+    ],
+    "unsupported_ops": [],
+    "int8_fixed_threshold": {
+      "accuracy": 0.9866666666666667,
+      "precision": 0.9866666666666667,
+      "recall": 0.9866666666666667,
+      "specificity": 0.9866666666666667,
+      "npv": 0.9866666666666667,
+      "f1": 0.9866666666666667,
+      "balanced_accuracy": 0.9866666666666667,
+      "mcc": 0.9733333333333334,
+      "fpr": 0.013333333333333334,
+      "fnr": 0.013333333333333334,
+      "roc_auc": 0.9994666666666666,
+      "average_precision": 0.9994871794871795,
+      "tp": 74,
+      "fp": 1,
+      "fn": 1,
+      "tn": 74,
+      "confusion_matrix": [
+        [
+          74,
+          1
+        ],
+        [
+          1,
+          74
+        ]
+      ],
+      "threshold": 0.6
+    },
+    "int8_best_threshold": {
+      "accuracy": 0.9933333333333333,
+      "precision": 1.0,
+      "recall": 0.9866666666666667,
+      "specificity": 1.0,
+      "npv": 0.9868421052631579,
+      "f1": 0.9932885906040269,
+      "balanced_accuracy": 0.9933333333333334,
+      "mcc": 0.9867543820659302,
+      "fpr": 0.0,
+      "fnr": 0.013333333333333334,
+      "roc_auc": 0.9994666666666666,
+      "average_precision": 0.9994871794871795,
+      "tp": 74,
+      "fp": 0,
+      "fn": 1,
+      "tn": 75,
+      "confusion_matrix": [
+        [
+          75,
+          0
+        ],
+        [
+          1,
+          74
+        ]
+      ],
+      "threshold": 0.88
+    },
+    "benchmark": {
+      "runs": 400,
+      "mean_ms": 0.08411950000095203,
+      "median_ms": 0.05420000002231973,
+      "p95_ms": 0.06461499997385543,
+      "max_ms": 8.285000000000764
+    }
+  },
+  "external_eval_snore_detection_first": {
+    "current_deployed": {
+      "model_path": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\external_eval_snore_detection_first\\current_deployed.tflite",
+      "model_bytes": 13512,
+      "sample_level_all": {
+        "count": 145,
+        "positive": 66,
+        "negative": 79,
+        "accuracy": 0.6482758620689655,
+        "precision": 0.5652173913043478,
+        "recall": 0.9848484848484849,
+        "f1": 0.7182320441988951,
+        "specificity": 0.3670886075949367,
+        "tp": 65,
+        "fp": 50,
+        "fn": 1,
+        "tn": 29,
+        "roc_auc": 0.7906597621787496,
+        "average_precision": 0.6834161361384135
+      },
+      "window_level_all": {
+        "count": 4813,
+        "positive": 66,
+        "negative": 4747,
+        "accuracy": 0.8560149594847288,
+        "precision": 0.08586525759577279,
+        "recall": 0.9848484848484849,
+        "f1": 0.15795868772782504,
+        "specificity": 0.8542237202443649,
+        "tp": 65,
+        "fp": 692,
+        "fn": 1,
+        "tn": 4055,
+        "roc_auc": 0.9782542083995635,
+        "average_precision": 0.36869168048381135
+      }
+    },
+    "rt_12_24_32_d24": {
+      "model_path": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_12_24_32_d24\\rt_12_24_32_d24_int8.tflite",
+      "model_bytes": 19432,
+      "sample_level_all": {
+        "count": 145,
+        "positive": 66,
+        "negative": 79,
+        "accuracy": 0.6827586206896552,
+        "precision": 0.5943396226415094,
+        "recall": 0.9545454545454546,
+        "f1": 0.7325581395348837,
+        "specificity": 0.45569620253164556,
+        "tp": 63,
+        "fp": 43,
+        "fn": 3,
+        "tn": 36,
+        "roc_auc": 0.8691983122362869,
+        "average_precision": 0.7956055037885357
+      },
+      "window_level_all": {
+        "count": 4813,
+        "positive": 66,
+        "negative": 4747,
+        "accuracy": 0.890504882609599,
+        "precision": 0.10732538330494037,
+        "recall": 0.9545454545454546,
+        "f1": 0.19295558958652373,
+        "specificity": 0.88961449336423,
+        "tp": 63,
+        "fp": 524,
+        "fn": 3,
+        "tn": 4223,
+        "roc_auc": 0.9819997957242533,
+        "average_precision": 0.38455895683903585
+      }
+    },
+    "rt_16_24_32_d24": {
+      "model_path": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_24_32_d24\\rt_16_24_32_d24_int8.tflite",
+      "model_bytes": 20448,
+      "sample_level_all": {
+        "count": 145,
+        "positive": 66,
+        "negative": 79,
+        "accuracy": 0.7793103448275862,
+        "precision": 0.6770833333333334,
+        "recall": 0.9848484848484849,
+        "f1": 0.8024691358024691,
+        "specificity": 0.6075949367088608,
+        "tp": 65,
+        "fp": 31,
+        "fn": 1,
+        "tn": 48,
+        "roc_auc": 0.8756233218258535,
+        "average_precision": 0.7953555957712898
+      },
+      "window_level_all": {
+        "count": 4813,
+        "positive": 66,
+        "negative": 4747,
+        "accuracy": 0.9306046125077914,
+        "precision": 0.16331658291457288,
+        "recall": 0.9848484848484849,
+        "f1": 0.2801724137931034,
+        "specificity": 0.9298504318516958,
+        "tp": 65,
+        "fp": 333,
+        "fn": 1,
+        "tn": 4414,
+        "roc_auc": 0.9873396914159501,
+        "average_precision": 0.4892051887462071
+      }
+    },
+    "rt_16_32_32_d32": {
+      "model_path": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_32_32_d32\\rt_16_32_32_d32_int8.tflite",
+      "model_bytes": 24624,
+      "sample_level_all": {
+        "count": 145,
+        "positive": 66,
+        "negative": 79,
+        "accuracy": 0.7310344827586207,
+        "precision": 0.6336633663366337,
+        "recall": 0.9696969696969697,
+        "f1": 0.7664670658682635,
+        "specificity": 0.5316455696202531,
+        "tp": 64,
+        "fp": 37,
+        "fn": 2,
+        "tn": 42,
+        "roc_auc": 0.8381281166091293,
+        "average_precision": 0.7486288789346079
+      },
+      "window_level_all": {
+        "count": 4813,
+        "positive": 66,
+        "negative": 4747,
+        "accuracy": 0.8952836068979846,
+        "precision": 0.11307420494699646,
+        "recall": 0.9696969696969697,
+        "f1": 0.20253164556962025,
+        "specificity": 0.8942489993680219,
+        "tp": 64,
+        "fp": 502,
+        "fn": 2,
+        "tn": 4245,
+        "roc_auc": 0.9812816388021781,
+        "average_precision": 0.465340369683684
+      }
+    },
+    "rt_12_24_40_d24": {
+      "model_path": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_12_24_40_d24\\rt_12_24_40_d24_int8.tflite",
+      "model_bytes": 21576,
+      "sample_level_all": {
+        "count": 145,
+        "positive": 66,
+        "negative": 79,
+        "accuracy": 0.7448275862068966,
+        "precision": 0.6407766990291263,
+        "recall": 1.0,
+        "f1": 0.7810650887573964,
+        "specificity": 0.5316455696202531,
+        "tp": 66,
+        "fp": 37,
+        "fn": 0,
+        "tn": 42,
+        "roc_auc": 0.8594169543536632,
+        "average_precision": 0.7640918393646866
+      },
+      "window_level_all": {
+        "count": 4813,
+        "positive": 66,
+        "negative": 4747,
+        "accuracy": 0.9092042385206732,
+        "precision": 0.1312127236580517,
+        "recall": 1.0,
+        "f1": 0.23198594024604569,
+        "specificity": 0.9079418580155888,
+        "tp": 66,
+        "fp": 437,
+        "fn": 0,
+        "tn": 4310,
+        "roc_auc": 0.9855730253876451,
+        "average_precision": 0.4512224837014358
+      }
+    }
+  }
+}

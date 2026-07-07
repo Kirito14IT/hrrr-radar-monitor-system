@@ -12,6 +12,9 @@ import threading
 import math
 import wave
 import hashlib
+import asyncio
+import urllib.error
+import urllib.request
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -20,7 +23,7 @@ from radar_func import range_fft, mti_filter, extract_phase
 
 # 导入信号分解模块
 from signal_decomposition import apply_cwt, apply_eemd
-from apnea_fusion import breath_window_abnormal, detect_suspected_apnea_events
+from apnea_fusion import breath_window_abnormal  # detect_suspected_apnea_events removed — too many false positives
 
 # 导入存在检测模块
 from presence_detection import RadarPresenceDetector
@@ -28,17 +31,49 @@ from presence_detection import RadarPresenceDetector
 # 导入FastAPI相关模块
 from fastapi import FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 import uvicorn
 from typing import Dict, Any, Optional
 import json
+import queue
 
 # 导入数据库操作模块
-from db import create_user, get_user_by_username, verify_password, save_vitals_with_user, query_heart_data_by_date
+from db import (
+    DEFAULT_BED_ID,
+    create_user,
+    get_bed_by_id,
+    get_user_by_username,
+    list_bed_registry,
+    query_heart_data_by_date,
+    resolve_bed_id,
+    save_vitals_with_user,
+    verify_password,
+)
 
 # 确保当前目录在Python路径中，便于导入自定义模块
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
+
+def _load_local_env_file(env_path):
+    """Load backend/.env without adding a python-dotenv dependency."""
+    try:
+        path = Path(env_path)
+        if not path.exists():
+            return
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except Exception as exc:
+        print(f"警告：读取本地环境配置失败：{exc}")
+
+_load_local_env_file(Path(current_dir) / ".env")
 
 curPath = os.path.abspath(os.path.dirname(__file__))
 rootPath = os.path.split(curPath)[0]
@@ -128,12 +163,25 @@ EEMD_MAX_IMF = 5          # EEMD最大IMF数量
 # 存在检测参数
 ENABLE_PRESENCE_DETECTION = True              # 是否启用存在检测
 PRESENCE_HISTORY_LENGTH = 5                   # 存在检测历史长度
-PRESENCE_COUNT_THRESHOLD = 2                  # 存在检测计数阈值
+PRESENCE_COUNT_THRESHOLD = 1                  # 存在检测计数阈值
+PRESENCE_DISTANCE_MIN_M = 0.1                 # 目标有效距离下限；同时用于生命体征保活
+PRESENCE_DISTANCE_MAX_M = 1.0                 # 目标有效距离上限；同时用于生命体征保活
+PRESENCE_DISTANCE_STABILITY_SPAN_M = 0.12     # 最近目标距离最大-最小跨度不超过该值才算稳定
 BOARD_TIMEOUT_SECONDS = 5.0                   # 开发板离线判定超时
 ENVIRONMENT_BOARD_TIMEOUT_SECONDS = 15.0       # 温湿度板离线判定超时
 SNORE_BOARD_TIMEOUT_SECONDS = 15.0             # 呼噜板离线判定超时（10 秒一包音频，宽松一些）
 VOICE_BOARD_TIMEOUT_SECONDS = 30.0             # 语音事件到达后暂时标记小智语音链路在线
 EDGI_BOARD_TIMEOUT_SECONDS = 60.0              # 任一 Edgi 模块心跳后的整板在线宽限期
+VITALS_HOLD_SECONDS = 3.0                      # 短暂丢失生命体征时保留最近有效值
+VITALS_LOST_PROCESS_COUNT = 3                  # 连续多少个处理窗口失败后才确认丢失
+ENV_TEMPERATURE_OFFSET_C = 0                # AHT20 靠近开发板/WiFi 发热，统一显示温度校准偏移
+ENV_TEMPERATURE_MIN_C = -20.0                  # 校准后温度保护下限
+ENV_TEMPERATURE_MAX_C = 60.0                   # 校准后温度保护上限
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_TIMEOUT_SECONDS = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "25"))
+DEEPSEEK_MAX_ANALYSIS_ROWS = int(os.getenv("DEEPSEEK_MAX_ANALYSIS_ROWS", "80"))
+DEEPSEEK_MAX_TOKENS = int(os.getenv("DEEPSEEK_MAX_TOKENS", "1600"))
 SNORE_SESSION_GRACE_SECONDS = 30.0             # 呼噜板按下 Snore detect 后保持在线的最长静默期
 EMERGENCY_DEVICE_GRACE_SECONDS = 90.0          # 紧急报警播放期间，传感器短暂心跳抖动不判离线
 TIMELINE_RETENTION_SECONDS = 7200             # 时间轴保留时长
@@ -141,12 +189,16 @@ SAMPLE_RATE = 16000                           # 呼噜板音频采样率
 SAMPLE_WIDTH = 2                              # int16 PCM
 NUM_CHANNELS = 2                              # 呼噜板音频双声道
 SNORE_EVENT_HOLD_SECONDS = 180.0              # 呼噜事件状态保持时间
-SNORE_SOUND_STOP_SECONDS = 1.5                # 呼噜声音连续消失超过该时长，判定一次呼噜停止
-SNORE_SOUND_SCORE_THRESHOLD = 0.45            # 未显式上报 snore_detected 时，score 超过该值也视作有声音
-SNORE_SOUND_DBFS_THRESHOLD = -42.0            # 未显式上报 snore_detected 时，dbfs 高于该值也视作有声音
+SNORE_SOUND_STOP_SECONDS = 6                # 模型确认的呼噜声音连续消失超过该时长，判定一次呼噜停止
+SNORE_MIN_DURATION_FOR_ALARM = 30.0           # 呼噜至少持续该时长，停止后才允许触发呼吸下降报警
 SNORE_STOP_ALARM_COOLDOWN_SECONDS = 20.0      # 呼噜停止+呼吸下降报警去抖，避免同一段声音重复报警
-BREATH_DESCENT_WINDOW_SECONDS = 2.0           # 判断呼吸波形下降时使用的雷达相位窗口
-BREATH_DESCENT_COMPARE_SECONDS = 0.5          # 比较窗口：最近 0.5s vs 前 0.5s
+BREATH_DESCENT_WINDOW_SECONDS = 5.0           # 判断呼吸波形下降时使用的雷达相位窗口
+BREATH_DESCENT_COMPARE_SECONDS = 2.5          # 比较窗口：最近 1s vs 前 1s
+SNORE_PRESENCE_BYPASS_SECONDS = 10.0         # 呼噜声响起/刚消失后的存在性检测屏蔽窗口
+NIGHT_ABSENCE_START_HOUR = 22                # 夜间离床监护开始小时
+NIGHT_ABSENCE_END_HOUR = 6                   # 夜间离床监护结束小时
+NIGHT_ABSENCE_ALARM_SECONDS = 3600.0         # 夜间连续未检测到在床超过 1 小时报警
+NIGHT_ABSENCE_ALARM_COOLDOWN_SECONDS = 3600.0
 
 def comfort_status_for(temperature_c, humidity_pct, sensor_ok=True, online=True):
     if not online:
@@ -278,6 +330,50 @@ def estimate_breath_rate_fft(phase_signal, fs=FRAME_RATE, breath_band=(0.1, 0.5)
     breath_rate, _quality = estimate_breath_rate_fft_with_quality(phase_signal, fs, breath_band)
     return breath_rate
 
+
+def estimate_breath_periodicity(phase_signal, fs=FRAME_RATE, breath_band=(0.1, 0.5)):
+    """Estimate how clearly the radar phase signal contains periodic respiration."""
+    if phase_signal is None:
+        return 0.0
+    values = np.asarray(phase_signal, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size < max(64, int(fs * 8)):
+        return 0.0
+
+    try:
+        values = signal.detrend(values)
+        if float(np.std(values)) <= 1e-9:
+            return 0.0
+        sos = signal.butter(3, breath_band, btype="bandpass", fs=fs, output="sos")
+        filtered = signal.sosfiltfilt(sos, values)
+        filtered = filtered - float(np.mean(filtered))
+        std = float(np.std(filtered))
+        if std <= 1e-9:
+            return 0.0
+        filtered = filtered / std
+
+        corr = np.correlate(filtered, filtered, mode="full")[filtered.size - 1:]
+        if corr.size < 2 or abs(float(corr[0])) <= 1e-12:
+            return 0.0
+        corr = corr / float(corr[0])
+
+        min_lag = max(1, int(fs / breath_band[1]))
+        max_lag = min(corr.size - 1, int(fs / breath_band[0]))
+        if max_lag <= min_lag:
+            return 0.0
+        band_corr = corr[min_lag:max_lag + 1]
+        if band_corr.size < 3:
+            return 0.0
+
+        peak = max(0.0, float(np.max(band_corr)))
+        floor = max(0.0, float(np.median(band_corr)))
+        prominence = max(0.0, peak - floor)
+        periodicity = min(1.0, 0.72 * peak + 0.28 * min(1.0, prominence * 2.5))
+        return round(max(0.0, periodicity), 3)
+    except Exception:
+        return 0.0
+
+
 class RealtimeRadarProcessor:
     """实时雷达数据处理器"""
 
@@ -307,7 +403,10 @@ class RealtimeRadarProcessor:
         # 初始化存在检测器
         self.presence_detector = RadarPresenceDetector(
             history_length=PRESENCE_HISTORY_LENGTH,
-            count_threshold=PRESENCE_COUNT_THRESHOLD
+            count_threshold=PRESENCE_COUNT_THRESHOLD,
+            distance_min_m=PRESENCE_DISTANCE_MIN_M,
+            distance_max_m=PRESENCE_DISTANCE_MAX_M,
+            distance_stability_span_m=PRESENCE_DISTANCE_STABILITY_SPAN_M,
         )
         self.presence_detected = False
         self.presence_stable = False
@@ -331,6 +430,7 @@ class RealtimeRadarProcessor:
         self.frames_since_last_process = 0  # 自上次处理后累积的帧数 - 添加为类属性
         self.last_radar_received_time = None
         self.last_radar_received_at = None
+        self.current_radar_bed_id = DEFAULT_BED_ID
         self.last_radar_status_time = None
         self.last_radar_status_at = None
         self.radar_board_stationary = True
@@ -339,12 +439,18 @@ class RealtimeRadarProcessor:
         self.radar_motion_sensor_ready = None
         self.last_snore_heartbeat_time = None
         self.last_snore_heartbeat_at = None
+        self.last_snore_bed_id = DEFAULT_BED_ID
         self.last_environment_heartbeat_time = None
         self.last_environment_heartbeat_at = None
+        self.last_environment_bed_id = DEFAULT_BED_ID
         self.last_voice_received_time = None
         self.last_voice_received_at = None
         self.last_edgi_heartbeat_time = None
         self.last_edgi_heartbeat_at = None
+        self.last_edgi_bed_id = DEFAULT_BED_ID
+        self.external_bed_vitals = {}
+        self.bed_device_state = {}
+        self.raw_temperature_c = None
         self.temperature_c = None
         self.humidity_pct = None
         self.environment_sensor_ok = False
@@ -375,6 +481,18 @@ class RealtimeRadarProcessor:
         self.last_snore_stop_alarm_time = None
         self.snore_stop_breath_alarm_count = 0
         self.last_snore_stop_fusion = None
+        self.presence_absent_started_time = None
+        self.presence_absent_started_at = None
+        self.last_night_absence_alarm_time = None
+        self.last_night_absence_alarm_at = None
+        self.night_absence_debug = {
+            "monitoring": False,
+            "in_night_window": False,
+            "absent": False,
+            "absent_seconds": 0.0,
+            "alarm_after_seconds": NIGHT_ABSENCE_ALARM_SECONDS,
+            "reason": "init",
+        }
         self.timeline = []
         self.emergency_events = []
         self.radar_debug = {
@@ -390,6 +508,18 @@ class RealtimeRadarProcessor:
             "target_bin": None,
             "target_distance": None,
             "presence_detected": False,
+            "presence_signal": False,
+            "presence_energy_stable": False,
+            "presence_distance_stable": False,
+            "presence_distance_span": None,
+            "presence_distance": None,
+            "presence_distance_min_m": PRESENCE_DISTANCE_MIN_M,
+            "presence_distance_max_m": PRESENCE_DISTANCE_MAX_M,
+            "presence_distance_stability_span_m": PRESENCE_DISTANCE_STABILITY_SPAN_M,
+            "presence_detection_value": None,
+            "presence_detection_threshold": 1.01,
+            "presence_detection_bin": None,
+            "presence_below_threshold": False,
             "presence_stable": False,
             "presence_bypassed_by_snore": False,
             "board_still": True,
@@ -407,8 +537,18 @@ class RealtimeRadarProcessor:
         self.heart_rate = None              # 最近一次心率预测值
         self.breath_rate= None              # 最近一次呼吸预测值
         self.breath_rate_quality = 0.0
+        self.breath_periodicity = 0.0
         self._breath_rate_history = deque(maxlen=7)
         self._breath_rate_missing_count = 0
+        self.last_valid_heart_rate = None
+        self.last_valid_breath_rate = None
+        self.last_valid_breath_quality = 0.0
+        self.last_valid_vitals_time = None
+        self.last_valid_vitals_at = None
+        self.heart_rate_fresh = False
+        self.breath_rate_fresh = False
+        self.vitals_state = "lost"
+        self.vitals_missing_count = 0
         # 模型加载
         self.cwt_model = None
         self.eemd_model = None
@@ -585,14 +725,22 @@ class RealtimeRadarProcessor:
         age = self._seconds_since(self.last_edgi_heartbeat_time)
         return bool(age is not None and age <= EDGI_BOARD_TIMEOUT_SECONDS)
 
-    def _active_emergency_event(self):
+    def _active_emergency_event(self, bed_id=None):
         with self.state_lock:
             active = [
                 event for event in self.emergency_events
                 if event.get("status", "active") == "active"
-                and event.get("type") in {"emergency_voice", "snore_stop_breath_drop"}
+                and event.get("severity", "critical") in {"warning", "critical"}
+                and (bed_id is None or event.get("bed_id", DEFAULT_BED_ID) == bed_id)
             ]
-        return max(active, key=lambda item: item.get("timestamp", ""), default=None)
+        return max(
+            active,
+            key=lambda item: (
+                self._severity_rank(item.get("severity")),
+                item.get("timestamp", ""),
+            ),
+            default=None,
+        )
 
     def _emergency_device_grace_active(self):
         edgi_age = self._seconds_since(self.last_edgi_heartbeat_time)
@@ -606,6 +754,7 @@ class RealtimeRadarProcessor:
         environment_age = self._seconds_since(self.last_environment_heartbeat_time)
         environment_board_online = self._environment_board_online()
         environment_online = bool(environment_board_online and self.environment_sensor_ok)
+        raw_temperature = round(float(self.raw_temperature_c), 1) if environment_online and self.raw_temperature_c is not None else None
         temperature = round(float(self.temperature_c), 1) if environment_online and self.temperature_c is not None else None
         humidity = round(float(self.humidity_pct), 1) if environment_online and self.humidity_pct is not None else None
         return {
@@ -615,6 +764,8 @@ class RealtimeRadarProcessor:
             "last_environment_heartbeat_at": self.last_environment_heartbeat_at,
             "environment_age_seconds": round(environment_age, 2) if environment_age is not None else None,
             "temperature_c": temperature,
+            "raw_temperature_c": raw_temperature,
+            "temperature_offset_c": ENV_TEMPERATURE_OFFSET_C,
             "humidity_pct": humidity,
             "comfort_status": comfort_status_for(
                 temperature,
@@ -624,6 +775,309 @@ class RealtimeRadarProcessor:
             ),
         }
 
+    def _resolve_runtime_bed_id(self, bed_id=None, radar_ip=None, device_id=None, source=None):
+        try:
+            return resolve_bed_id(
+                bed_id=bed_id,
+                radar_ip=radar_ip,
+                device_id=device_id,
+                source=source,
+                default_bed_id=DEFAULT_BED_ID,
+            )
+        except Exception as exc:
+            print(f"床位映射失败，使用默认床位: {exc}")
+            return DEFAULT_BED_ID
+
+    def _bed_metadata(self, bed_id=None):
+        try:
+            return get_bed_by_id(bed_id or DEFAULT_BED_ID) or {
+                "bed_id": DEFAULT_BED_ID,
+                "bed_label": "01床",
+                "room": "护士站默认病房",
+                "patient_name": "默认患者",
+            }
+        except Exception:
+            return {
+                "bed_id": bed_id or DEFAULT_BED_ID,
+                "bed_label": "01床",
+                "room": "护士站默认病房",
+                "patient_name": "默认患者",
+            }
+
+    def _event_belongs_to_bed(self, event, bed_id):
+        return (event or {}).get("bed_id", DEFAULT_BED_ID) == (bed_id or DEFAULT_BED_ID)
+
+    def _bed_state(self, bed_id):
+        return self.bed_device_state.setdefault(bed_id or DEFAULT_BED_ID, {})
+
+    def _external_bed_vitals_online(self, bed_id, timeout=BOARD_TIMEOUT_SECONDS * 3):
+        state = self.external_bed_vitals.get(bed_id or DEFAULT_BED_ID)
+        if not state:
+            return False
+        age = self._seconds_since(state.get("received_time"))
+        return bool(age is not None and age <= timeout)
+
+    def _timeline_entry_from_external_vitals(self, bed_id, vitals):
+        timestamp = vitals.get("timestamp") or self._now_iso()
+        target_distance = vitals.get("target_distance")
+        snore_state = self._bed_state(bed_id).get("snore") or {}
+        env_state = self._bed_state(bed_id).get("environment") or {}
+        snore_online = self._seconds_since(snore_state.get("received_time")) is not None and self._seconds_since(snore_state.get("received_time")) <= SNORE_BOARD_TIMEOUT_SECONDS
+        env_online = self._seconds_since(env_state.get("received_time")) is not None and self._seconds_since(env_state.get("received_time")) <= ENVIRONMENT_BOARD_TIMEOUT_SECONDS
+        return {
+            "timestamp": timestamp,
+            "bed_id": bed_id,
+            "heart_rate": vitals.get("heart_rate"),
+            "breath_rate": vitals.get("breath_rate"),
+            "breath_quality": vitals.get("breath_quality", 0.86),
+            "breath_periodicity": vitals.get("breath_periodicity", 0.82),
+            "heart_rate_fresh": True,
+            "breath_rate_fresh": True,
+            "vitals_state": "fresh",
+            "vitals_age_seconds": 0.0,
+            "last_valid_vitals_at": timestamp,
+            "target_distance": target_distance or 0.0,
+            "target_bin": int((target_distance or 0.0) / RANGE_RESOLUTION) if target_distance else None,
+            "radar_online": True,
+            "radar_board_stationary": True,
+            "presence_detected": True,
+            "presence_signal": True,
+            "presence_energy_stable": True,
+            "presence_distance_stable": True,
+            "presence_distance_span": 0.04,
+            "presence_distance": target_distance,
+            "presence_distance_min_m": PRESENCE_DISTANCE_MIN_M,
+            "presence_distance_max_m": PRESENCE_DISTANCE_MAX_M,
+            "presence_distance_stability_span_m": PRESENCE_DISTANCE_STABILITY_SPAN_M,
+            "presence_detection_value": vitals.get("presence_detection_value", 1.2),
+            "presence_detection_threshold": vitals.get("presence_detection_threshold", 1.01),
+            "presence_detection_bin": vitals.get("presence_detection_bin"),
+            "presence_below_threshold": bool(vitals.get("presence_below_threshold", False)),
+            "presence_stable": True,
+            "presence_bypassed_by_snore": bool(snore_state.get("snore_detected")),
+            "snore_online": snore_online,
+            "snore_score": snore_state.get("snore_score", 0.0) if snore_online else 0.0,
+            "snore_dbfs": snore_state.get("snore_dbfs") if snore_online else None,
+            "snore_level": snore_state.get("snore_level") if snore_online else None,
+            "snore_detected": bool(snore_state.get("snore_detected")) if snore_online else False,
+            "environment_online": env_online and bool(env_state.get("sensor_ok", True)),
+            "environment_board_online": env_online,
+            "temperature_c": env_state.get("temperature_c") if env_online else None,
+            "raw_temperature_c": env_state.get("raw_temperature_c") if env_online else None,
+            "temperature_offset_c": ENV_TEMPERATURE_OFFSET_C,
+            "humidity_pct": env_state.get("humidity_pct") if env_online else None,
+            "comfort_status": env_state.get("comfort_status", "offline") if env_online else "offline",
+            "sleep_stage": "模拟/外部开发板实时监护",
+        }
+
+    def _append_external_timeline(self, bed_id, vitals):
+        with self.state_lock:
+            entry = self._timeline_entry_from_external_vitals(bed_id, vitals)
+            self.timeline.append(entry)
+            self._trim_timeline_unlocked()
+
+    def _status_snapshot_for_bed(self, bed_id=None):
+        resolved_bed_id = self._resolve_runtime_bed_id(bed_id=bed_id)
+        status = self._status_snapshot()
+        bed = self._bed_metadata(resolved_bed_id)
+        active_emergency = self._active_emergency_event(resolved_bed_id)
+        external_vitals = self.external_bed_vitals.get(resolved_bed_id)
+        external_vitals_online = self._external_bed_vitals_online(resolved_bed_id)
+        if resolved_bed_id != (self.current_radar_bed_id or DEFAULT_BED_ID):
+            for key in (
+                "radar_online",
+                "radar_board_online",
+                "heart_rate_fresh",
+                "breath_rate_fresh",
+                "presence_detected",
+                "presence_stable",
+            ):
+                status[key] = False
+            status.update({
+                "heart_rate": None,
+                "breath_rate": None,
+                "target_distance": None,
+                "target_bin": None,
+                "vitals_state": "lost",
+                "vitals_age_seconds": None,
+            })
+        if external_vitals_online and external_vitals:
+            status.update({
+                "radar_online": True,
+                "radar_board_online": True,
+                "heart_rate": external_vitals.get("heart_rate"),
+                "breath_rate": external_vitals.get("breath_rate"),
+                "heart_rate_fresh": True,
+                "breath_rate_fresh": True,
+                "vitals_state": "fresh",
+                "vitals_age_seconds": round(self._seconds_since(external_vitals.get("received_time")) or 0.0, 2),
+                "last_valid_vitals_at": external_vitals.get("timestamp"),
+                "target_distance": external_vitals.get("target_distance"),
+                "target_bin": int((external_vitals.get("target_distance") or 0.0) / RANGE_RESOLUTION) if external_vitals.get("target_distance") else None,
+                "presence_detected": True,
+                "presence_stable": True,
+                "presence_signal": True,
+                "presence_energy_stable": True,
+                "presence_distance_stable": True,
+                "presence_distance_span": 0.04,
+                "presence_distance": external_vitals.get("target_distance"),
+                "presence_detection_value": external_vitals.get("presence_detection_value", 1.2),
+                "presence_detection_threshold": external_vitals.get("presence_detection_threshold", 1.01),
+                "presence_detection_bin": external_vitals.get("presence_detection_bin"),
+                "presence_below_threshold": bool(external_vitals.get("presence_below_threshold", False)),
+                "last_radar_received_at": external_vitals.get("timestamp"),
+                "radar_age_seconds": round(self._seconds_since(external_vitals.get("received_time")) or 0.0, 2),
+            })
+        if resolved_bed_id != (self.last_snore_bed_id or DEFAULT_BED_ID):
+            status.update({
+                "snore_board_online": False,
+                "snore_monitoring": False,
+                "snore_paused": False,
+                "snore_score": 0.0,
+                "snore_dbfs": None,
+                "snore_level": None,
+                "snore_detected": False,
+            })
+        bed_state = self._bed_state(resolved_bed_id)
+        snore_state = bed_state.get("snore") or {}
+        snore_age = self._seconds_since(snore_state.get("received_time"))
+        if snore_age is not None and snore_age <= SNORE_BOARD_TIMEOUT_SECONDS:
+            status.update({
+                "snore_board_online": True,
+                "snore_monitoring": True,
+                "snore_paused": False,
+                "snore_score": snore_state.get("snore_score", 0.0),
+                "snore_dbfs": snore_state.get("snore_dbfs"),
+                "snore_level": snore_state.get("snore_level"),
+                "snore_detected": bool(snore_state.get("snore_detected")),
+                "snore_age_seconds": round(snore_age, 2),
+                "last_snore_heartbeat_at": snore_state.get("received_at"),
+            })
+        if resolved_bed_id != (self.last_environment_bed_id or DEFAULT_BED_ID):
+            status.update({
+                "environment_board_online": False,
+                "environment_online": False,
+                "temperature_c": None,
+                "raw_temperature_c": None,
+                "humidity_pct": None,
+                "comfort_status": "offline",
+            })
+        env_state = bed_state.get("environment") or {}
+        env_age = self._seconds_since(env_state.get("received_time"))
+        if env_age is not None and env_age <= ENVIRONMENT_BOARD_TIMEOUT_SECONDS:
+            status.update({
+                "environment_board_online": True,
+                "environment_online": bool(env_state.get("sensor_ok", True)),
+                "environment_sensor_ok": bool(env_state.get("sensor_ok", True)),
+                "temperature_c": env_state.get("temperature_c"),
+                "raw_temperature_c": env_state.get("raw_temperature_c"),
+                "humidity_pct": env_state.get("humidity_pct"),
+                "comfort_status": env_state.get("comfort_status", "comfortable"),
+                "environment_age_seconds": round(env_age, 2),
+                "last_environment_heartbeat_at": env_state.get("received_at"),
+            })
+        if resolved_bed_id != (self.last_edgi_bed_id or DEFAULT_BED_ID):
+            status.update({
+                "edgi_board_online": False,
+                "voice_board_online": False,
+            })
+        edgi_state = bed_state.get("edgi") or {}
+        edgi_age = self._seconds_since(edgi_state.get("received_time"))
+        if edgi_age is not None and edgi_age <= EDGI_BOARD_TIMEOUT_SECONDS:
+            status.update({
+                "edgi_board_online": True,
+                "voice_board_online": True,
+                "edgi_age_seconds": round(edgi_age, 2),
+                "last_edgi_heartbeat_at": edgi_state.get("received_at"),
+            })
+        status.update({
+            "bed_id": resolved_bed_id,
+            "bed": bed,
+            "bed_label": bed.get("bed_label"),
+            "room": bed.get("room"),
+            "patient_name": bed.get("patient_name"),
+            "emergency_active": active_emergency is not None,
+            "active_emergency": active_emergency,
+        })
+        return status
+
+    def _risk_for_bed_status(self, status):
+        if status.get("emergency_active"):
+            event = status.get("active_emergency") or {}
+            return "critical", event.get("title") or event.get("message") or "存在待处理紧急事件"
+        if status.get("snore_detected"):
+            return "warning", "检测到呼噜"
+        if not status.get("radar_board_online") and not status.get("edgi_board_online"):
+            return "offline", "床旁设备离线"
+        if status.get("vitals_state") == "lost":
+            return "warning", "暂未获取生命体征"
+        return "normal", "监护正常"
+
+    def _bed_summary(self, bed):
+        bed_id = bed.get("bed_id") or DEFAULT_BED_ID
+        status = self._status_snapshot_for_bed(bed_id)
+        risk_level, primary_issue = self._risk_for_bed_status(status)
+        online_devices = sum(
+            1 for key in (
+                "radar_board_online",
+                "snore_board_online",
+                "environment_board_online",
+                "edgi_board_online",
+            )
+            if status.get(key)
+        )
+        return {
+            "bed_id": bed_id,
+            "bed_label": bed.get("bed_label"),
+            "room": bed.get("room"),
+            "patient_name": bed.get("patient_name"),
+            "patient_gender": bed.get("patient_gender"),
+            "patient_age": bed.get("patient_age"),
+            "patient_note": bed.get("patient_note"),
+            "risk_level": risk_level,
+            "primary_issue": primary_issue,
+            "online_devices": online_devices,
+            "radar_board_online": bool(status.get("radar_board_online")),
+            "edgi_board_online": bool(status.get("edgi_board_online")),
+            "snore_board_online": bool(status.get("snore_board_online")),
+            "environment_board_online": bool(status.get("environment_board_online")),
+            "heart_rate": status.get("heart_rate"),
+            "breath_rate": status.get("breath_rate"),
+            "temperature_c": status.get("temperature_c"),
+            "humidity_pct": status.get("humidity_pct"),
+            "snore_detected": bool(status.get("snore_detected")),
+            "snore_score": status.get("snore_score"),
+            "emergency_active": bool(status.get("emergency_active")),
+            "active_emergency": status.get("active_emergency"),
+            "last_update": status.get("last_radar_received_at") or status.get("last_edgi_heartbeat_at") or status.get("timestamp"),
+            "status": status,
+        }
+
+    def _all_bed_summaries(self):
+        try:
+            beds = list_bed_registry(active_only=True)
+        except Exception as exc:
+            print(f"读取床位注册表失败: {exc}")
+            beds = [self._bed_metadata(DEFAULT_BED_ID)]
+        summaries = [self._bed_summary(bed) for bed in beds]
+        critical_count = sum(1 for item in summaries if item["risk_level"] == "critical")
+        warning_count = sum(1 for item in summaries if item["risk_level"] == "warning")
+        online_count = sum(1 for item in summaries if item["online_devices"] > 0)
+        return {
+            "code": 200,
+            "status": "success",
+            "beds": summaries,
+            "summary": {
+                "total": len(summaries),
+                "online": online_count,
+                "critical": critical_count,
+                "warning": warning_count,
+                "normal": sum(1 for item in summaries if item["risk_level"] == "normal"),
+                "offline": sum(1 for item in summaries if item["risk_level"] == "offline"),
+            },
+            "timestamp": time.time(),
+        }
+
     def _sleep_stage_for_latest(self, radar_online, heart_rate, breath_rate):
         if not radar_online:
             return "雷达离线"
@@ -631,30 +1085,139 @@ class RealtimeRadarProcessor:
             return "疑似呼噜扰动"
         if heart_rate is None or breath_rate is None:
             return "等待生命体征"
+        if self.vitals_state == "recovering":
+            return "信号恢复中"
         return "实时监测中"
+
+    @staticmethod
+    def _is_finite_number(value):
+        return isinstance(value, (int, float)) and math.isfinite(float(value))
+
+    @staticmethod
+    def _calibrate_environment_temperature(raw_temperature_c):
+        if raw_temperature_c is None:
+            return None
+        temperature = float(raw_temperature_c) + ENV_TEMPERATURE_OFFSET_C
+        temperature = max(ENV_TEMPERATURE_MIN_C, min(ENV_TEMPERATURE_MAX_C, temperature))
+        return round(temperature, 1)
+
+    def _target_distance_value(self):
+        return self.target_bin * RANGE_RESOLUTION if self.target_bin is not None else None
+
+    def _target_usable_for_vitals(self):
+        distance = self._target_distance_value()
+        return distance is not None and PRESENCE_DISTANCE_MIN_M <= float(distance) <= PRESENCE_DISTANCE_MAX_M
+
+    def _presence_debug_state(self):
+        if hasattr(self.presence_detector, "get_debug_state"):
+            return self.presence_detector.get_debug_state()
+        return {
+            "presence_signal": bool(self.presence_detected),
+            "presence_energy_stable": bool(self.presence_stable),
+            "presence_distance_stable": False,
+            "presence_distance_span": None,
+            "presence_distance": self._target_distance_value(),
+            "presence_distance_min_m": PRESENCE_DISTANCE_MIN_M,
+            "presence_distance_max_m": PRESENCE_DISTANCE_MAX_M,
+            "presence_distance_stability_span_m": PRESENCE_DISTANCE_STABILITY_SPAN_M,
+            "presence_detection_value": None,
+            "presence_detection_threshold": 1.01,
+            "presence_detection_bin": None,
+            "presence_below_threshold": False,
+            "presence_stable": bool(self.presence_stable),
+        }
+
+    def _valid_heart_value(self, value):
+        return self._is_finite_number(value) and 35.0 <= float(value) <= 180.0
+
+    def _valid_breath_value(self, value):
+        return self._is_finite_number(value) and 4.0 <= float(value) <= 40.0
+
+    def _vitals_hold_available(self, now=None):
+        if not self._radar_board_online() or not self._target_usable_for_vitals():
+            return False
+        if self.last_valid_vitals_time is None:
+            return False
+        age = (time.time() if now is None else float(now)) - float(self.last_valid_vitals_time)
+        return 0.0 <= age <= VITALS_HOLD_SECONDS
+
+    def _refresh_valid_vitals_cache(self, now=None):
+        now = time.time() if now is None else float(now)
+        updated = False
+        if self.heart_rate_fresh and self._valid_heart_value(self.heart_rate):
+            self.last_valid_heart_rate = float(self.heart_rate)
+            updated = True
+        if self.breath_rate_fresh and self._valid_breath_value(self.breath_rate):
+            self.last_valid_breath_rate = float(self.breath_rate)
+            self.last_valid_breath_quality = max(0.0, min(1.0, float(self.breath_rate_quality or 0.0)))
+            updated = True
+        if updated:
+            self.last_valid_vitals_time = now
+            self.last_valid_vitals_at = datetime.fromtimestamp(now).isoformat(timespec="seconds")
+
+    def _apply_vitals_hold_or_loss(self, now=None):
+        now = time.time() if now is None else float(now)
+        self.vitals_missing_count += 1
+        self.heart_rate_fresh = False
+        self.breath_rate_fresh = False
+        if self._vitals_hold_available(now):
+            if self.last_valid_heart_rate is not None:
+                self.heart_rate = self.last_valid_heart_rate
+            if self.last_valid_breath_rate is not None:
+                self.breath_rate = self.last_valid_breath_rate
+                self.breath_rate_quality = round(max(0.0, min(1.0, self.last_valid_breath_quality)) * 0.65, 3)
+            self.vitals_state = "recovering"
+            return
+        self.heart_rate = None
+        self.breath_rate = None
+        self.breath_rate_quality = 0.0
+        self.model_prediction = None
+        self.vitals_state = "lost"
+
+    def _finalize_vitals_window(self):
+        heart_fresh = bool(self.heart_rate_fresh and self._valid_heart_value(self.heart_rate))
+        breath_fresh = bool(self.breath_rate_fresh and self._valid_breath_value(self.breath_rate))
+        self._refresh_valid_vitals_cache()
+        if heart_fresh and breath_fresh:
+            self.vitals_missing_count = 0
+            self.vitals_state = "fresh"
+            return
+        if self._valid_heart_value(self.heart_rate) and self._valid_breath_value(self.breath_rate):
+            # One of the values may be retained from the previous valid window.
+            self._apply_vitals_hold_or_loss()
+            self.heart_rate_fresh = heart_fresh
+            self.breath_rate_fresh = breath_fresh
+            return
+        self._apply_vitals_hold_or_loss()
+        self.heart_rate_fresh = heart_fresh and self.vitals_state != "lost"
+        self.breath_rate_fresh = breath_fresh and self.vitals_state != "lost"
+
+    def _vitals_age_seconds(self):
+        if self.last_valid_vitals_time is None:
+            return None
+        return self._seconds_since(self.last_valid_vitals_time)
 
     def _update_breath_rate_estimate(self, raw_breath_rate, quality=0.0):
         """平滑雷达呼吸率，降低单窗 FFT 抖动对前端和事件规则的影响。"""
         if raw_breath_rate is None or not isinstance(raw_breath_rate, (int, float)):
             self._breath_rate_missing_count += 1
-            if self._breath_rate_missing_count >= 4:
-                self.breath_rate = None
-                self.breath_rate_quality = 0.0
+            self.breath_rate_fresh = False
+            self.breath_rate_quality = round(max(0.0, float(self.breath_rate_quality or 0.0) * 0.75), 3)
             return self.breath_rate
 
         raw = float(raw_breath_rate)
         quality = max(0.0, min(1.0, float(quality or 0.0)))
         if not 6.0 <= raw <= 30.0:
             self._breath_rate_missing_count += 1
-            if self._breath_rate_missing_count >= 4:
-                self.breath_rate = None
-                self.breath_rate_quality = 0.0
+            self.breath_rate_fresh = False
+            self.breath_rate_quality = round(max(0.0, float(self.breath_rate_quality or 0.0) * 0.75), 3)
             return self.breath_rate
 
         if self.breath_rate is not None:
             jump = abs(raw - float(self.breath_rate))
             if jump > 7.0 and quality < 0.70:
                 self._breath_rate_missing_count += 1
+                self.breath_rate_fresh = False
                 return self.breath_rate
 
         self._breath_rate_missing_count = 0
@@ -667,6 +1230,7 @@ class RealtimeRadarProcessor:
             smoothed = float(self.breath_rate) * (1.0 - alpha) + median_rate * alpha
         self.breath_rate = round(smoothed, 2)
         self.breath_rate_quality = round(quality, 3)
+        self.breath_rate_fresh = True
         return self.breath_rate
 
     @staticmethod
@@ -698,18 +1262,138 @@ class RealtimeRadarProcessor:
 
     @staticmethod
     def _snore_sound_present(snore_detected, score, dbfs):
-        """判定当前心跳是否仍有呼噜/声音，独立于前端 snore_detected 的长保持状态。"""
-        if bool(snore_detected):
+        """判定当前心跳是否为真实呼噜。
+
+        这里故意只认小智/Edgi 模型上报的 snore_detected=True。
+        snore_score 和 dbfs 仍用于展示与强度评估，但不能单独武装
+        “呼噜停止 + 呼吸下降”融合报警，避免环境噪声导致误报。
+        """
+        return bool(snore_detected)
+
+    def _snore_presence_bypass_active(self, now=None):
+        """呼噜响起及停止确认窗口内关闭存在性检测，避免门控干扰融合报警。"""
+        if self.snore_sound_active:
             return True
         try:
-            if float(score or 0.0) >= SNORE_SOUND_SCORE_THRESHOLD:
-                return True
-        except (TypeError, ValueError):
-            pass
-        try:
-            return dbfs is not None and float(dbfs) >= SNORE_SOUND_DBFS_THRESHOLD
+            current = float(now if now is not None else time.time())
         except (TypeError, ValueError):
             return False
+        for mark in (self.last_snore_sound_time,):
+            if mark is None:
+                continue
+            try:
+                age = current - float(mark)
+            except (TypeError, ValueError):
+                continue
+            if 0.0 <= age <= SNORE_PRESENCE_BYPASS_SECONDS:
+                return True
+        return False
+
+    @staticmethod
+    def _is_night_absence_window(timestamp=None):
+        current = float(timestamp if timestamp is not None else time.time())
+        hour = datetime.fromtimestamp(current).hour
+        if NIGHT_ABSENCE_START_HOUR <= NIGHT_ABSENCE_END_HOUR:
+            return NIGHT_ABSENCE_START_HOUR <= hour < NIGHT_ABSENCE_END_HOUR
+        return hour >= NIGHT_ABSENCE_START_HOUR or hour < NIGHT_ABSENCE_END_HOUR
+
+    def _record_night_absence_alarm(self, now, absent_seconds, presence_debug):
+        bed_id = self.current_radar_bed_id or DEFAULT_BED_ID
+        existing = next(
+            (
+                event for event in self.emergency_events
+                if event.get("type") == "night_absence"
+                and event.get("status", "active") == "active"
+                and event.get("bed_id", DEFAULT_BED_ID) == bed_id
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
+
+        cooldown_age = self._seconds_since(self.last_night_absence_alarm_time)
+        if cooldown_age is not None and cooldown_age < NIGHT_ABSENCE_ALARM_COOLDOWN_SECONDS:
+            return None
+
+        now_text = datetime.fromtimestamp(now).isoformat(timespec="seconds")
+        started_at = self.presence_absent_started_at or now_text
+        fingerprint_seed = f"night_absence:{bed_id}:{started_at[:13]}"
+        fingerprint = "night_absence:" + hashlib.sha1(fingerprint_seed.encode("utf-8")).hexdigest()[:16]
+        event = {
+            "eventID": int(now * 1000),
+            "userID": None,
+            "bed_id": bed_id,
+            "type": "night_absence",
+            "severity": "critical",
+            "title": "夜间疑似离床",
+            "message": "夜间存在性检测连续超过 1 小时未检测到病人在床，请立即确认。",
+            "timestamp": now_text,
+            "source": "radar_presence",
+            "score_delta": -28,
+            "details": {
+                "absent_started_at": started_at,
+                "absent_seconds": round(float(absent_seconds), 1),
+                "alarm_after_seconds": NIGHT_ABSENCE_ALARM_SECONDS,
+                "night_window": f"{NIGHT_ABSENCE_START_HOUR:02d}:00-{NIGHT_ABSENCE_END_HOUR:02d}:00",
+                "presence": dict(presence_debug or {}),
+                "snore_presence_bypassed": bool(self.presence_bypassed_by_snore),
+            },
+            "fingerprint": fingerprint,
+            "status": "active",
+            "resolved_at": None,
+            "resolution_note": None,
+            "resolved_by": None,
+        }
+        if not any(item.get("fingerprint") == fingerprint for item in self.emergency_events):
+            self.emergency_events.append(event)
+            self.emergency_events = self.emergency_events[-120:]
+        self.last_night_absence_alarm_time = now
+        self.last_night_absence_alarm_at = now_text
+        return event
+
+    def _update_night_absence_monitor(self, now=None):
+        current = float(now if now is not None else time.time())
+        in_night = self._is_night_absence_window(current)
+        radar_online = self._radar_board_online() or self._radar_data_online()
+        presence_debug = self._presence_debug_state()
+        snore_bypass = bool(self.presence_bypassed_by_snore or self._snore_presence_bypass_active(current))
+        monitoring = bool(ENABLE_PRESENCE_DETECTION and radar_online and in_night and not snore_bypass)
+        absent = bool(monitoring and not self.presence_stable)
+
+        if absent:
+            if self.presence_absent_started_time is None:
+                self.presence_absent_started_time = current
+                self.presence_absent_started_at = datetime.fromtimestamp(current).isoformat(timespec="seconds")
+            absent_seconds = max(0.0, current - float(self.presence_absent_started_time))
+            reason = "absent_counting"
+            if absent_seconds >= NIGHT_ABSENCE_ALARM_SECONDS:
+                self._record_night_absence_alarm(current, absent_seconds, presence_debug)
+                reason = "alarm_active"
+        else:
+            absent_seconds = 0.0
+            reason = "present"
+            if not radar_online:
+                reason = "radar_offline"
+            elif not in_night:
+                reason = "outside_night_window"
+            elif snore_bypass:
+                reason = "snore_presence_bypass"
+            elif not ENABLE_PRESENCE_DETECTION:
+                reason = "presence_disabled"
+            self.presence_absent_started_time = None
+            self.presence_absent_started_at = None
+
+        self.night_absence_debug = {
+            "monitoring": monitoring,
+            "in_night_window": in_night,
+            "absent": absent,
+            "absent_started_at": self.presence_absent_started_at,
+            "absent_seconds": round(float(absent_seconds), 2),
+            "alarm_after_seconds": NIGHT_ABSENCE_ALARM_SECONDS,
+            "last_alarm_at": self.last_night_absence_alarm_at,
+            "reason": reason,
+        }
+        return self.night_absence_debug
 
     def _breath_signal_descent_snapshot(self):
         """返回当前雷达呼吸相位波形是否处于下降段。"""
@@ -753,7 +1437,7 @@ class RealtimeRadarProcessor:
         slope = float(np.polyfit(x, segment, 1)[0]) if segment.size >= 2 else 0.0
         noise = float(np.std(segment))
         threshold = max(1e-4, noise * 0.08)
-        descending = bool(delta <= -threshold or (delta < 0.0 and slope < 0.0))
+        descending = bool(delta <= -threshold*0.7 or (delta < 0.0 and slope < 0.0))
 
         return {
             "descending": descending,
@@ -771,6 +1455,39 @@ class RealtimeRadarProcessor:
             "target_distance": float(self.target_bin * RANGE_RESOLUTION) if self.target_bin is not None else None,
         }
 
+    def _presence_signal_below_threshold_snapshot(self):
+        """Return whether the radar presence/breath energy ratio is below the presence threshold."""
+        presence_debug = self._presence_debug_state()
+        value = presence_debug.get("presence_detection_value")
+        threshold = presence_debug.get("presence_detection_threshold")
+        if not self._is_finite_number(value) or not self._is_finite_number(threshold):
+            return {
+                "below_threshold": False,
+                "reason": "missing_presence_detection_value",
+                "presence_detection_value": value,
+                "presence_detection_threshold": threshold,
+                "presence_detection_bin": presence_debug.get("presence_detection_bin"),
+                "target_bin": int(self.target_bin) if self.target_bin is not None else None,
+                "target_distance": float(self.target_bin * RANGE_RESOLUTION) if self.target_bin is not None else None,
+            }
+
+        below_threshold = float(value) < float(threshold)
+        return {
+            "below_threshold": bool(below_threshold),
+            "reason": "ok",
+            "presence_detection_value": round(float(value), 4),
+            "presence_detection_threshold": round(float(threshold), 4),
+            "presence_detection_bin": presence_debug.get("presence_detection_bin"),
+            "presence_distance_stable": bool(presence_debug.get("presence_distance_stable")),
+            "presence_distance_span": presence_debug.get("presence_distance_span"),
+            "presence_bypassed_by_snore": bool(self.presence_bypassed_by_snore),
+            "breath_rate": float(self.breath_rate) if self.breath_rate is not None else None,
+            "breath_quality": self.breath_rate_quality,
+            "breath_periodicity": self.breath_periodicity,
+            "target_bin": int(self.target_bin) if self.target_bin is not None else None,
+            "target_distance": float(self.target_bin * RANGE_RESOLUTION) if self.target_bin is not None else None,
+        }
+
     def _record_snore_stop_breath_drop_alarm(self, stop_time, silence_seconds, score, dbfs, breath_snapshot, source):
         now_text = datetime.fromtimestamp(stop_time).isoformat(timespec="seconds")
         cooldown_age = self._seconds_since(self.last_snore_stop_alarm_time)
@@ -779,8 +1496,9 @@ class RealtimeRadarProcessor:
 
         minute_bucket = datetime.fromtimestamp(stop_time).strftime("%Y-%m-%dT%H:%M:%S")
         fingerprint_seed = (
-            f"snore_stop_breath_drop:{source}:{minute_bucket}:"
-            f"{breath_snapshot.get('target_bin')}:{round(float(silence_seconds), 1)}"
+            f"snore_stop_presence_threshold:{source}:{minute_bucket}:"
+            f"{breath_snapshot.get('target_bin')}:{round(float(silence_seconds), 1)}:"
+            f"{breath_snapshot.get('presence_detection_value')}:{breath_snapshot.get('presence_detection_threshold')}"
         )
         fingerprint = "snore_stop_breath_drop:" + hashlib.sha1(fingerprint_seed.encode("utf-8")).hexdigest()[:16]
         event = {
@@ -788,8 +1506,8 @@ class RealtimeRadarProcessor:
             "userID": None,
             "type": "snore_stop_breath_drop",
             "severity": "critical",
-            "title": "呼噜停止伴随呼吸下降",
-            "message": f"检测到呼噜声音消失约 {silence_seconds:.1f} 秒，同时雷达呼吸波形处于下降段，建议立即观察。",
+            "title": "疑似呼吸暂停",
+            "message": f"检测到呼噜声音消失约 {silence_seconds:.1f} 秒，同时雷达呼吸/存在性信号跌破存在性检测阈值，建议立即观察。",
             "timestamp": now_text,
             "source": source or "real_snore_board",
             "score_delta": -24,
@@ -850,18 +1568,26 @@ class RealtimeRadarProcessor:
         self.snore_sound_active = False
         self.last_snore_sound_stop_time = now
         self.last_snore_sound_stop_at = now_text
-        breath_snapshot = self._breath_signal_descent_snapshot()
+        breath_snapshot = self._presence_signal_below_threshold_snapshot()
         self.last_snore_stop_fusion = {
             "state": "stopped",
             "timestamp": now_text,
             "sound_present": False,
             "silence_seconds": round(float(silence_seconds), 2),
             "stop_threshold_seconds": SNORE_SOUND_STOP_SECONDS,
-            "breath_signal_descending": bool(breath_snapshot.get("descending")),
+            "breath_signal_descending": False,
+            "breath_signal_below_presence_threshold": bool(breath_snapshot.get("below_threshold")),
             "breath_signal": breath_snapshot,
         }
 
-        if breath_snapshot.get("descending"):
+        if breath_snapshot.get("below_threshold"):
+            snore_duration = self._seconds_since(self.snore_sound_started_time)
+            if snore_duration is not None and snore_duration < SNORE_MIN_DURATION_FOR_ALARM:
+                self.last_snore_stop_fusion["alarm_triggered"] = False
+                self.last_snore_stop_fusion["alarm_skipped_reason"] = (
+                    f"snore_too_short ({snore_duration:.1f}s < {SNORE_MIN_DURATION_FOR_ALARM:.0f}s)"
+                )
+                return event
             event = self._record_snore_stop_breath_drop_alarm(
                 now,
                 silence_seconds,
@@ -872,7 +1598,11 @@ class RealtimeRadarProcessor:
             )
             self.last_snore_stop_fusion["alarm_triggered"] = event is not None
             if event is not None:
-                print(f">> 呼噜停止+呼吸下降报警: silence={silence_seconds:.2f}s, breath_delta={breath_snapshot.get('delta')}")
+                print(
+                    f">> 呼噜停止+存在性阈值跌破报警: silence={silence_seconds:.2f}s, "
+                    f"presence={breath_snapshot.get('presence_detection_value')}, "
+                    f"threshold={breath_snapshot.get('presence_detection_threshold')}"
+                )
         else:
             self.last_snore_stop_fusion["alarm_triggered"] = False
         return event
@@ -883,20 +1613,44 @@ class RealtimeRadarProcessor:
         target_distance = self.target_bin * RANGE_RESOLUTION if self.target_bin is not None else 0.0
         heart_rate = float(self.heart_rate) if self.heart_rate is not None else None
         breath_rate = float(self.breath_rate) if self.breath_rate is not None else None
+        vitals_age = self._vitals_age_seconds()
         snore_score = round(float(self.snore_score or 0.0), 3) if snore_online else 0.0
         snore_dbfs = self.snore_dbfs if snore_online else None
         snore_level = self._snore_level_from_dbfs(snore_dbfs, snore_score) if snore_online else None
         snore_detected = bool(self.snore_detected) if snore_online else False
         env = self._environment_snapshot()
+        presence_debug = self._presence_debug_state()
         return {
             "timestamp": timestamp or self._now_iso(),
+            "bed_id": self.current_radar_bed_id or DEFAULT_BED_ID,
             "heart_rate": heart_rate if radar_online else None,
             "breath_rate": breath_rate if radar_online else None,
             "breath_quality": self.breath_rate_quality if radar_online else 0.0,
+            "breath_periodicity": self.breath_periodicity if radar_online else 0.0,
+            "heart_rate_fresh": bool(self.heart_rate_fresh) if radar_online else False,
+            "breath_rate_fresh": bool(self.breath_rate_fresh) if radar_online else False,
+            "vitals_state": self.vitals_state if radar_online else "lost",
+            "vitals_age_seconds": round(vitals_age, 2) if vitals_age is not None else None,
+            "last_valid_vitals_at": self.last_valid_vitals_at,
             "target_distance": float(target_distance) if radar_online else 0.0,
             "target_bin": int(self.target_bin) if self.target_bin is not None else None,
             "radar_online": radar_online,
             "radar_board_stationary": bool(self.radar_board_stationary),
+            "presence_detected": bool(self.presence_detected) if radar_online else False,
+            "presence_signal": bool(presence_debug.get("presence_signal")) if radar_online else False,
+            "presence_energy_stable": bool(presence_debug.get("presence_energy_stable")) if radar_online else False,
+            "presence_distance_stable": bool(presence_debug.get("presence_distance_stable")) if radar_online else False,
+            "presence_distance_span": presence_debug.get("presence_distance_span") if radar_online else None,
+            "presence_distance": presence_debug.get("presence_distance") if radar_online else None,
+            "presence_distance_min_m": PRESENCE_DISTANCE_MIN_M,
+            "presence_distance_max_m": PRESENCE_DISTANCE_MAX_M,
+            "presence_distance_stability_span_m": PRESENCE_DISTANCE_STABILITY_SPAN_M,
+            "presence_detection_value": presence_debug.get("presence_detection_value") if radar_online else None,
+            "presence_detection_threshold": presence_debug.get("presence_detection_threshold") if radar_online else None,
+            "presence_detection_bin": presence_debug.get("presence_detection_bin") if radar_online else None,
+            "presence_below_threshold": bool(presence_debug.get("presence_below_threshold")) if radar_online else False,
+            "presence_stable": bool(self.presence_stable) if radar_online else False,
+            "presence_bypassed_by_snore": bool(self.presence_bypassed_by_snore) if radar_online else False,
             "snore_online": snore_online,
             "snore_score": snore_score,
             "snore_dbfs": snore_dbfs,
@@ -905,6 +1659,8 @@ class RealtimeRadarProcessor:
             "environment_online": env["environment_online"],
             "environment_board_online": env["environment_board_online"],
             "temperature_c": env["temperature_c"],
+            "raw_temperature_c": env["raw_temperature_c"],
+            "temperature_offset_c": env["temperature_offset_c"],
             "humidity_pct": env["humidity_pct"],
             "comfort_status": env["comfort_status"],
             "sleep_stage": self._sleep_stage_for_latest(radar_online, heart_rate, breath_rate),
@@ -1010,24 +1766,80 @@ class RealtimeRadarProcessor:
         phrase = (payload.phrase or "").strip()
         transcript = (payload.transcript or "").strip()
         source = (payload.source or "xiaozhi_voice_board").strip() or "xiaozhi_voice_board"
+        bed_id = self._resolve_runtime_bed_id(
+            bed_id=getattr(payload, "bed_id", None),
+            device_id=getattr(payload, "device_id", None),
+            source=source,
+        )
         display_text = transcript or phrase or "未提供文本"
-        fingerprint_seed = f"{timestamp}:{source}:{phrase}:{transcript}:{payload.device_id or ''}"
-        fingerprint = "emergency_voice:" + hashlib.sha1(fingerprint_seed.encode("utf-8")).hexdigest()[:16]
+        raw_type = (
+            getattr(payload, "event_type", None) or
+            getattr(payload, "type", None) or
+            ""
+        ).strip().lower()
+        text_for_type = f"{raw_type} {source} {phrase} {transcript}".lower()
+        is_fall = any(token in text_for_type for token in ("fall", "摇晃", "跌倒", "摔倒"))
+        event_type = "board_fall" if is_fall else (raw_type or "emergency_voice")
+        voice_type_aliases = {"voice", "sos", "help", "emergency", "emergency_help", "emergency_voice"}
+        if event_type in voice_type_aliases:
+            event_type = "emergency_voice"
+        if event_type in {"fall", "emergency_fall", "device_fall", "board_drop"}:
+            event_type = "board_fall"
+        details = dict(payload.details or {})
+        if event_type == "emergency_voice":
+            voice_evidence = [
+                phrase,
+                transcript,
+                (payload.title or "").strip(),
+                (payload.message or "").strip(),
+                str(details.get("phrase") or "").strip(),
+                str(details.get("transcript") or "").strip(),
+                str(details.get("message") or "").strip(),
+            ]
+            explicit_voice_type = raw_type in voice_type_aliases
+            if not explicit_voice_type and not any(voice_evidence):
+                with self.state_lock:
+                    self.last_voice_received_time = time.time()
+                    self.last_voice_received_at = timestamp
+                    self.last_edgi_heartbeat_time = time.time()
+                    self.last_edgi_heartbeat_at = timestamp
+                    self.last_edgi_bed_id = bed_id
+                return {
+                    "status": "ignored",
+                    "reason": "empty_emergency_voice",
+                    "message": "Empty /emergency payload was treated as heartbeat only.",
+                    "event_type": event_type,
+                    "timestamp": timestamp,
+                }
+
+        default_title = "开发板摇晃报警" if event_type == "board_fall" else "语音紧急求助"
+        default_message = (
+            "开发板检测到疑似摇晃，请立即确认佩戴者和设备状态。"
+            if event_type == "board_fall"
+            else f"小智检测到求助语音：“{display_text}”"
+        )
+        severity = (payload.severity or "critical").strip().lower()
+        if severity not in {"info", "normal", "warning", "critical"}:
+            severity = "critical"
+        details.update({
+            "phrase": phrase or None,
+            "transcript": transcript or None,
+            "device_id": payload.device_id,
+        })
+        fingerprint_seed = f"{timestamp}:{source}:{event_type}:{phrase}:{transcript}:{payload.device_id or ''}:{payload.message or ''}"
+        fingerprint = f"{event_type}:" + hashlib.sha1(fingerprint_seed.encode("utf-8")).hexdigest()[:16]
         event = {
             "eventID": int(time.time() * 1000),
             "userID": None,
-            "type": "emergency_voice",
-            "severity": "critical",
-            "title": "语音紧急求助",
-            "message": f"小智检测到求助语音：“{display_text}”",
+            "bed_id": bed_id,
+            "type": event_type,
+            "severity": severity,
+            "title": (payload.title or default_title).strip(),
+            "message": (payload.message or default_message).strip(),
             "timestamp": timestamp,
             "source": source,
             "score_delta": -30,
-            "details": {
-                "phrase": phrase or None,
-                "transcript": transcript or None,
-                "device_id": payload.device_id,
-            },
+            "details": details,
             "fingerprint": fingerprint,
             "status": "active",
             "resolved_at": None,
@@ -1042,16 +1854,79 @@ class RealtimeRadarProcessor:
             self.last_voice_received_at = timestamp
             self.last_edgi_heartbeat_time = time.time()
             self.last_edgi_heartbeat_at = timestamp
+            self.last_edgi_bed_id = bed_id
         return {
             "status": "success",
             "event_id": event["eventID"],
-            "event_type": "emergency_voice",
+            "event_type": event_type,
+            "severity": severity,
+            "timestamp": timestamp,
+        }
+
+    def _record_demo_apnea_event(self, payload):
+        """Create a deterministic suspected-apnea event for competition demos.
+
+        The production apnea fusion rule stays conservative to avoid false alarms.
+        This endpoint only gives the demo operator a reliable way to exercise the
+        same frontend/backend alarm path when the live breath-hold window misses.
+        """
+        now = time.time()
+        timestamp = self._now_iso()
+        source = (payload.source or "frontend_demo").strip() or "frontend_demo"
+        bed_id = self._resolve_runtime_bed_id(bed_id=getattr(payload, "bed_id", None), source=source)
+        duration = float(payload.duration_seconds or 8.0)
+        duration = max(3.0, min(duration, 30.0))
+        fingerprint_seed = f"demo_apnea:{source}:{int(now * 1000)}"
+        fingerprint = "suspected_apnea_demo:" + hashlib.sha1(fingerprint_seed.encode("utf-8")).hexdigest()[:16]
+        event = {
+            "eventID": int(now * 1000),
+            "userID": None,
+            "bed_id": bed_id,
+            "type": "suspected_apnea",
+            "severity": "critical",
+            "title": "疑似呼吸暂停",
+            "message": "呼噜停止后出现人工确认的屏息/呼吸暂停风险，请立即观察。",
+            "timestamp": timestamp,
+            "source": source,
+            "score_delta": -30,
+            "details": {
+                "demo": True,
+                "trigger": "manual_demo",
+                "duration_seconds": round(duration, 1),
+                "confidence": 0.98,
+                "note": (payload.note or "").strip() or None,
+                "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
+                "breath_rate": float(self.breath_rate) if self.breath_rate is not None else None,
+                "breath_quality": self.breath_rate_quality,
+                "snore_detected": bool(self.snore_detected),
+                "last_snore_sound_at": self.last_snore_sound_at,
+                "target_bin": int(self.target_bin) if self.target_bin is not None else None,
+                "target_distance": float(self.target_bin * RANGE_RESOLUTION) if self.target_bin is not None else None,
+            },
+            "fingerprint": fingerprint,
+            "status": "active",
+            "resolved_at": None,
+            "resolution_note": None,
+            "resolved_by": None,
+        }
+        with self.state_lock:
+            self.emergency_events.append(event)
+            self.emergency_events = self.emergency_events[-120:]
+        return {
+            "status": "success",
+            "event_id": event["eventID"],
+            "event_type": "suspected_apnea",
             "severity": "critical",
             "timestamp": timestamp,
         }
 
     def _resolve_emergency_event(self, payload):
         source = (payload.source or "xiaozhi_voice_board").strip() or "xiaozhi_voice_board"
+        bed_id = self._resolve_runtime_bed_id(
+            bed_id=getattr(payload, "bed_id", None),
+            device_id=getattr(payload, "device_id", None),
+            source=source,
+        )
         resolved_at = self._now_iso()
         note = (payload.resolution_note or "已在开发板确认并解除紧急状态").strip()
         resolved_by = (payload.resolved_by or source).strip() or source
@@ -1061,12 +1936,12 @@ class RealtimeRadarProcessor:
                 event
                 for event in self.emergency_events
                 if event.get("status", "active") == "active"
-                and event.get("type") in {"emergency_voice", "snore_stop_breath_drop"}
                 and (
                     event.get("eventID") == payload.event_id
                     if payload.event_id is not None
                     else event.get("source") == source
                 )
+                and self._event_belongs_to_bed(event, bed_id)
             ]
             if not candidates:
                 return {"status": "not_found", "message": "没有待处理的紧急事件"}
@@ -1083,9 +1958,11 @@ class RealtimeRadarProcessor:
             "resolved_at": resolved_at,
         }
 
-    def _emergency_events_between(self, start_ts=None):
+    def _emergency_events_between(self, start_ts=None, bed_id=None):
         with self.state_lock:
             events = list(self.emergency_events)
+        if bed_id is not None:
+            events = [event for event in events if self._event_belongs_to_bed(event, bed_id)]
         if start_ts is None:
             return events
         return [
@@ -1094,6 +1971,24 @@ class RealtimeRadarProcessor:
             if (self._parse_iso_seconds(event.get("timestamp", "")) or 0.0) >= start_ts
             or event.get("status", "active") == "active"
         ]
+
+    def _emergency_sync_snapshot(self, bed_id=None):
+        resolved_bed_id = self._resolve_runtime_bed_id(bed_id=bed_id)
+        active_event = self._active_emergency_event(resolved_bed_id)
+        return {
+            "status": "success",
+            "bed_id": resolved_bed_id,
+            "emergency_active": active_event is not None,
+            "active_emergency": active_event,
+            "event_id": active_event.get("eventID") if active_event else None,
+            "event_type": active_event.get("type") if active_event else None,
+            "event_status": active_event.get("status", "active") if active_event else "none",
+            "title": active_event.get("title") if active_event else None,
+            "message": active_event.get("message") if active_event else None,
+            "source": active_event.get("source") if active_event else None,
+            "timestamp": active_event.get("timestamp") if active_event else None,
+            "server_time": self._now_iso(),
+        }
 
     def _build_snore_heatmap(self, rows, events):
         """按分钟聚合呼噜强度 + 心率/呼吸变化，生成热力图。"""
@@ -1319,13 +2214,6 @@ class RealtimeRadarProcessor:
                 )
             previous_condition = condition
 
-        for apnea_event in detect_suspected_apnea_events(rows):
-            fingerprint = apnea_event.get("fingerprint")
-            if fingerprint in seen:
-                continue
-            seen.add(fingerprint)
-            events.append(apnea_event)
-
         return events
 
     def _compute_sleep_score(self, rows, events):
@@ -1451,6 +2339,358 @@ class RealtimeRadarProcessor:
             },
         ]
 
+    @staticmethod
+    def _ai_pick_number(row, keys):
+        for key in keys:
+            value = row.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number):
+                return number
+        return None
+
+    def _deepseek_chat_url(self):
+        base_url = os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL).strip().rstrip("/")
+        if base_url.endswith("/chat/completions"):
+            return base_url
+        return f"{base_url}/chat/completions"
+
+    def _rows_for_deepseek_analysis(self, rows):
+        compact_rows = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            compact_rows.append({
+                "timestamp": row.get("timestamp") or row.get("createTime") or row.get("time"),
+                "heart_rate_bpm": self._ai_pick_number(row, ("heart_rate", "bpm_rader", "bpm_radar", "heartRate")),
+                "breath_rate_rpm": self._ai_pick_number(row, ("breath_rate", "bpm_finger", "breathRate", "respiration_rate")),
+                "temperature_c": self._ai_pick_number(row, ("temperature_c", "temperature")),
+                "humidity_pct": self._ai_pick_number(row, ("humidity_pct", "humidity")),
+                "snore_score": self._ai_pick_number(row, ("snore_score", "snoreScore")),
+                "snore_detected": bool(row.get("snore_detected")) if row.get("snore_detected") is not None else None,
+                "sleep_stage": row.get("sleep_stage"),
+                "comfort_status": row.get("comfort_status"),
+            })
+        max_rows = max(10, int(os.getenv("DEEPSEEK_MAX_ANALYSIS_ROWS", str(DEEPSEEK_MAX_ANALYSIS_ROWS))))
+        return compact_rows[-max_rows:]
+
+    def _basic_ai_stats(self, rows):
+        heart_values = []
+        breath_values = []
+        temperature_values = []
+        humidity_values = []
+        snore_rows = 0
+
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            heart = self._ai_pick_number(row, ("heart_rate", "bpm_rader", "bpm_radar", "heartRate"))
+            breath = self._ai_pick_number(row, ("breath_rate", "bpm_finger", "breathRate", "respiration_rate"))
+            temperature = self._ai_pick_number(row, ("temperature_c", "temperature"))
+            humidity = self._ai_pick_number(row, ("humidity_pct", "humidity"))
+            if heart is not None:
+                heart_values.append(heart)
+            if breath is not None:
+                breath_values.append(breath)
+            if temperature is not None:
+                temperature_values.append(temperature)
+            if humidity is not None:
+                humidity_values.append(humidity)
+            if bool(row.get("snore_detected")) or float(row.get("snore_score") or 0.0) >= 0.5:
+                snore_rows += 1
+
+        return {
+            "sample_count": len(rows or []),
+            "heart_avg": round(self._average(heart_values), 2) if heart_values else None,
+            "heart_min": round(min(heart_values), 2) if heart_values else None,
+            "heart_max": round(max(heart_values), 2) if heart_values else None,
+            "breath_avg": round(self._average(breath_values), 2) if breath_values else None,
+            "breath_min": round(min(breath_values), 2) if breath_values else None,
+            "breath_max": round(max(breath_values), 2) if breath_values else None,
+            "temperature_avg": round(self._average(temperature_values), 2) if temperature_values else None,
+            "humidity_avg": round(self._average(humidity_values), 2) if humidity_values else None,
+            "snore_rows": snore_rows,
+        }
+
+    @staticmethod
+    def _safe_deepseek_error(exc):
+        text = str(exc) or exc.__class__.__name__
+        if len(text) > 160:
+            text = text[:160] + "..."
+        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        if api_key:
+            text = text.replace(api_key, "[redacted]")
+        return text
+
+    def _call_deepseek_vitals_report(self, rows, date=None, user_id=None):
+        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        if not api_key:
+            return None
+
+        compact_rows = self._rows_for_deepseek_analysis(rows)
+        if not compact_rows:
+            return None
+
+        model = os.getenv("DEEPSEEK_MODEL", DEEPSEEK_MODEL).strip() or DEEPSEEK_MODEL
+        stats = self._basic_ai_stats(rows)
+        scope_text = date or "当前筛选"
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是一个睡眠看护项目的历史数据分析助手。"
+                        "请用中文输出，语气专业、简洁、适合比赛演示。"
+                        "不要做医疗诊断，不要夸大风险；请提醒需要结合现场观察和设备状态复核。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "请基于以下睡眠看护历史数据生成约 300-500 字分析报告，"
+                        "必须包含：1）总体概览；2）心率/呼吸率异常或稳定性；"
+                        "3）呼噜与环境线索；4）看护建议；\n"
+                        f"样本范围：{scope_text}；用户ID：{user_id or '未提供'}。\n"
+                        f"统计摘要：{json.dumps(stats, ensure_ascii=False)}\n"
+                        f"最近样本：{json.dumps(compact_rows, ensure_ascii=False)}"
+                    ),
+                },
+            ],
+            "temperature": 0.25,
+            "max_tokens": max(
+                256, int(os.getenv("DEEPSEEK_MAX_TOKENS", str(DEEPSEEK_MAX_TOKENS)))
+            ),
+            "stream": False,
+        }
+
+        request = urllib.request.Request(
+            self._deepseek_chat_url(),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        timeout = max(5.0, float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", str(DEEPSEEK_TIMEOUT_SECONDS))))
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_body = response.read().decode("utf-8")
+        result = json.loads(response_body)
+        content = (
+            (result.get("choices") or [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+        if not content:
+            raise RuntimeError("DeepSeek 未返回有效分析内容")
+        return {
+            "status": "success",
+            "provider": "deepseek",
+            "model": result.get("model") or model,
+            "fallback": False,
+            "report": content,
+            "summary": content.splitlines()[0] if content else "",
+            "sample_count": len(rows or []),
+            "analyzed_rows": len(compact_rows),
+            "userID": user_id,
+            "generated_at": self._now_iso(),
+        }
+
+    def _stream_deepseek_vitals_report(self, rows, date=None, user_id=None):
+        """Streaming variant of the DeepSeek call. Yields text deltas as they
+        arrive from the upstream SSE. Raises on transport / HTTP / parse errors
+        so the caller can decide whether to fall back to local rules.
+
+        Each yielded value is a dict: {"delta": str, "model": str|None}.
+        The final item is a sentinel with "done": True once the upstream closes
+        or the stream ends naturally.
+        """
+        api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("DeepSeek API key is not configured")
+
+        compact_rows = self._rows_for_deepseek_analysis(rows)
+        if not compact_rows:
+            raise RuntimeError("无可分析的历史样本")
+
+        model = os.getenv("DEEPSEEK_MODEL", DEEPSEEK_MODEL).strip() or DEEPSEEK_MODEL
+        stats = self._basic_ai_stats(rows)
+        scope_text = date or "当前筛选"
+        payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是一个睡眠看护项目的历史数据分析助手。"
+                        "请用中文输出，语气专业、简洁、适合比赛演示。"
+                        "不要做医疗诊断，不要夸大风险；请提醒需要结合现场观察和设备状态复核。"
+                        "输出格式：使用 Markdown 标题、列表、粗体等结构化语法，方便前端编译展示。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "请基于以下睡眠看护历史数据生成约 600-1200 字的结构化分析报告，"
+                        "必须包含 4 个章节：\n"
+                        "## 总体概览\n"
+                        "## 心率与呼吸率分析\n"
+                        "## 呼噜与环境线索\n"
+                        "## 看护建议\n"
+                        f"样本范围：{scope_text}；用户ID：{user_id or '未提供'}。\n"
+                        f"统计摘要：{json.dumps(stats, ensure_ascii=False)}\n"
+                        f"最近样本：{json.dumps(compact_rows, ensure_ascii=False)}"
+                    ),
+                },
+            ],
+            "temperature": 0.25,
+            "max_tokens": max(
+                256, int(os.getenv("DEEPSEEK_MAX_TOKENS", str(DEEPSEEK_MAX_TOKENS)))
+            ),
+            "stream": True,
+        }
+
+        request = urllib.request.Request(
+            self._deepseek_chat_url(),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            method="POST",
+        )
+        timeout = max(5.0, float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", str(DEEPSEEK_TIMEOUT_SECONDS))))
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            saw_done = False
+            emitted_any = False
+            for raw_line in response:
+                if not emitted_any:
+                    emitted_any = True
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    continue
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].lstrip()
+                if data == "[DONE]":
+                    saw_done = True
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError as exc:
+                    raise RuntimeError(f"DeepSeek 流式响应解析失败: {exc}") from exc
+                choice = (chunk.get("choices") or [{}])[0]
+                delta = choice.get("delta", {}).get("content") or ""
+                if delta:
+                    yield {"delta": delta, "model": chunk.get("model") or model}
+            if not saw_done and not emitted_any:
+                raise RuntimeError("DeepSeek 流式响应为空")
+
+    def _build_ai_vitals_report(self, rows, date=None, user_id=None):
+        try:
+            deepseek_report = self._call_deepseek_vitals_report(rows, date=date, user_id=user_id)
+            if deepseek_report:
+                return deepseek_report
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            deepseek_error = self._safe_deepseek_error(exc)
+        except Exception as exc:
+            deepseek_error = self._safe_deepseek_error(exc)
+        else:
+            deepseek_error = None
+
+        rows = rows or []
+        heart_values = []
+        breath_values = []
+        abnormal_rows = []
+
+        for index, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                continue
+            heart = self._ai_pick_number(row, ("heart_rate", "bpm_rader", "bpm_radar", "heartRate"))
+            breath = self._ai_pick_number(row, ("breath_rate", "bpm_finger", "breathRate", "respiration_rate"))
+
+            if heart is not None:
+                heart_values.append(heart)
+            if breath is not None:
+                breath_values.append(breath)
+
+            row_issues = []
+            if heart is not None and (heart < 55 or heart > 100):
+                row_issues.append(f"heart {heart:.1f} BPM")
+            if breath is not None and (breath < 10 or breath > 24):
+                row_issues.append(f"breath {breath:.1f} RPM")
+            if row_issues:
+                abnormal_rows.append((index, ", ".join(row_issues)))
+
+        scope_text = date or "\u5f53\u524d\u7b5b\u9009"
+        report_lines = [
+            "\u672c\u5730\u5065\u5eb7\u5206\u6790\u62a5\u544a",
+            f"\u6837\u672c\u8303\u56f4\uff1a{scope_text}\uff0c\u5f53\u524d\u9875\u5171 {len(rows)} \u6761\u8bb0\u5f55\u3002",
+        ]
+
+        if not heart_values and not breath_values:
+            report_lines.extend([
+                "\u672a\u8bfb\u53d6\u5230\u53ef\u7528\u7684\u5fc3\u7387\u6216\u547c\u5438\u7387\u6837\u672c\u3002",
+                "\u8bf7\u5148\u786e\u8ba4\u540e\u7aef\u5df2\u7ecf\u6536\u5230\u771f\u5b9e\u96f7\u8fbe\u6570\u636e\uff0c\u7136\u540e\u91cd\u65b0\u751f\u6210\u62a5\u544a\u3002",
+            ])
+        else:
+            if heart_values:
+                report_lines.append(
+                    f"\u5fc3\u7387\uff1a\u5e73\u5747 {self._average(heart_values):.1f} BPM\uff0c"
+                    f"\u6700\u4f4e {min(heart_values):.1f}\uff0c\u6700\u9ad8 {max(heart_values):.1f}\u3002"
+                )
+            else:
+                report_lines.append("\u5fc3\u7387\uff1a\u6682\u65e0\u6709\u6548\u6837\u672c\u3002")
+
+            if breath_values:
+                report_lines.append(
+                    f"\u547c\u5438\u7387\uff1a\u5e73\u5747 {self._average(breath_values):.1f} RPM\uff0c"
+                    f"\u6700\u4f4e {min(breath_values):.1f}\uff0c\u6700\u9ad8 {max(breath_values):.1f}\u3002"
+                )
+            else:
+                report_lines.append("\u547c\u5438\u7387\uff1a\u6682\u65e0\u6709\u6548\u6837\u672c\u3002")
+
+            if abnormal_rows:
+                preview = "\uff1b".join(
+                    f"#{index} {description}" for index, description in abnormal_rows[:5]
+                )
+                suffix = "\uff1b..." if len(abnormal_rows) > 5 else ""
+                report_lines.append(
+                    f"\u5f02\u5e38\u63d0\u793a\uff1a\u5171 {len(abnormal_rows)} \u6761\u8bb0\u5f55\u8d85\u51fa\u53c2\u8003\u8303\u56f4\uff08{preview}{suffix}\uff09\u3002"
+                )
+                report_lines.append(
+                    "\u5efa\u8bae\uff1a\u7ed3\u5408\u5b9e\u65f6\u76d1\u6d4b\u3001\u96f7\u8fbe\u5728\u7ebf\u72b6\u6001\u548c\u5e8a\u65c1\u60c5\u51b5\u590d\u6838\uff1b"
+                    "\u5982\u679c\u6301\u7eed\u504f\u79bb\uff0c\u4f18\u5148\u786e\u8ba4\u4f69\u6234/\u59ff\u6001\u3001\u73af\u5883\u5e72\u6270\u548c\u8bbe\u5907\u8fde\u63a5\u3002"
+                )
+            else:
+                report_lines.append(
+                    "\u7ed3\u8bba\uff1a\u5f53\u524d\u9875\u6837\u672c\u7684\u5fc3\u7387\u548c\u547c\u5438\u7387\u5747\u5728\u5e38\u7528\u53c2\u8003\u8303\u56f4\u5185\uff0c\u6682\u672a\u89c1\u660e\u663e\u5f02\u5e38\u3002"
+                )
+
+        return {
+            "status": "success",
+            "provider": "local",
+            "model": "local-vitals-rules",
+            "fallback": True,
+            "warning": (
+                f"DeepSeek 不可用，已本地规则兜底：{deepseek_error}"
+                if deepseek_error else "\u672c\u5730\u89c4\u5219\u515c\u5e95"
+            ),
+            "report": "\n".join(report_lines),
+            "summary": report_lines[-1] if report_lines else "",
+            "sample_count": len(rows),
+            "userID": user_id,
+            "generated_at": self._now_iso(),
+        }
+
     def _build_sleep_overview(self, rows, events, mode, seconds, date, user_id, devices=None):
         events = [
             event for event in events
@@ -1458,6 +2698,7 @@ class RealtimeRadarProcessor:
                 event.get("type") == "device_offline"
                 and event.get("source") in {"snore_board", "environment_board"}
             )
+            and event.get("status", "active") == "active"
         ]
         events_sorted = sorted(events, key=lambda item: item.get("timestamp", ""), reverse=True)
         heatmap = self._build_snore_heatmap(rows, events_sorted)
@@ -1519,6 +2760,7 @@ class RealtimeRadarProcessor:
             sample_std = float(np.std(finite_samples))
         else:
             sample_min = sample_max = sample_mean = sample_std = None
+        presence_debug = self._presence_debug_state()
 
         with self.state_lock:
             self.radar_debug.update({
@@ -1533,7 +2775,20 @@ class RealtimeRadarProcessor:
                 "sample_std": sample_std,
                 "target_bin": int(target_bin) if target_bin is not None else None,
                 "target_distance": float(target_distance) if target_distance is not None else None,
+                "breath_periodicity": float(self.breath_periodicity or 0.0),
                 "presence_detected": bool(self.presence_detected),
+                "presence_signal": bool(presence_debug.get("presence_signal")),
+                "presence_energy_stable": bool(presence_debug.get("presence_energy_stable")),
+                "presence_distance_stable": bool(presence_debug.get("presence_distance_stable")),
+                "presence_distance_span": presence_debug.get("presence_distance_span"),
+                "presence_distance": presence_debug.get("presence_distance"),
+                "presence_distance_min_m": PRESENCE_DISTANCE_MIN_M,
+                "presence_distance_max_m": PRESENCE_DISTANCE_MAX_M,
+                "presence_distance_stability_span_m": PRESENCE_DISTANCE_STABILITY_SPAN_M,
+                "presence_detection_value": presence_debug.get("presence_detection_value"),
+                "presence_detection_threshold": presence_debug.get("presence_detection_threshold"),
+                "presence_detection_bin": presence_debug.get("presence_detection_bin"),
+                "presence_below_threshold": bool(presence_debug.get("presence_below_threshold")),
                 "presence_stable": bool(self.presence_stable),
                 "presence_bypassed_by_snore": bool(self.presence_bypassed_by_snore),
             })
@@ -1588,7 +2843,9 @@ class RealtimeRadarProcessor:
         snore_online = self._snore_board_online()
         env = self._environment_snapshot()
         active_emergency = self._active_emergency_event()
+        vitals_age = self._vitals_age_seconds()
         snore_level = self._snore_level_from_dbfs(self.snore_dbfs, self.snore_score)
+        presence_debug = self._presence_debug_state()
         return {
             "running": self.running,
             "radar_online": radar_online,
@@ -1597,6 +2854,20 @@ class RealtimeRadarProcessor:
             "radar_motion_reason": self.radar_motion_reason,
             "radar_motion_delta": self.radar_motion_delta,
             "radar_motion_sensor_ready": self.radar_motion_sensor_ready,
+            "presence_detected": bool(self.presence_detected) if radar_board_online else False,
+            "presence_signal": bool(presence_debug.get("presence_signal")) if radar_board_online else False,
+            "presence_energy_stable": bool(presence_debug.get("presence_energy_stable")) if radar_board_online else False,
+            "presence_distance_stable": bool(presence_debug.get("presence_distance_stable")) if radar_board_online else False,
+            "presence_distance_span": presence_debug.get("presence_distance_span") if radar_board_online else None,
+            "presence_distance": presence_debug.get("presence_distance") if radar_board_online else None,
+            "presence_distance_min_m": PRESENCE_DISTANCE_MIN_M,
+            "presence_distance_max_m": PRESENCE_DISTANCE_MAX_M,
+            "presence_distance_stability_span_m": PRESENCE_DISTANCE_STABILITY_SPAN_M,
+            "presence_detection_value": presence_debug.get("presence_detection_value") if radar_board_online else None,
+            "presence_detection_threshold": presence_debug.get("presence_detection_threshold") if radar_board_online else None,
+            "presence_detection_bin": presence_debug.get("presence_detection_bin") if radar_board_online else None,
+            "presence_below_threshold": bool(presence_debug.get("presence_below_threshold")) if radar_board_online else False,
+            "presence_stable": bool(self.presence_stable) if radar_board_online else False,
             "presence_bypassed_by_snore": bool(self.presence_bypassed_by_snore),
             "snore_board_online": snore_online,
             "snore_monitoring": bool(self.snore_session_active and snore_online),
@@ -1607,9 +2878,16 @@ class RealtimeRadarProcessor:
             "edgi_board_online": self._edgi_board_online(),
             "snore_session_active": bool(self.snore_session_active),
             "snore_session_started_at": self.snore_session_started_text,
-            "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
-            "breath_rate": float(self.breath_rate) if self.breath_rate is not None else None,
-            "breath_quality": self.breath_rate_quality,
+            "heart_rate": float(self.heart_rate) if radar_board_online and self.heart_rate is not None else None,
+            "breath_rate": float(self.breath_rate) if radar_board_online and self.breath_rate is not None else None,
+            "breath_quality": self.breath_rate_quality if radar_board_online else 0.0,
+            "breath_periodicity": self.breath_periodicity if radar_board_online else 0.0,
+            "heart_rate_fresh": bool(self.heart_rate_fresh) if radar_board_online else False,
+            "breath_rate_fresh": bool(self.breath_rate_fresh) if radar_board_online else False,
+            "vitals_state": self.vitals_state if radar_board_online else "lost",
+            "vitals_missing_count": int(self.vitals_missing_count),
+            "vitals_age_seconds": round(vitals_age, 2) if vitals_age is not None else None,
+            "last_valid_vitals_at": self.last_valid_vitals_at,
             "target_distance": float(self.target_bin * RANGE_RESOLUTION) if self.target_bin is not None else None,
             "target_bin": int(self.target_bin) if self.target_bin is not None else None,
             "total_frames": self.total_frames_received,
@@ -1648,6 +2926,8 @@ class RealtimeRadarProcessor:
             "last_snore_stop_fusion": self.last_snore_stop_fusion,
             "snore_stop_breath_alarm_count": self.snore_stop_breath_alarm_count,
             "temperature_c": env["temperature_c"],
+            "raw_temperature_c": env["raw_temperature_c"],
+            "temperature_offset_c": env["temperature_offset_c"],
             "humidity_pct": env["humidity_pct"],
             "comfort_status": env["comfort_status"],
             "sleep_stage": self._sleep_stage_for_latest(
@@ -1655,6 +2935,10 @@ class RealtimeRadarProcessor:
                 self.heart_rate,
                 self.breath_rate,
             ),
+            "night_absence_monitor": dict(self.night_absence_debug),
+            "night_absence_monitoring": bool(self.night_absence_debug.get("monitoring")),
+            "night_absence_absent_seconds": self.night_absence_debug.get("absent_seconds"),
+            "night_absence_alarm_after_seconds": NIGHT_ABSENCE_ALARM_SECONDS,
             "timeline_points": len(self.timeline),
             "radar_debug": dict(self.radar_debug),
             "timestamp": time.time(),
@@ -1669,10 +2953,14 @@ class RealtimeRadarProcessor:
 
         class VitalsData(BaseModel):
             userID: int
+            bed_id: Optional[str] = None
             heart_rate: float
             breath_rate: float
             target_distance: float
             timestamp: Optional[str] = None  # ISO 8601 格式，如 "2025-12-07T18:30:00.000Z"
+            snore_detected: Optional[bool] = False
+            snore_score: Optional[float] = None
+            snore_level: Optional[float] = None
 
         class UserRegister(BaseModel):
             userName: str
@@ -1684,6 +2972,8 @@ class RealtimeRadarProcessor:
             passWord: str
 
         class SnoreHeartbeat(BaseModel):
+            bed_id: Optional[str] = None
+            device_id: Optional[str] = None
             snore_score: float = 0.0
             snore_detected: bool = False
             dbfs: Optional[float] = None
@@ -1691,6 +2981,8 @@ class RealtimeRadarProcessor:
 
 
         class EnvironmentHeartbeat(BaseModel):
+            bed_id: Optional[str] = None
+            device_id: Optional[str] = None
             temperature_c: float
             humidity_pct: float
             sensor_ok: bool = True
@@ -1698,25 +2990,55 @@ class RealtimeRadarProcessor:
 
 
         class EdgiHeartbeat(BaseModel):
+            bed_id: Optional[str] = None
+            device_id: Optional[str] = None
             source: str = "xiaozhi_board"
             mode: Optional[str] = None
             keyword_online: Optional[bool] = None
             snore_guard_enabled: Optional[bool] = None
 
+        class SnoreSessionRequest(BaseModel):
+            bed_id: Optional[str] = None
+            device_id: Optional[str] = None
+            source: str = "real_snore_board"
 
         class EmergencyRequest(BaseModel):
+            bed_id: Optional[str] = None
             source: str = "xiaozhi_voice_board"
+            event_type: Optional[str] = None
+            type: Optional[str] = None
+            title: Optional[str] = None
+            message: Optional[str] = None
+            severity: Optional[str] = None
             phrase: Optional[str] = None
             transcript: Optional[str] = None
             device_id: Optional[str] = None
             timestamp: Optional[str] = None
+            details: Optional[Dict[str, Any]] = None
 
 
         class EmergencyResolveRequest(BaseModel):
+            bed_id: Optional[str] = None
             event_id: Optional[int] = None
             source: str = "xiaozhi_voice_board"
+            device_id: Optional[str] = None
             resolution_note: Optional[str] = None
             resolved_by: Optional[str] = None
+
+
+        class DemoApneaRequest(BaseModel):
+            bed_id: Optional[str] = None
+            source: str = "frontend_demo"
+            duration_seconds: float = 8.0
+            note: Optional[str] = None
+
+
+
+        class AiVitalsAnalysisRequest(BaseModel):
+            rows: Optional[list] = None
+            date: Optional[str] = None
+            userID: Optional[int] = None
+            bed_id: Optional[str] = None
 
 
         @self.app.post("/emergency")
@@ -1724,9 +3046,217 @@ class RealtimeRadarProcessor:
             return self._record_emergency_event(payload)
 
 
+        def _fall_payload(payload: EmergencyRequest):
+            update = {
+                "event_type": "board_fall",
+                "title": payload.title or "开发板摇晃报警",
+                "message": payload.message or "开发板检测到疑似摇晃，请立即确认佩戴者和设备状态。",
+                "severity": payload.severity or "critical",
+            }
+            if hasattr(payload, "model_copy"):
+                return payload.model_copy(update=update)
+            return payload.copy(update=update)
+
+
+        @self.app.post("/emergency/fall")
+        async def receive_fall_emergency(payload: EmergencyRequest):
+            return self._record_emergency_event(_fall_payload(payload))
+
+
+        @self.app.post("/hardware/fall")
+        async def receive_hardware_fall(payload: EmergencyRequest):
+            return self._record_emergency_event(_fall_payload(payload))
+
+
+        @self.app.post("/beds/{bed_id}/emergency/resolve")
+        async def resolve_bed_emergency(bed_id: str, payload: EmergencyResolveRequest):
+            update = {"bed_id": bed_id}
+            if hasattr(payload, "model_copy"):
+                payload = payload.model_copy(update=update)
+            else:
+                payload = payload.copy(update=update)
+            return self._resolve_emergency_event(payload)
+
+
         @self.app.post("/emergency/resolve")
         async def resolve_emergency(payload: EmergencyResolveRequest):
             return self._resolve_emergency_event(payload)
+
+        @self.app.get("/hardware/emergency-sync")
+        async def hardware_emergency_sync(bed_id: Optional[str] = None, source: Optional[str] = None, device_id: Optional[str] = None):
+            resolved_bed_id = self._resolve_runtime_bed_id(
+                bed_id=bed_id,
+                device_id=device_id,
+                source=source,
+            )
+            return self._emergency_sync_snapshot(resolved_bed_id)
+
+        @self.app.get("/beds/{bed_id}/emergency-sync")
+        async def bed_emergency_sync(bed_id: str):
+            return self._emergency_sync_snapshot(bed_id)
+
+
+        @self.app.post("/demo/apnea")
+        async def trigger_demo_apnea(payload: DemoApneaRequest):
+            return self._record_demo_apnea_event(payload)
+
+
+
+        @self.app.post("/ai/analyze-vitals")
+        async def analyze_vitals(payload: AiVitalsAnalysisRequest):
+            return await asyncio.to_thread(
+                self._build_ai_vitals_report,
+                rows=payload.rows,
+                date=payload.date,
+                user_id=payload.userID,
+            )
+
+
+        @self.app.post("/ai/analyze-vitals/stream")
+        async def analyze_vitals_stream(payload: AiVitalsAnalysisRequest):
+            """Stream DeepSeek analysis deltas as Server-Sent Events.
+
+            Each SSE frame is `data: {"delta": "...", "done": false, "model": "..."}`.
+            The terminal frame is `data: {"delta": "", "done": true, ...}` carrying the
+            final report metadata. If no DeepSeek chunk was emitted, the terminal frame
+            contains the local-rules fallback report under `report` / `provider` /
+            `fallback` / `warning`.
+            """
+            q: queue.Queue = queue.Queue()
+
+            def stream_worker():
+                try:
+                    assembled = []
+                    seen_model = None
+                    for chunk in self._stream_deepseek_vitals_report(
+                        rows=payload.rows, date=payload.date, user_id=payload.userID
+                    ):
+                        delta = chunk.get("delta") or ""
+                        if delta:
+                            assembled.append(delta)
+                        if chunk.get("model"):
+                            seen_model = chunk["model"]
+                        q.put(("delta", delta, seen_model))
+                    q.put(("done", "".join(assembled), seen_model))
+                except Exception as exc:
+                    q.put(("error", str(exc), None))
+
+            threading.Thread(target=stream_worker, daemon=True).start()
+
+            async def event_generator():
+                loop = asyncio.get_running_loop()
+                # Announce start so the client can flip loading state immediately.
+                yield "data: " + json.dumps(
+                    {"delta": "", "done": False, "stage": "start"}, ensure_ascii=False
+                ) + "\n\n"
+
+                saw_any_delta = False
+                emitted_report = None
+                emitted_provider = "deepseek"
+                emitted_model = None
+                emitted_fallback = False
+                emitted_warning = None
+
+                while True:
+                    item = await loop.run_in_executor(None, q.get)
+                    kind, payload_value, seen_model = item
+                    if kind == "delta":
+                        if payload_value:
+                            saw_any_delta = True
+                        if seen_model:
+                            emitted_model = seen_model
+                        yield "data: " + json.dumps(
+                            {"delta": payload_value, "done": False, "model": seen_model},
+                            ensure_ascii=False,
+                        ) + "\n\n"
+                    elif kind == "done":
+                        emitted_report = payload_value or ""
+                        if emitted_model is None:
+                            emitted_model = (
+                                os.getenv("DEEPSEEK_MODEL", DEEPSEEK_MODEL).strip()
+                                or DEEPSEEK_MODEL
+                            )
+                        # If DeepSeek produced nothing usable, swap in the local-rules
+                        # report so the client still has something to render.
+                        if not saw_any_delta:
+                            fallback = self._build_ai_vitals_report(
+                                rows=payload.rows,
+                                date=payload.date,
+                                user_id=payload.userID,
+                            )
+                            emitted_report = fallback.get("report", "")
+                            emitted_provider = fallback.get("provider", "local")
+                            emitted_model = fallback.get("model", emitted_model)
+                            emitted_fallback = True
+                            emitted_warning = fallback.get("warning")
+                        yield "data: " + json.dumps(
+                            {
+                                "delta": "",
+                                "done": True,
+                                "provider": emitted_provider,
+                                "model": emitted_model,
+                                "fallback": emitted_fallback,
+                                "warning": emitted_warning,
+                                "report": emitted_report,
+                            },
+                            ensure_ascii=False,
+                        ) + "\n\n"
+                        break
+                    elif kind == "error":
+                        # If the upstream threw before delivering any chunk, fall back
+                        # to the local-rules builder so the UI can still render.
+                        if not saw_any_delta:
+                            try:
+                                fallback = self._build_ai_vitals_report(
+                                    rows=payload.rows,
+                                    date=payload.date,
+                                    user_id=payload.userID,
+                                )
+                            except Exception:
+                                fallback = None
+                            if fallback:
+                                emitted_report = fallback.get("report", "")
+                                emitted_provider = fallback.get("provider", "local")
+                                emitted_model = fallback.get("model")
+                                emitted_fallback = True
+                                emitted_warning = (
+                                    fallback.get("warning")
+                                    or self._safe_deepseek_error(Exception(payload_value))
+                                )
+                            else:
+                                emitted_report = ""
+                                emitted_provider = "error"
+                                emitted_fallback = True
+                                emitted_warning = self._safe_deepseek_error(
+                                    Exception(payload_value)
+                                )
+                        else:
+                            # Mid-stream error: keep what we already have.
+                            emitted_warning = self._safe_deepseek_error(
+                                Exception(payload_value)
+                            )
+                        yield "data: " + json.dumps(
+                            {
+                                "delta": "",
+                                "done": True,
+                                "provider": emitted_provider,
+                                "model": emitted_model,
+                                "fallback": emitted_fallback,
+                                "warning": emitted_warning,
+                                "report": emitted_report,
+                            },
+                            ensure_ascii=False,
+                        ) + "\n\n"
+                        break
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
 
         @self.app.post("/register")
@@ -1766,20 +3296,49 @@ class RealtimeRadarProcessor:
 
         @self.app.post("/save-vitals-with-user")
         async def save_vitals_with_user_endpoint(data: VitalsData):
-            """接收前端发送的带用户ID的生命体征数据并保存到数据库"""
+            """接收开发板/前端按真实结构上报的生命体征，并按床位保存。"""
             try:
-                # 调用数据库函数保存数据
+                resolved_bed_id = self._resolve_runtime_bed_id(bed_id=data.bed_id)
+                snore_score = data.snore_score
+                snore_detected = bool(data.snore_detected)
+                if snore_score is not None:
+                    try:
+                        snore_score = max(0.0, min(1.0, float(snore_score)))
+                    except (TypeError, ValueError):
+                        snore_score = None
+                    if snore_score is not None and snore_score < 0.4:
+                        snore_detected = False
                 data_id = save_vitals_with_user(
                     user_id=data.userID,
+                    bed_id=resolved_bed_id,
                     heart_rate=data.heart_rate,
                     breath_rate=data.breath_rate,
                     target_distance=data.target_distance,
-                    timestamp_str=data.timestamp
+                    timestamp_str=data.timestamp,
+                    snore_detected=snore_detected,
+                    snore_score=snore_score,
+                    snore_level=data.snore_level,
                 )
+                received_time = time.time()
+                timestamp = data.timestamp or datetime.fromtimestamp(received_time).isoformat(timespec="seconds")
+                vitals = {
+                    "heart_rate": float(data.heart_rate),
+                    "breath_rate": float(data.breath_rate),
+                    "target_distance": float(data.target_distance),
+                    "timestamp": timestamp,
+                    "received_time": received_time,
+                    "snore_detected": snore_detected,
+                    "snore_score": snore_score,
+                    "snore_level": data.snore_level,
+                }
+                with self.state_lock:
+                    self.external_bed_vitals[resolved_bed_id] = vitals
+                self._append_external_timeline(resolved_bed_id, vitals)
                 return {
                     "status": "success",
                     "message": "生命体征数据保存成功",
-                    "dataID": data_id
+                    "dataID": data_id,
+                    "bed_id": resolved_bed_id,
                 }
             except Exception as e:
                 return {
@@ -1793,7 +3352,7 @@ class RealtimeRadarProcessor:
             allow_origins=[
                 "http://localhost:5173",
                 "http://127.0.0.1:5173",
-                "http://192.168.0.102:5173",
+                "http://192.168.31.236:5173",
             ],
             allow_origin_regex=r"https?://(?:localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3})(?::\d+)?",
             allow_credentials=True,
@@ -1809,12 +3368,19 @@ class RealtimeRadarProcessor:
         @self.app.get("/heartrate")
         async def get_heart_rate():
             """获取最新的心率值"""
-            if self.heart_rate is not None:
+            radar_board_online = self._radar_board_online()
+            if radar_board_online and self.heart_rate is not None:
                 return {"heart_rate": float(self.heart_rate),
+                        "heart_rate_fresh": bool(self.heart_rate_fresh),
+                        "vitals_state": self.vitals_state,
+                        "vitals_age_seconds": self._vitals_age_seconds(),
                         "timestamp": time.time(),
                         "status": "ok"}
             else:
                 return {"heart_rate": None,
+                        "heart_rate_fresh": False,
+                        "vitals_state": self.vitals_state if radar_board_online else "lost",
+                        "vitals_age_seconds": self._vitals_age_seconds(),
                         "timestamp": time.time(),
                         "status": "no_data"}
 
@@ -1826,8 +3392,13 @@ class RealtimeRadarProcessor:
             radar_online = self._radar_data_online()
             env = self._environment_snapshot()
             return {
-                "heart_rate": float(self.heart_rate) if self.heart_rate is not None else None,
-                "breath_rate": float(self.breath_rate) if self.breath_rate is not None else None,
+                "heart_rate": float(self.heart_rate) if radar_board_online and self.heart_rate is not None else None,
+                "breath_rate": float(self.breath_rate) if radar_board_online and self.breath_rate is not None else None,
+                "heart_rate_fresh": bool(self.heart_rate_fresh) if radar_board_online else False,
+                "breath_rate_fresh": bool(self.breath_rate_fresh) if radar_board_online else False,
+                "vitals_state": self.vitals_state if radar_board_online else "lost",
+                "vitals_age_seconds": self._vitals_age_seconds(),
+                "last_valid_vitals_at": self.last_valid_vitals_at,
                 "target_distance": float(target_distance) if target_distance is not None else None,
                 "target_bin": int(self.target_bin) if self.target_bin is not None else None,
                 "radar_online": radar_online,
@@ -1839,16 +3410,26 @@ class RealtimeRadarProcessor:
                 "last_environment_heartbeat_at": env["last_environment_heartbeat_at"],
                 "environment_age_seconds": env["environment_age_seconds"],
                 "temperature_c": env["temperature_c"],
+                "raw_temperature_c": env["raw_temperature_c"],
+                "temperature_offset_c": env["temperature_offset_c"],
                 "humidity_pct": env["humidity_pct"],
                 "comfort_status": env["comfort_status"],
                 "timestamp": time.time(),
-                "status": "ok" if (self.heart_rate is not None or target_distance is not None) else "no_data"
+                "status": "ok" if (radar_board_online and (self.heart_rate is not None or target_distance is not None)) else "no_data"
             }
 
+        @self.app.get("/beds")
+        async def list_beds():
+            return self._all_bed_summaries()
+
+        @self.app.get("/beds/{bed_id}/status")
+        async def get_bed_status(bed_id: str):
+            return self._status_snapshot_for_bed(bed_id)
+
         @self.app.get("/status")
-        async def get_status():
+        async def get_status(bed_id: Optional[str] = Query(None)):
             """获取系统状态信息"""
-            return self._status_snapshot()
+            return self._status_snapshot_for_bed(bed_id)
 
         @self.app.get("/debug/radar")
         async def get_radar_debug():
@@ -1858,16 +3439,33 @@ class RealtimeRadarProcessor:
         @self.app.post("/hardware/edgi-heartbeat")
         async def receive_edgi_heartbeat(heartbeat: EdgiHeartbeat):
             """接收 Edgi/XiaoZhi 开发板基础在线心跳。"""
+            bed_id = self._resolve_runtime_bed_id(
+                bed_id=heartbeat.bed_id,
+                device_id=heartbeat.device_id,
+                source=heartbeat.source,
+            )
             now = time.time()
             now_text = self._now_iso()
             with self.state_lock:
                 self.last_edgi_heartbeat_time = now
                 self.last_edgi_heartbeat_at = now_text
-            self._upsert_timeline()
+                self.last_edgi_bed_id = bed_id
+                self._bed_state(bed_id)["edgi"] = {
+                    "device_id": heartbeat.device_id,
+                    "source": heartbeat.source,
+                    "mode": heartbeat.mode,
+                    "keyword_online": heartbeat.keyword_online,
+                    "snore_guard_enabled": heartbeat.snore_guard_enabled,
+                    "received_time": now,
+                    "received_at": now_text,
+                }
+            if bed_id == (self.current_radar_bed_id or DEFAULT_BED_ID):
+                self._upsert_timeline()
             return {
                 "code": 200,
                 "status": "success",
                 "message": "Edgi heartbeat received",
+                "bed_id": bed_id,
                 "edgi_board_online": self._edgi_board_online(),
                 "source": heartbeat.source,
                 "mode": heartbeat.mode,
@@ -1879,6 +3477,11 @@ class RealtimeRadarProcessor:
         @self.app.post("/hardware/snore-heartbeat")
         async def receive_snore_heartbeat(heartbeat: SnoreHeartbeat):
             """接收呼噜检测板每秒特征心跳。"""
+            bed_id = self._resolve_runtime_bed_id(
+                bed_id=heartbeat.bed_id,
+                device_id=heartbeat.device_id,
+                source=heartbeat.source,
+            )
             score = max(0.0, min(1.0, float(heartbeat.snore_score)))
             dbfs = float(heartbeat.dbfs) if heartbeat.dbfs is not None else None
             sound_present = self._snore_sound_present(heartbeat.snore_detected, score, dbfs)
@@ -1888,10 +3491,22 @@ class RealtimeRadarProcessor:
             with self.state_lock:
                 self.last_snore_heartbeat_time = now
                 self.last_snore_heartbeat_at = now_text
+                self.last_snore_bed_id = bed_id
                 self.last_edgi_heartbeat_time = now
                 self.last_edgi_heartbeat_at = now_text
+                self.last_edgi_bed_id = bed_id
                 self.snore_session_last_seen_at = now
                 self.snore_score = round(score, 3)
+                self._bed_state(bed_id)["snore"] = {
+                    "device_id": heartbeat.device_id,
+                    "source": heartbeat.source,
+                    "snore_score": round(score, 3),
+                    "snore_detected": bool(heartbeat.snore_detected),
+                    "snore_dbfs": dbfs,
+                    "snore_level": self._snore_level_from_dbfs(dbfs, score),
+                    "received_time": now,
+                    "received_at": now_text,
+                }
                 if dbfs is not None:
                     self.snore_dbfs = dbfs
                     self.last_audio_dbfs = dbfs
@@ -1910,15 +3525,19 @@ class RealtimeRadarProcessor:
                     dbfs,
                     heartbeat.source,
                 )
-            self._upsert_timeline()
+                if stop_alarm_event is not None:
+                    stop_alarm_event["bed_id"] = bed_id
+            if bed_id == (self.current_radar_bed_id or DEFAULT_BED_ID):
+                self._upsert_timeline()
             return {
                 "code": 200,
                 "status": "success",
                 "message": "呼噜心跳已接收",
+                "bed_id": bed_id,
                 "snore_score": round(score, 3),
                 "snore_dbfs": dbfs,
                 "snore_level": self._snore_level_from_dbfs(dbfs, score),
-                "snore_detected": self._status_snapshot()["snore_detected"],
+                "snore_detected": self._status_snapshot_for_bed(bed_id)["snore_detected"],
                 "sound_present": sound_present,
                 "last_snore_stop_fusion": self.last_snore_stop_fusion,
                 "alarm_triggered": stop_alarm_event is not None,
@@ -1928,8 +3547,14 @@ class RealtimeRadarProcessor:
         @self.app.post("/hardware/environment-heartbeat")
         async def receive_environment_heartbeat(heartbeat: EnvironmentHeartbeat):
             """接收 M55 从 M33 AHT20 共享内存读取后转发的温湿度心跳。"""
+            bed_id = self._resolve_runtime_bed_id(
+                bed_id=heartbeat.bed_id,
+                device_id=heartbeat.device_id,
+                source=heartbeat.source,
+            )
             sensor_ok = bool(heartbeat.sensor_ok)
-            temperature = round(float(heartbeat.temperature_c), 1)
+            raw_temperature = round(float(heartbeat.temperature_c), 1)
+            temperature = self._calibrate_environment_temperature(raw_temperature)
             humidity = round(max(0.0, min(100.0, float(heartbeat.humidity_pct))), 1)
             comfort_status = comfort_status_for(temperature, humidity, sensor_ok=sensor_ok, online=sensor_ok)
             now = time.time()
@@ -1937,24 +3562,48 @@ class RealtimeRadarProcessor:
             with self.state_lock:
                 self.last_environment_heartbeat_time = now
                 self.last_environment_heartbeat_at = now_text
+                self.last_environment_bed_id = bed_id
                 self.last_edgi_heartbeat_time = now
                 self.last_edgi_heartbeat_at = now_text
+                self.last_edgi_bed_id = bed_id
                 self.environment_sensor_ok = sensor_ok
+                self.raw_temperature_c = raw_temperature if sensor_ok else None
                 self.temperature_c = temperature if sensor_ok else None
                 self.humidity_pct = humidity if sensor_ok else None
-            self._upsert_timeline()
+                self._bed_state(bed_id)["environment"] = {
+                    "device_id": heartbeat.device_id,
+                    "source": heartbeat.source,
+                    "sensor_ok": sensor_ok,
+                    "temperature_c": temperature if sensor_ok else None,
+                    "raw_temperature_c": raw_temperature if sensor_ok else None,
+                    "humidity_pct": humidity if sensor_ok else None,
+                    "comfort_status": comfort_status,
+                    "received_time": now,
+                    "received_at": now_text,
+                }
+            if bed_id == (self.current_radar_bed_id or DEFAULT_BED_ID):
+                self._upsert_timeline()
             return {
                 "code": 200,
                 "status": "success",
                 "message": "温湿度心跳已接收",
+                "bed_id": bed_id,
                 "temperature_c": temperature if sensor_ok else None,
+                "raw_temperature_c": raw_temperature if sensor_ok else None,
+                "temperature_offset_c": ENV_TEMPERATURE_OFFSET_C,
                 "humidity_pct": humidity if sensor_ok else None,
                 "sensor_ok": sensor_ok,
                 "comfort_status": comfort_status,
             }
 
         @self.app.post("/hardware/snore-session/start")
-        async def start_snore_session():
+        async def start_snore_session(payload: Optional[SnoreSessionRequest] = None):
+            payload = payload or SnoreSessionRequest()
+            bed_id = self._resolve_runtime_bed_id(
+                bed_id=payload.bed_id,
+                device_id=payload.device_id,
+                source=payload.source,
+            )
             """呼噜检测板按下 Snore detect 时调用，前端从此刻开始一直显示在线。"""
             now = time.time()
             now_text = self._now_iso()
@@ -1966,8 +3615,10 @@ class RealtimeRadarProcessor:
                 self.snore_session_last_seen_at = now
                 self.last_snore_heartbeat_time = now
                 self.last_snore_heartbeat_at = now_text
+                self.last_snore_bed_id = bed_id
                 self.last_edgi_heartbeat_time = now
                 self.last_edgi_heartbeat_at = now_text
+                self.last_edgi_bed_id = bed_id
                 self.snore_sound_active = False
                 self.snore_sound_started_time = None
                 self.snore_sound_started_at = None
@@ -1976,11 +3627,24 @@ class RealtimeRadarProcessor:
                 self.last_snore_sound_stop_time = None
                 self.last_snore_sound_stop_at = None
                 self.last_snore_stop_fusion = None
-            self._upsert_timeline()
+                self._bed_state(bed_id)["snore"] = {
+                    "device_id": payload.device_id,
+                    "source": payload.source,
+                    "snore_score": 0.0,
+                    "snore_detected": False,
+                    "snore_dbfs": None,
+                    "snore_level": None,
+                    "session_active": True,
+                    "received_time": now,
+                    "received_at": now_text,
+                }
+            if bed_id == (self.current_radar_bed_id or DEFAULT_BED_ID):
+                self._upsert_timeline()
             return {
                 "code": 200,
                 "status": "success",
                 "message": "呼噜检测板 Snore detect 已按下",
+                "bed_id": bed_id,
                 "snore_board_online": self._snore_board_online(),
                 "snore_monitoring": True,
                 "snore_paused": False,
@@ -1988,7 +3652,13 @@ class RealtimeRadarProcessor:
             }
 
         @self.app.post("/hardware/snore-session/stop")
-        async def stop_snore_session():
+        async def stop_snore_session(payload: Optional[SnoreSessionRequest] = None):
+            payload = payload or SnoreSessionRequest()
+            bed_id = self._resolve_runtime_bed_id(
+                bed_id=payload.bed_id,
+                device_id=payload.device_id,
+                source=payload.source,
+            )
             """呼噜监测暂停时调用；Edgi E84 仍保持在线。"""
             now = time.time()
             now_text = self._now_iso()
@@ -1998,6 +3668,7 @@ class RealtimeRadarProcessor:
                 self.snore_session_last_seen_at = now
                 self.last_edgi_heartbeat_time = now
                 self.last_edgi_heartbeat_at = now_text
+                self.last_edgi_bed_id = bed_id
                 # 让“最近心跳/音频”不再被 5/15 秒窗口认作在线依据
                 self.last_snore_heartbeat_time = None
                 self.last_audio_received_time = None
@@ -2009,7 +3680,19 @@ class RealtimeRadarProcessor:
                 self.last_snore_sound_stop_time = None
                 self.last_snore_sound_stop_at = None
                 self.last_snore_stop_fusion = None
-            self._upsert_timeline()
+                self._bed_state(bed_id)["snore"] = {
+                    "device_id": payload.device_id,
+                    "source": payload.source,
+                    "snore_score": 0.0,
+                    "snore_detected": False,
+                    "snore_dbfs": None,
+                    "snore_level": None,
+                    "session_active": False,
+                    "received_time": now,
+                    "received_at": now_text,
+                }
+            if bed_id == (self.current_radar_bed_id or DEFAULT_BED_ID):
+                self._upsert_timeline()
             return {
                 "code": 200,
                 "status": "success",
@@ -2091,10 +3774,16 @@ class RealtimeRadarProcessor:
                 results["model_prediction"] = prediction
             return self._jsonable(results)
 
+        @self.app.get("/beds/{bed_id}/timeline")
         @self.app.get("/timeline")
-        async def get_timeline(seconds: int = Query(180, ge=10, le=1800)):
+        async def get_timeline(
+            seconds: int = Query(180, ge=10, le=1800),
+            bed_id: Optional[str] = None,
+        ):
             """获取前端生命体征时间轴。"""
-            self._upsert_timeline()
+            resolved_bed_id = self._resolve_runtime_bed_id(bed_id=bed_id)
+            if resolved_bed_id == (self.current_radar_bed_id or DEFAULT_BED_ID):
+                self._upsert_timeline()
             cutoff = time.time() - float(seconds)
             with self.state_lock:
                 rows = [
@@ -2102,21 +3791,29 @@ class RealtimeRadarProcessor:
                     for row in self.timeline
                     if self._parse_iso_seconds(row.get("timestamp")) >= cutoff
                 ]
+                rows = [
+                    {**row, "bed_id": row.get("bed_id") or resolved_bed_id}
+                    for row in rows
+                    if (row.get("bed_id") or resolved_bed_id) == resolved_bed_id
+                ]
                 rows = json.loads(json.dumps(rows))
             return {
                 "code": 200,
                 "status": "success",
+                "bed_id": resolved_bed_id,
                 "seconds": seconds,
                 "data": rows,
                 "summary": self._timeline_summary(rows),
             }
 
+        @self.app.get("/beds/{bed_id}/sleep/overview")
         @self.app.get("/sleep/overview")
         async def get_sleep_overview(
             mode: str = Query("live"),
             seconds: int = Query(1800, ge=60, le=7200),
             date: Optional[str] = Query(None),
             userID: Optional[int] = Query(None),
+            bed_id: Optional[str] = None,
         ):
             """睡眠看护驾驶舱聚合接口。
 
@@ -2125,20 +3822,33 @@ class RealtimeRadarProcessor:
               否则空数据但返回正常结构（前端可降级显示）。
             """
             selected_mode = "history" if mode == "history" else "live"
-            self._upsert_timeline()
+            resolved_bed_id = self._resolve_runtime_bed_id(bed_id=bed_id)
+            if resolved_bed_id == (self.current_radar_bed_id or DEFAULT_BED_ID):
+                self._upsert_timeline()
 
             if selected_mode == "history":
                 with self.state_lock:
                     snapshot = list(self.timeline)
                 if date:
                     snapshot = [row for row in snapshot if (row.get("timestamp") or "").startswith(date)]
+                snapshot = [
+                    {**row, "bed_id": row.get("bed_id") or resolved_bed_id}
+                    for row in snapshot
+                    if (row.get("bed_id") or resolved_bed_id) == resolved_bed_id
+                ]
                 rows = json.loads(json.dumps(snapshot))
             else:
                 cutoff = time.time() - float(seconds)
                 cutoff_iso = datetime.fromtimestamp(cutoff).isoformat(timespec="seconds")
                 with self.state_lock:
                     rows = self._rows_between(self.timeline, cutoff)
+                    rows = [
+                        {**row, "bed_id": row.get("bed_id") or resolved_bed_id}
+                        for row in rows
+                        if (row.get("bed_id") or resolved_bed_id) == resolved_bed_id
+                    ]
                     rows = json.loads(json.dumps(rows))
+                    env = self._environment_snapshot()
                     devices = {
                         "radar_board_online": self._radar_board_online(),
                         "radar_board_stationary": bool(self.radar_board_stationary),
@@ -2148,26 +3858,31 @@ class RealtimeRadarProcessor:
                         "snore_board_online": self._snore_board_online(),
                         "snore_monitoring": bool(self.snore_session_active and self._snore_board_online()),
                         "snore_paused": bool(self.snore_session_stopped and self._edgi_board_online()),
-                        "environment_board_online": self._environment_snapshot()["environment_board_online"],
-                        "environment_sensor_ok": self._environment_snapshot()["environment_sensor_ok"],
+                        "environment_board_online": env["environment_board_online"],
+                        "environment_sensor_ok": env["environment_sensor_ok"],
                         "voice_board_online": self._voice_board_online(),
                         "edgi_board_online": self._edgi_board_online(),
                         "radar_age_seconds": self._seconds_since(self.last_radar_received_time),
                         "radar_status_age_seconds": self._seconds_since(self.last_radar_status_time),
                         "snore_age_seconds": self._seconds_since(self.last_snore_heartbeat_time),
-                        "environment_age_seconds": self._environment_snapshot()["environment_age_seconds"],
+                        "environment_age_seconds": env["environment_age_seconds"],
                         "voice_age_seconds": self._seconds_since(self.last_voice_received_time),
                         "edgi_age_seconds": self._seconds_since(self.last_edgi_heartbeat_time),
                         "audio_upload_count": self.audio_upload_count,
                         "last_audio_received_at": self.last_audio_received_at,
                         "last_environment_heartbeat_at": self.last_environment_heartbeat_at,
-                        "temperature_c": self._environment_snapshot()["temperature_c"],
-                        "humidity_pct": self._environment_snapshot()["humidity_pct"],
-                        "comfort_status": self._environment_snapshot()["comfort_status"],
-                        "emergency_active": self._active_emergency_event() is not None,
+                        "temperature_c": env["temperature_c"],
+                        "raw_temperature_c": env["raw_temperature_c"],
+                        "temperature_offset_c": env["temperature_offset_c"],
+                        "humidity_pct": env["humidity_pct"],
+                        "comfort_status": env["comfort_status"],
+                        "emergency_active": self._active_emergency_event(resolved_bed_id) is not None,
                     }
-                events = self._synthesize_sleep_events(rows) + self._emergency_events_between(cutoff)
-                return self._build_sleep_overview(rows, events, "live", seconds, date, userID, devices)
+                events = self._synthesize_sleep_events(rows) + self._emergency_events_between(cutoff, resolved_bed_id)
+                result = self._build_sleep_overview(rows, events, "live", seconds, date, userID, devices)
+                result["bed_id"] = resolved_bed_id
+                result["bed"] = self._bed_metadata(resolved_bed_id)
+                return result
 
             with self.state_lock:
                 env = self._environment_snapshot()
@@ -2194,12 +3909,47 @@ class RealtimeRadarProcessor:
                     "last_audio_received_at": self.last_audio_received_at,
                     "last_environment_heartbeat_at": self.last_environment_heartbeat_at,
                     "temperature_c": env["temperature_c"],
+                    "raw_temperature_c": env["raw_temperature_c"],
+                    "temperature_offset_c": env["temperature_offset_c"],
                     "humidity_pct": env["humidity_pct"],
                     "comfort_status": env["comfort_status"],
-                    "emergency_active": self._active_emergency_event() is not None,
+                    "emergency_active": self._active_emergency_event(resolved_bed_id) is not None,
                 }
-            events = self._synthesize_sleep_events(rows) + self._emergency_events_between()
-            return self._build_sleep_overview(rows, events, "history", seconds, date, userID, devices)
+            events = self._synthesize_sleep_events(rows) + self._emergency_events_between(None, resolved_bed_id)
+            result = self._build_sleep_overview(rows, events, "history", seconds, date, userID, devices)
+            result["bed_id"] = resolved_bed_id
+            result["bed"] = self._bed_metadata(resolved_bed_id)
+            return result
+
+        @self.app.get("/beds/{bed_id}/heartdata/selectPage")
+        async def select_bed_heart_data_page(
+                bed_id: str,
+                pageNum: int = Query(1, ge=1),
+                pageSize: int = Query(10, ge=1, le=100),
+                date: str = Query(None),
+                userID: int = Query(None),
+        ):
+            try:
+                resolved_bed_id = self._resolve_runtime_bed_id(bed_id=bed_id)
+                result = query_heart_data_by_date(
+                    page_num=pageNum,
+                    page_size=pageSize,
+                    date_str=date,
+                    user_id=userID,
+                    bed_id=resolved_bed_id,
+                )
+                return {
+                    "code": 200,
+                    "msg": "success",
+                    "bed_id": resolved_bed_id,
+                    "data": result
+                }
+            except Exception as e:
+                return {
+                    "code": 500,
+                    "msg": f"查询失败: {str(e)}",
+                    "data": {"list": [], "total": 0}
+                }
 
         @self.app.get("/heartdata/selectPage")
         async def select_heart_data_page(
@@ -2349,6 +4099,9 @@ class RealtimeRadarProcessor:
                     self.frames_since_last_process += 1  # 使用类属性记录新帧
                     self.last_radar_received_time = time.time()
                     self.last_radar_received_at = self._now_iso()
+                    self.current_radar_bed_id = self._resolve_runtime_bed_id(
+                        radar_ip=adr[0] if adr else None
+                    )
                     self.radar_board_stationary = True
                     self.radar_motion_reason = "disabled"
                     self._update_packet_debug(data, frame_number)
@@ -2482,27 +4235,77 @@ class RealtimeRadarProcessor:
 
                 # 保存处理结果到实例变量
                 self.phase_values = phase_values
+                self.breath_periodicity = estimate_breath_periodicity(phase_values)
                 self.target_bin = target_bin
+                target_distance = target_bin * RANGE_RESOLUTION if target_bin is not None else None
 
-                # 步骤5: 执行存在检测。呼噜声响起时临时关闭存在性检测，避免呼噜/疑似暂停场景下雷达分析被门控挡住。
-                snore_presence_bypass = bool(self.snore_sound_active)
+                # 步骤5: 执行存在检测。呼噜声响起及停止确认窗口内临时关闭存在性检测，
+                # 避免呼噜/疑似暂停场景下雷达分析被门控挡住。
+                snore_presence_bypass = self._snore_presence_bypass_active()
                 self.presence_bypassed_by_snore = snore_presence_bypass
                 if snore_presence_bypass:
+                    latest_frame_data = data_2d[-1:, :]
+                    self.presence_detector.detect_presence(
+                        latest_frame_data,
+                        target_distance=target_distance,
+                    )
+                    raw_presence_debug = self._presence_debug_state()
                     self.presence_detected = True
                     self.presence_stable = True
-                    print(">> 呼噜声响起，临时关闭存在性检测，直接执行雷达呼吸/模型分析")
+                    self.presence_detector.last_debug = {
+                        "presence_signal": True,
+                        "presence_energy_stable": True,
+                        "presence_distance_stable": True,
+                        "presence_distance_span": 0.0,
+                        "presence_distance": round(float(target_distance), 4) if target_distance is not None else None,
+                        "presence_distance_min_m": PRESENCE_DISTANCE_MIN_M,
+                        "presence_distance_max_m": PRESENCE_DISTANCE_MAX_M,
+                        "presence_distance_stability_span_m": PRESENCE_DISTANCE_STABILITY_SPAN_M,
+                        "presence_detection_value": raw_presence_debug.get("presence_detection_value"),
+                        "presence_detection_threshold": raw_presence_debug.get("presence_detection_threshold"),
+                        "presence_detection_bin": raw_presence_debug.get("presence_detection_bin"),
+                        "presence_below_threshold": bool(raw_presence_debug.get("presence_below_threshold")),
+                        "presence_stable": True,
+                    }
+                    print(">> 呼噜响起或刚停止，临时关闭存在性检测，直接执行雷达呼吸/模型分析")
                 elif ENABLE_PRESENCE_DETECTION:
                     # 提取最新一帧的数据用于存在检测
                     latest_frame_data = data_2d[-1:, :]  # 取最后一帧
-                    self.presence_detected, self.presence_stable = self.presence_detector.detect_presence(latest_frame_data)
-                    print(f">> 存在检测: 原始={self.presence_detected}, 稳定={self.presence_stable}")
+                    self.presence_detected, self.presence_stable = self.presence_detector.detect_presence(
+                        latest_frame_data,
+                        target_distance=target_distance,
+                    )
+                    presence_debug = self._presence_debug_state()
+                    print(
+                        f">> 存在检测: 原始={self.presence_detected}, "
+                        f"能量稳定={presence_debug.get('presence_energy_stable')}, "
+                        f"距离稳定={presence_debug.get('presence_distance_stable')}, "
+                        f"最终={self.presence_stable}"
+                    )
                 else:
                     # 如果未启用存在检测，则默认认为有人存在
                     self.presence_detected = True
                     self.presence_stable = True
                     self.presence_bypassed_by_snore = False
+                    self.presence_detector.last_debug = {
+                        "presence_signal": True,
+                        "presence_energy_stable": True,
+                        "presence_distance_stable": True,
+                        "presence_distance_span": 0.0,
+                        "presence_distance": round(float(target_distance), 4) if target_distance is not None else None,
+                        "presence_distance_min_m": PRESENCE_DISTANCE_MIN_M,
+                        "presence_distance_max_m": PRESENCE_DISTANCE_MAX_M,
+                        "presence_distance_stability_span_m": PRESENCE_DISTANCE_STABILITY_SPAN_M,
+                        "presence_detection_value": None,
+                        "presence_detection_threshold": 1.01,
+                        "presence_detection_bin": None,
+                        "presence_below_threshold": False,
+                        "presence_stable": True,
+                    }
 
                 # 步骤6: 只有在检测到人存在时才执行信号分解和心率计算
+                self._update_night_absence_monitor(process_start_time)
+
                 if self.presence_stable and DECOMPOSE_SIGNAL:
                     print(f">> 检测到人体存在，执行信号分解: 类型={DECOMP_TYPE}...")
 
@@ -2510,7 +4313,8 @@ class RealtimeRadarProcessor:
                     self.cwt_results = None
                     self.eemd_results = None
                     self.model_prediction = None  # 清空模型预测结果
-                    self.heart_rate = None  # 清空心率预测
+                    self.heart_rate_fresh = False
+                    self.breath_rate_fresh = False
 
                     # 应用CWT (连续小波变换)
                     if DECOMP_TYPE == "cwt":
@@ -2551,6 +4355,7 @@ class RealtimeRadarProcessor:
                                     if prediction is not None and len(prediction) > 0:
                                         # 简单假设：预测值直接是心率
                                         self.heart_rate = float(prediction[0][0])
+                                        self.heart_rate_fresh = self._valid_heart_value(self.heart_rate)
                                         raw_breath_rate, breath_quality = estimate_breath_rate_fft_with_quality(self.phase_values)
                                         self._update_breath_rate_estimate(raw_breath_rate, breath_quality)
                                     # 保存预测结果
@@ -2605,6 +4410,7 @@ class RealtimeRadarProcessor:
                                     if prediction is not None and len(prediction) > 0:
                                         # 简单假设：预测值直接是心率
                                         self.heart_rate = float(prediction[0][0])
+                                        self.heart_rate_fresh = self._valid_heart_value(self.heart_rate)
                                         raw_breath_rate, breath_quality = estimate_breath_rate_fft_with_quality(self.phase_values)
                                         self._update_breath_rate_estimate(raw_breath_rate, breath_quality)
 
@@ -2625,16 +4431,13 @@ class RealtimeRadarProcessor:
                         except Exception as e:
                             print(f"EEMD分析出错: {e}")
                             self.eemd_results = None
+                    self._finalize_vitals_window()
                 else:
                     if not self.presence_stable:
                         print(">> 未检测到人体存在，跳过信号分解和心率计算")
-                    # 如果未检测到人，清空心率结果
                     if not self.presence_stable:
-                        self.heart_rate = None
-                        self.model_prediction = None
-                        self.breath_rate = None
+                        self._apply_vitals_hold_or_loss()
                 # 更新显示数据
-                target_distance = target_bin * RANGE_RESOLUTION
                 process_end_time = time.time()
                 self._update_sample_debug(self.data_buffer[-1], frames[-1], target_bin, target_distance)
 
@@ -2686,6 +4489,7 @@ class RealtimeRadarProcessor:
     # 获取处理结果的方法
     def get_latest_results(self):
         """获取最新的处理结果"""
+        radar_board_online = self._radar_board_online()
         results = {
             'phase_values': self.phase_values,
             'target_bin': self.target_bin,
@@ -2693,8 +4497,14 @@ class RealtimeRadarProcessor:
             'cwt_results': self.cwt_results,
             'eemd_results': self.eemd_results,
             'model_prediction': self.model_prediction,
-            'heart_rate': self.heart_rate,
-            'breath_rate': self.breath_rate,
+            'heart_rate': self.heart_rate if radar_board_online else None,
+            'breath_rate': self.breath_rate if radar_board_online else None,
+            'breath_periodicity': self.breath_periodicity if radar_board_online else 0.0,
+            'heart_rate_fresh': bool(self.heart_rate_fresh) if radar_board_online else False,
+            'breath_rate_fresh': bool(self.breath_rate_fresh) if radar_board_online else False,
+            'vitals_state': self.vitals_state if radar_board_online else "lost",
+            'vitals_age_seconds': self._vitals_age_seconds(),
+            'last_valid_vitals_at': self.last_valid_vitals_at,
             'processing_count': self.processing_count,
             'timestamp': time.time()
         }

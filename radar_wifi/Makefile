@@ -86,7 +86,11 @@ VERBOSE=
 # added to the build
 #
 COMPONENTS=FREERTOS LWIP MBEDTLS
-ENABLE_RADAR_BLE?=1
+# BLE 协议栈与 BGT60TR13C 雷达共用 2.4GHz 射频前端；启用 BLE 会在 stack enabled
+# 后抢占射频，导致雷达 GPIO 数据中断停触发、UDP 数据流停在前若干帧。
+# 默认关闭 BLE，让雷达独占射频，仅保留 WiFi+UDP 上报链路。
+# 如需 BLE 本地配置，临时用 `ENABLE_RADAR_BLE=1` 构建即可，但需重新评估射频共存时序。
+ENABLE_RADAR_BLE?=0
 ifeq ($(ENABLE_RADAR_BLE),1)
 COMPONENTS+=HCI-UART WICED_BLE
 endif

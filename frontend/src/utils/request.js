@@ -1,7 +1,17 @@
 import axios from "axios";
 import {ElMessage} from "element-plus";
 
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://192.168.0.102:8081'
+const resolveDefaultApiBaseUrl = () => {
+    const lanBackend = 'http://192.168.31.236:8081'
+    if (typeof window === 'undefined') return lanBackend
+    const host = window.location.hostname
+    if (!host || host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+        return lanBackend
+    }
+    return `http://${host}:8081`
+}
+
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || resolveDefaultApiBaseUrl()
 
 const request = axios.create({
     baseURL: API_BASE_URL,

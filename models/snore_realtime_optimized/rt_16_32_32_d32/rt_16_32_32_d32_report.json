@@ -1,0 +1,112 @@
+{
+  "name": "rt_16_32_32_d32",
+  "keras": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_32_32_d32\\rt_16_32_32_d32.keras",
+  "tflite": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_32_32_d32\\rt_16_32_32_d32_int8.tflite",
+  "header": "D:\\STUDY\\hrrr-radar-monitor-system\\models\\snore_realtime_optimized\\rt_16_32_32_d32\\rt_16_32_32_d32_snore_model_data.h",
+  "keras_bytes": 230855,
+  "tflite_bytes": 24624,
+  "smaller_than_old_first_model": true,
+  "tflite_sha256": "1273a33c4e48f1de3848a3929e8f780b92b83861140bd7516a0893d93b8d672b",
+  "operators": [
+    "SHAPE",
+    "STRIDED_SLICE",
+    "PACK",
+    "RESHAPE",
+    "CONV_2D",
+    "MAX_POOL_2D",
+    "CONV_2D",
+    "MAX_POOL_2D",
+    "CONV_2D",
+    "MEAN",
+    "FULLY_CONNECTED",
+    "FULLY_CONNECTED",
+    "SOFTMAX"
+  ],
+  "unsupported_ops": [],
+  "float_fixed_threshold": {
+    "accuracy": 0.96,
+    "precision": 0.948051948051948,
+    "recall": 0.9733333333333334,
+    "f1": 0.9605263157894737,
+    "auc": 0.9852444444444444,
+    "threshold": 0.6,
+    "confusion_matrix": [
+      [
+        71,
+        4
+      ],
+      [
+        2,
+        73
+      ]
+    ]
+  },
+  "int8_fixed_threshold": {
+    "accuracy": 0.96,
+    "precision": 0.948051948051948,
+    "recall": 0.9733333333333334,
+    "specificity": 0.9466666666666667,
+    "npv": 0.9726027397260274,
+    "f1": 0.9605263157894737,
+    "balanced_accuracy": 0.96,
+    "mcc": 0.9203272856738179,
+    "fpr": 0.05333333333333334,
+    "fnr": 0.02666666666666667,
+    "roc_auc": 0.9874666666666666,
+    "average_precision": 0.9794299618927759,
+    "tp": 73,
+    "fp": 4,
+    "fn": 2,
+    "tn": 71,
+    "confusion_matrix": [
+      [
+        71,
+        4
+      ],
+      [
+        2,
+        73
+      ]
+    ],
+    "threshold": 0.6
+  },
+  "int8_best_threshold": {
+    "accuracy": 0.9666666666666667,
+    "precision": 0.9605263157894737,
+    "recall": 0.9733333333333334,
+    "specificity": 0.96,
+    "npv": 0.972972972972973,
+    "f1": 0.9668874172185431,
+    "balanced_accuracy": 0.9666666666666667,
+    "mcc": 0.9334163073596637,
+    "fpr": 0.04,
+    "fnr": 0.02666666666666667,
+    "roc_auc": 0.9874666666666666,
+    "average_precision": 0.9794299618927759,
+    "tp": 73,
+    "fp": 3,
+    "fn": 2,
+    "tn": 72,
+    "confusion_matrix": [
+      [
+        72,
+        3
+      ],
+      [
+        2,
+        73
+      ]
+    ],
+    "threshold": 0.71
+  },
+  "benchmark": {
+    "runs": 400,
+    "mean_ms": 0.1084917500014626,
+    "median_ms": 0.10429999997541017,
+    "p95_ms": 0.1369200000283399,
+    "max_ms": 0.18130000000837754
+  },
+  "epochs_ran": 21,
+  "best_val_accuracy": 0.9733333587646484,
+  "best_val_loss": 0.08928821980953217
+}

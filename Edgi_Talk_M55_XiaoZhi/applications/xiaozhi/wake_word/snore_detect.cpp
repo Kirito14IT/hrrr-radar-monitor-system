@@ -59,21 +59,21 @@ extern "C" void xz_trigger_care_alarm(void);
 
 /* --- NEW: Configuration for DB sending --- */
 #ifndef DB_SEND_TARGET_IP
-#define DB_SEND_TARGET_IP "192.168.0.102"  // Replace with your target IP
+#define DB_SEND_TARGET_IP BOARD_BACKEND_HOST
 #endif
 
 #ifndef DB_SEND_TARGET_PORT
-#define DB_SEND_TARGET_PORT 8081           // Replace with your target port
+#define DB_SEND_TARGET_PORT BOARD_BACKEND_PORT
 #endif
 
 #define DB_HISTORY_SIZE 10                 // Store 10 seconds of dB readings
-#define DB_THREAD_STACK_SIZE 2048
+#define DB_THREAD_STACK_SIZE 4096
 #define DB_THREAD_PRIORITY 17  // Higher than main snore thread (18)
 #define DB_THREAD_TICK 10
 
 /* NEW: Heartbeat configuration */
 #define HB_INTERVAL_MS 1000                // Send a snore score heartbeat every 1s
-#define HB_THREAD_STACK_SIZE 2048
+#define HB_THREAD_STACK_SIZE 4096
 #define HB_THREAD_PRIORITY 18              // Same as snore detection (independent work)
 #define HB_THREAD_TICK 10
 #define HTTP_SOCKET_TIMEOUT_MS 1200
@@ -134,7 +134,7 @@ static const int kMelFilterPoints[kMelBins + 2] = {
 };
 
 // Detection threshold (0.0 ~ 1.0)
-constexpr float kSnoreThreshold = 0.6f;
+constexpr float kSnoreThreshold = 0.9f;
 // Cooldown only prevents repeated triggers; lower = more responsive.
 constexpr uint32_t kDetectCooldownMs = 500;
 // Sliding window hop size (in samples). 16000 @16kHz ~= 1000ms.
@@ -919,8 +919,20 @@ static void heartbeat_thread_entry(void *parameter)
     (void)parameter;
     LOG_I("hb: thread started (interval=%d ms)", HB_INTERVAL_MS);
 
+    char bed_id[DEVICE_CONFIG_BED_ID_LEN] = {0};
+    char device_id[DEVICE_CONFIG_ID_LEN] = {0};
+    char source[DEVICE_CONFIG_SOURCE_LEN] = {0};
+    device_identity_get(BOARD_BED_ID, BOARD_DEVICE_ID, BOARD_SNORE_SOURCE,
+                        bed_id, sizeof(bed_id),
+                        device_id, sizeof(device_id),
+                        source, sizeof(source));
+
     /* Announce session start so the dashboard flips to "online" immediately */
-    post_json_to_backend("/hardware/snore-session/start", "{\"source\":\"real_snore_board\"}");
+    char session_body[256];
+    snprintf(session_body, sizeof(session_body),
+             "{\"bed_id\":\"%s\",\"device_id\":\"%s\",\"source\":\"%s\"}",
+             bed_id, device_id, source);
+    post_json_to_backend("/hardware/snore-session/start", session_body);
 
     const rt_tick_t period_ticks = rt_tick_from_millisecond(HB_INTERVAL_MS);
     rt_tick_t next_send = rt_tick_get();
@@ -948,14 +960,16 @@ static void heartbeat_thread_entry(void *parameter)
             rt_mutex_release(g_score_mutex);
         }
 
-        char body[192];
+        char body[320];
         int body_len = dbfs_valid
             ? snprintf(body, sizeof(body),
-                "{\"snore_score\":%.3f,\"snore_detected\":%s,\"dbfs\":%.2f,\"source\":\"real_snore_board\"}",
-                score, detected ? "true" : "false", dbfs)
+                "{\"snore_score\":%.3f,\"snore_detected\":%s,\"dbfs\":%.2f,"
+                "\"bed_id\":\"%s\",\"device_id\":\"%s\",\"source\":\"%s\"}",
+                score, detected ? "true" : "false", dbfs, bed_id, device_id, source)
             : snprintf(body, sizeof(body),
-                "{\"snore_score\":%.3f,\"snore_detected\":%s,\"dbfs\":null,\"source\":\"real_snore_board\"}",
-                score, detected ? "true" : "false");
+                "{\"snore_score\":%.3f,\"snore_detected\":%s,\"dbfs\":null,"
+                "\"bed_id\":\"%s\",\"device_id\":\"%s\",\"source\":\"%s\"}",
+                score, detected ? "true" : "false", bed_id, device_id, source);
         if (body_len > 0) {
             (void)post_json_to_backend("/hardware/snore-heartbeat", body);
         }
@@ -963,7 +977,7 @@ static void heartbeat_thread_entry(void *parameter)
 
     /* Full stop reports the session end. Capture-only pauses keep this
      * heartbeat alive so Edgi remains online during a voice interaction. */
-    post_json_to_backend("/hardware/snore-session/stop", "{}");
+    post_json_to_backend("/hardware/snore-session/stop", session_body);
 
     LOG_I("hb: thread exiting");
     g_hb_tid = RT_NULL;

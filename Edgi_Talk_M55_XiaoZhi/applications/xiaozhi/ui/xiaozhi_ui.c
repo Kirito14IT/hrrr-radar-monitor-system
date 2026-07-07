@@ -152,18 +152,12 @@ static rt_bool_t s_snore_mode = RT_FALSE;
 static rt_bool_t s_guard_mode = RT_TRUE;
 static rt_bool_t s_network_overlay_active = RT_FALSE;
 static lv_obj_t *s_main_screen = RT_NULL;
-static lv_obj_t *s_snore_screen = RT_NULL;
-static lv_obj_t *s_snore_label_title = RT_NULL;
-static lv_obj_t *s_snore_label_result = RT_NULL;
-static lv_obj_t *s_snore_label_score = RT_NULL;
-static lv_obj_t *s_snore_panel = RT_NULL;
 static lv_obj_t *s_btn_snore = RT_NULL;
 static lv_obj_t *s_lbl_snore = RT_NULL;
 static lv_obj_t *s_btn_dialogue = RT_NULL;
 static lv_obj_t *s_lbl_dialogue = RT_NULL;
 static lv_obj_t *s_snore_inference_badge = RT_NULL;
 static lv_obj_t *s_snore_inference_label = RT_NULL;
-static lv_obj_t *s_snore_canvas = RT_NULL;
 static lv_obj_t *s_emergency_screen = RT_NULL;
 static lv_obj_t *s_emergency_phrase = RT_NULL;
 static lv_obj_t *s_emergency_hint = RT_NULL;
@@ -181,25 +175,33 @@ static lv_obj_t *s_btn_alarm = RT_NULL;
 static lv_obj_t *s_lbl_alarm = RT_NULL;
 static alarm_clock_config_t s_alarm_edit = {RT_FALSE, 7, 0};
 static rt_bool_t s_alarm_ringing = RT_FALSE;
+static rt_tick_t s_time_fallback_start_tick = 0;
+static int s_time_fallback_base_seconds = -1;
 
-static void snore_back_btn_event_cb(lv_event_t *e);
-static void snore_build_screen(void);
 static void emergency_build_screen(void);
 static void alarm_build_screen(void);
 static void alarm_ring_build_screen(void);
 static void ui_update_time_label(void);
 static void time_label_timer_cb(lv_timer_t *timer);
 
-/* Canvas buffer for the snore illustration (ARGB8888). */
-static uint8_t s_snore_canvas_buf[360 * 240 * 4] rt_section(".m33_m55_shared_hyperram");
-
-static inline void snore_canvas_px(lv_obj_t *canvas, int w, int h, int x, int y, lv_color_t col)
+static int ui_time_fallback_base_seconds(void)
 {
-    if (!canvas)
-        return;
-    if (x < 0 || y < 0 || x >= w || y >= h)
-        return;
-    lv_canvas_set_px(canvas, x, y, col, LV_OPA_COVER);
+    if (s_time_fallback_base_seconds >= 0)
+        return s_time_fallback_base_seconds;
+
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+    if (sscanf(__TIME__, "%d:%d:%d", &hour, &minute, &second) != 3)
+    {
+        hour = 7;
+        minute = 0;
+        second = 0;
+    }
+
+    s_time_fallback_base_seconds = (hour * 3600) + (minute * 60) + second;
+    s_time_fallback_start_tick = rt_tick_get();
+    return s_time_fallback_base_seconds;
 }
 
 static void ui_update_time_label(void)
@@ -219,7 +221,13 @@ static void ui_update_time_label(void)
     }
     else
     {
-        lv_label_set_text(s_label_time, "--:--");
+        const int base_seconds = ui_time_fallback_base_seconds();
+        const rt_tick_t elapsed_ticks = rt_tick_get() - s_time_fallback_start_tick;
+        const int elapsed_seconds = (int)(elapsed_ticks / RT_TICK_PER_SECOND);
+        const int seconds_of_day = (base_seconds + elapsed_seconds) % (24 * 3600);
+        lv_label_set_text_fmt(s_label_time, "%02d:%02d",
+                              seconds_of_day / 3600,
+                              (seconds_of_day / 60) % 60);
     }
 }
 
@@ -227,72 +235,6 @@ static void time_label_timer_cb(lv_timer_t *timer)
 {
     (void)timer;
     ui_update_time_label();
-}
-
-static void snore_draw_sleep_pixelart(lv_obj_t *canvas)
-{
-    if (!canvas)
-        return;
-
-    const int W = 360;
-    const int H = 240;
-    lv_canvas_set_buffer(canvas, s_snore_canvas_buf, W, H, LV_COLOR_FORMAT_ARGB8888);
-    lv_canvas_fill_bg(canvas, lv_color_black(), LV_OPA_TRANSP);
-
-    const lv_color_t outline = lv_color_hex(0x142033);
-    const lv_color_t bed = lv_color_hex(0x5477A8);
-    const lv_color_t blanket = lv_color_hex(0x66C2B0);
-    const lv_color_t pillow = lv_color_hex(0xE8F1F8);
-    const lv_color_t skin = lv_color_hex(0xF2B49B);
-    const lv_color_t hair = lv_color_hex(0x39495E);
-    const lv_color_t sound = lv_color_hex(0xFFB347);
-    const lv_color_t sleep = lv_color_hex(0x8CB8FF);
-    const int S = 6;
-    const int ox = 48;
-    const int oy = 12;
-
-    #define PX(xx,yy,col) do { \
-        for(int sy=0; sy<S; sy++) for(int sx=0; sx<S; sx++) \
-            snore_canvas_px(canvas, W, H, (ox + (xx)*S + sx), (oy + (yy)*S + sy), (col)); \
-    } while(0)
-
-    #define RECT(x0,y0,x1,y1,col) do { \
-        for(int yy=(y0); yy<=(y1); yy++) for(int xx=(x0); xx<=(x1); xx++) PX(xx,yy,(col)); \
-    } while(0)
-
-    /* Bed frame, mattress and pillow. */
-    RECT(3, 25, 43, 33, bed);
-    RECT(3, 33, 46, 35, outline);
-    RECT(5, 36, 7, 38, outline);
-    RECT(42, 36, 44, 38, outline);
-    RECT(5, 21, 16, 27, pillow);
-
-    /* Sleeping person facing right. */
-    RECT(12, 18, 20, 26, hair);
-    RECT(15, 19, 23, 26, skin);
-    RECT(14, 18, 20, 19, hair);
-    PX(21, 22, outline);
-    PX(23, 24, outline);
-    RECT(20, 25, 22, 26, skin);
-
-    /* Blanket and body. */
-    RECT(20, 26, 42, 32, blanket);
-    RECT(24, 24, 39, 25, blanket);
-    for (int x = 20; x <= 42; x++) PX(x, 32, outline);
-
-    /* Snore sound waves near the mouth. */
-    PX(26, 23, sound); PX(27, 22, sound); PX(27, 24, sound);
-    PX(29, 21, sound); PX(30, 20, sound); PX(30, 24, sound); PX(29, 25, sound);
-    PX(33, 19, sound); PX(34, 18, sound); PX(34, 26, sound); PX(33, 27, sound);
-
-    /* ZZZ sleep symbol. */
-    RECT(31, 4, 37, 5, sleep); RECT(35, 6, 36, 6, sleep); RECT(33, 7, 34, 7, sleep);
-    RECT(31, 8, 37, 9, sleep);
-    RECT(39, 0, 45, 1, sleep); RECT(43, 2, 44, 2, sleep); RECT(41, 3, 42, 3, sleep);
-    RECT(39, 4, 45, 5, sleep);
-
-    #undef PX
-    #undef RECT
 }
 
 /*****************************************************************************
@@ -397,10 +339,12 @@ static void snore_btn_event_cb(lv_event_t *e)
     }
     last_click_tick = now;
 
-    if (!s_snore_screen)
-        snore_build_screen();
-    if (s_snore_screen)
-        lv_screen_load(s_snore_screen);
+    /*
+     * 守护模式只在主屏幕内切换，不再弹出/跳转到单独的呼噜检测页面。
+     * 呼噜检测结果仍通过主屏幕上的 SNORE 状态条更新。
+     */
+    if (s_main_screen)
+        lv_screen_load(s_main_screen);
     (void)xz_request_operating_mode(kXzOperatingModeGuard);
 }
 
@@ -423,21 +367,12 @@ static void dialogue_btn_event_cb(lv_event_t *e)
 
 void xiaozhi_ui_enter_snore_mode_from_voice(void)
 {
-    /* This can be called by the WebSocket thread. Queue only the mode change;
-     * all LVGL mutations are performed later by the UI thread. */
+    /* This can be called by the WebSocket thread. Guard mode no longer opens
+     * the retired snore detail screen; it only switches operating mode. */
     (void)xz_request_operating_mode(kXzOperatingModeGuard);
 }
 
-static void snore_back_btn_event_cb(lv_event_t *e)
-{
-    lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED)
-        return;
-
-    if (s_main_screen)
-        lv_screen_load(s_main_screen);
-}
-
+#if 0 /* Retired: guard mode no longer opens a standalone snore detail screen. */
 static void snore_build_screen(void)
 {
     s_snore_screen = lv_obj_create(NULL);
@@ -505,6 +440,7 @@ static void snore_build_screen(void)
     lv_obj_add_style(lbl_back, &s_style_24, 0);
     lv_obj_center(lbl_back);
 }
+#endif
 
 static void emergency_resolve_btn_event_cb(lv_event_t *e)
 {
@@ -839,6 +775,9 @@ static rt_err_t ui_objects_init(void)
     lv_obj_clear_flag(battery_outline, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_color(s_label_status, lv_color_hex(0xffffff), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_size(battery_outline, BATTERY_OUTLINE_W * g_scale, BATTERY_OUTLINE_H * g_scale);
+    /* Keep the battery/power indicator away from the physical screen edge. */
+    lv_obj_set_style_margin_right(battery_outline, SCALE_DPX(18), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_translate_y(battery_outline, SCALE_DPX(8), LV_PART_MAIN | LV_STATE_DEFAULT);
 
     /* Battery fill */
     s_battery_fill = lv_obj_create(battery_outline);
@@ -860,12 +799,25 @@ static rt_err_t ui_objects_init(void)
     lv_obj_set_style_text_color(s_battery_label, lv_color_hex(0xffffff), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(s_battery_label, LV_ALIGN_CENTER, 0, 0);
 
-    /* Current time label */
-    s_label_time = lv_label_create(s_header_row);
+    /* Current time box below the battery indicator. */
+    lv_obj_t *time_box = lv_obj_create(screen);
+    lv_obj_set_size(time_box, SCALE_DPX(86), SCALE_DPX(34));
+    lv_obj_align(time_box, LV_ALIGN_TOP_RIGHT,
+                 -SCALE_DPX(44), SCALE_DPX(66));
+    lv_obj_clear_flag(time_box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(time_box, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(time_box, SCALE_DPX(8), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(time_box, lv_color_hex(0x111827), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(time_box, LV_OPA_60, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(time_box, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(time_box, lv_color_hex(0x475569), LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    s_label_time = lv_label_create(time_box);
     lv_obj_add_style(s_label_time, &s_style_20, 0);
-    lv_obj_set_width(s_label_time, SCALE_DPX(72));
+    lv_obj_set_width(s_label_time, LV_PCT(100));
     lv_obj_set_style_text_align(s_label_time, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_color(s_label_time, lv_color_hex(0xC7D2FE), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(s_label_time);
     lv_label_set_text(s_label_time, "--:--");
     ui_update_time_label();
     lv_timer_create(time_label_timer_cb, 1000, RT_NULL);
@@ -1061,8 +1013,8 @@ static void ui_process_message(const ui_msg_t *msg)
 
     case UI_CMD_SET_SNORE_RESULT:
     {
-        if (!s_guard_mode)
-            break;
+        /* Snore inference always drives the badge, regardless of guard pause state.
+         * Previously a paused guard dropped the inference update entirely. */
 
         /* data: model_positive,alert_triggered,suppressed,score */
             int model_positive = 0;
@@ -1115,41 +1067,7 @@ static void ui_process_message(const ui_msg_t *msg)
                     LV_PART_MAIN | LV_STATE_DEFAULT);
             }
 
-            if (!s_snore_label_result)
-                break;
-
-            if (model_positive)
-            {
-                lv_label_set_text(s_snore_label_result,
-                                  suppressed
-                                      ? "SNORE DETECTED - MUTED"
-                                      : (alert_triggered
-                                             ? "SNORE ALARM"
-                                             : "SNORE DETECTED"));
-                lv_obj_set_style_text_color(
-                    s_snore_label_result,
-                    suppressed ? lv_color_hex(0xFBBF24)
-                               : lv_color_hex(0xff4040),
-                    LV_PART_MAIN | LV_STATE_DEFAULT);
-                if (s_snore_canvas)
-                    lv_obj_clear_flag(s_snore_canvas, LV_OBJ_FLAG_HIDDEN);
-            }
-            else
-            {
-                lv_label_set_text(s_snore_label_result, "NO SNORE");
-                lv_obj_set_style_text_color(s_snore_label_result, lv_color_hex(0x888888), LV_PART_MAIN | LV_STATE_DEFAULT);
-                if (s_snore_canvas)
-                    lv_obj_add_flag(s_snore_canvas, LV_OBJ_FLAG_HIDDEN);
-            }
-            if (s_snore_label_score)
-            {
-                char tmp[32];
-                rt_snprintf(tmp, sizeof(tmp), "score: %.2f", score);
-                lv_label_set_text(s_snore_label_score, tmp);
-                lv_obj_set_style_text_color(s_snore_label_score,
-                                            model_positive ? lv_color_hex(0xffffff) : lv_color_hex(0x888888),
-                                            LV_PART_MAIN | LV_STATE_DEFAULT);
-            }
+            /* 单独的呼噜检测详情页已停用，结果只显示在主屏幕 SNORE 状态条。 */
         }
         break;
 

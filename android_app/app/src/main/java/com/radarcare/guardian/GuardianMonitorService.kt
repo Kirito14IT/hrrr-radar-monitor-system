@@ -70,6 +70,7 @@ class GuardianMonitorService : Service() {
             putExtra(EXTRA_ALERT_COUNT, result.alerts.size)
             putNullableDouble(EXTRA_HEART_RATE, data.heartRate)
             putNullableDouble(EXTRA_BREATH_RATE, data.breathRate)
+            putNullableDouble(EXTRA_TARGET_DISTANCE, data.targetDistanceMeters)
             putNullableDouble(EXTRA_TEMPERATURE_C, data.temperatureC)
             putNullableDouble(EXTRA_HUMIDITY_PCT, data.humidityPct)
             putNullableDouble(EXTRA_SNORE_SCORE, data.snoreScore)
@@ -160,6 +161,7 @@ class GuardianMonitorService : Service() {
         const val EXTRA_ALERT_COUNT = "alert_count"
         const val EXTRA_HEART_RATE = "heart_rate"
         const val EXTRA_BREATH_RATE = "breath_rate"
+        const val EXTRA_TARGET_DISTANCE = "target_distance"
         const val EXTRA_TEMPERATURE_C = "temperature_c"
         const val EXTRA_HUMIDITY_PCT = "humidity_pct"
         const val EXTRA_SNORE_SCORE = "snore_score"

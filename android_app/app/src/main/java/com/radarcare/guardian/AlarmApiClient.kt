@@ -37,6 +37,7 @@ data class AlertEvent(
 data class BackendLiveData(
     val heartRate: Double? = null,
     val breathRate: Double? = null,
+    val targetDistanceMeters: Double? = null,
     val temperatureC: Double? = null,
     val humidityPct: Double? = null,
     val snoreScore: Double? = null,
@@ -216,6 +217,7 @@ object AlarmApiClient {
         return BackendLiveData(
             heartRate = heart,
             breathRate = breath,
+            targetDistanceMeters = source.optNullableDouble("target_distance"),
             temperatureC = temperature,
             humidityPct = humidity,
             snoreScore = snoreScore,

@@ -4,17 +4,23 @@ from datetime import datetime
 from typing import Any, Optional
 
 
-APNEA_MIN_SECONDS = 10.0
+APNEA_MIN_SECONDS = 12.0
 APNEA_LOOKAROUND_SECONDS = 20.0
-APNEA_LOW_BREATH_RPM = 8.0
+APNEA_LOW_BREATH_RPM = 7.0
 APNEA_SNORE_EVIDENCE_LEVEL = 0.45
 APNEA_STRONG_SNORE_LEVEL = 0.62
 APNEA_RECOVERY_RPM_DELTA = 4.0
-APNEA_MAX_ROW_GAP_SECONDS = 4.5
-APNEA_MIN_RUN_ROWS = 4
-APNEA_MIN_RADAR_VALID_RATIO = 0.65
-APNEA_LOW_OR_MISSING_RATIO = 0.72
+APNEA_MAX_ROW_GAP_SECONDS = 3.5
+APNEA_MIN_RUN_ROWS = 6
+APNEA_MIN_RADAR_VALID_RATIO = 0.85
+APNEA_LOW_BREATH_RATIO = 0.85
+APNEA_MIN_BREATH_QUALITY = 0.35
+APNEA_MIN_BREATH_PERIODICITY = 0.28
+APNEA_STRONG_BREATH_PERIODICITY = 0.45
+APNEA_MIN_PERIODIC_ROWS = 3
 APNEA_NORMAL_BREATH_RPM = 10.0
+APNEA_TARGET_DISTANCE_MIN_M = 0.1
+APNEA_TARGET_DISTANCE_MAX_M = 1.0
 BREATH_ABNORMAL_LOW_RPM = 10.0
 BREATH_ABNORMAL_HIGH_RPM = 24.0
 BREATH_ABNORMAL_MIN_ROWS = 5
@@ -73,19 +79,81 @@ def _window_rows(rows: list[tuple[float, dict[str, Any]]], start_ts: float, end_
 
 def _target_present(row: dict[str, Any]) -> bool:
     distance = float(row.get("target_distance") or 0.0)
-    return bool(row.get("radar_online")) and 0.15 <= distance <= 3.0
+    return bool(row.get("radar_online")) and APNEA_TARGET_DISTANCE_MIN_M <= distance <= APNEA_TARGET_DISTANCE_MAX_M
+
+
+def _distance_stable(row: dict[str, Any]) -> bool:
+    return bool(row.get("presence_distance_stable"))
+
+
+def _presence_confirmed(row: dict[str, Any]) -> bool:
+    if "presence_stable" in row:
+        return bool(row.get("presence_stable"))
+    return _target_present(row)
 
 
 def _radar_usable(row: dict[str, Any]) -> bool:
-    return row.get("radar_board_stationary", True) is not False and _target_present(row)
+    return (
+        row.get("radar_board_stationary", True) is not False
+        and _target_present(row)
+        and _distance_stable(row)
+        and _presence_confirmed(row)
+    )
+
+
+def _radar_context_usable_for_apnea(row: dict[str, Any]) -> bool:
+    return (
+        row.get("radar_board_stationary", True) is not False
+        and _target_present(row)
+        and _distance_stable(row)
+    )
+
+
+def _presence_signal_below_threshold(row: dict[str, Any]) -> bool:
+    if "presence_below_threshold" in row:
+        return bool(row.get("presence_below_threshold"))
+    value = row.get("presence_detection_value")
+    threshold = row.get("presence_detection_threshold")
+    return _is_number(value) and _is_number(threshold) and float(value) < float(threshold)
+
+
+def _breath_quality_usable(row: dict[str, Any]) -> bool:
+    if row.get("breath_rate_fresh") is False:
+        return False
+    if row.get("vitals_state") in {"recovering", "lost"}:
+        return False
+    quality = row.get("breath_quality")
+    if quality is None:
+        return True
+    return _is_number(quality) and float(quality) >= APNEA_MIN_BREATH_QUALITY
 
 
 def _breath_values(rows: list[dict[str, Any]]) -> list[float]:
     return [
         float(row["breath_rate"])
         for row in rows
-        if _is_number(row.get("breath_rate")) and 0.0 <= float(row["breath_rate"]) <= 40.0
+        if _is_number(row.get("breath_rate")) and 0.0 <= float(row["breath_rate"]) <= 40.0 and _breath_quality_usable(row)
     ]
+
+
+def _periodicity_values(rows: list[dict[str, Any]]) -> list[float]:
+    values: list[float] = []
+    for row in rows:
+        value = row.get("breath_periodicity")
+        if _is_number(value):
+            values.append(max(0.0, min(1.0, float(value))))
+    return values
+
+
+def _periodicity_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    values = _periodicity_values(rows)
+    stable_values = [value for value in values if value >= APNEA_MIN_BREATH_PERIODICITY]
+    return {
+        "values": values,
+        "stable_count": len(stable_values),
+        "max": max(values) if values else None,
+        "median": _median(values),
+    }
 
 
 def breath_window_abnormal(rows: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -141,16 +209,12 @@ def _build_event(
     if len(during_rows) < APNEA_MIN_RUN_ROWS:
         return None
 
-    usable_count = sum(1 for row in during_rows if _radar_usable(row))
+    usable_count = sum(1 for row in during_rows if _radar_context_usable_for_apnea(row))
     if usable_count / max(1, len(during_rows)) < APNEA_MIN_RADAR_VALID_RATIO:
         return None
 
-    low_or_missing = 0
-    for row in during_rows:
-        breath = row.get("breath_rate")
-        if breath is None or (_is_number(breath) and float(breath) < APNEA_LOW_BREATH_RPM):
-            low_or_missing += 1
-    if low_or_missing / max(1, len(during_rows)) < APNEA_LOW_OR_MISSING_RATIO:
+    below_threshold_count = sum(1 for row in during_rows if _presence_signal_below_threshold(row))
+    if below_threshold_count / max(1, len(during_rows)) < APNEA_LOW_BREATH_RATIO:
         return None
 
     around_rows = _window_rows(
@@ -160,6 +224,16 @@ def _build_event(
     )
     before_rows = _window_rows(parsed_rows, start_ts - APNEA_LOOKAROUND_SECONDS, start_ts - 0.001)
     after_rows = _window_rows(parsed_rows, end_ts + 0.001, end_ts + APNEA_LOOKAROUND_SECONDS)
+    periodic_rows = before_rows + after_rows
+    periodicity = _periodicity_summary(periodic_rows)
+    periodicity_max = periodicity["max"]
+    periodicity_median = periodicity["median"]
+    if (
+        periodicity["stable_count"] < APNEA_MIN_PERIODIC_ROWS
+        or periodicity_max is None
+        or periodicity_max < APNEA_MIN_BREATH_PERIODICITY
+    ):
+        return None
 
     breath_values = _breath_values(during_rows)
     min_breath = min(breath_values) if breath_values else None
@@ -176,7 +250,9 @@ def _build_event(
     before_snore = [_snore_level(row) or 0.0 for row in before_rows]
     after_snore = [_snore_level(row) or 0.0 for row in after_rows]
     sound_rebound = bool(after_snore and (max(after_snore) - (max(before_snore) if before_snore else 0.0)) >= 0.12)
-    audio_evidence = snore_detected or max_snore >= APNEA_SNORE_EVIDENCE_LEVEL or sound_rebound
+    # 呼吸暂停报警宁可保守：只把开发板模型明确检测到的呼噜作为音频证据。
+    # snore_level/snore_score/dbfs 只作为展示细节，不能单独触发融合报警。
+    audio_evidence = snore_detected
     if not audio_evidence:
         return None
 
@@ -208,7 +284,10 @@ def _build_event(
         heart_delta = (_avg(after_heart) or 0.0) - (_avg(before_heart) or 0.0)
 
     confidence = 0.55
-    reasons = ["radar_breath_pause"]
+    reasons = ["presence_signal_below_threshold", "periodic_breath_signal"]
+    if periodicity_max >= APNEA_STRONG_BREATH_PERIODICITY:
+        confidence += 0.06
+        reasons.append("strong_breath_periodicity")
     if duration >= 15:
         confidence += 0.12
         reasons.append("long_pause")
@@ -224,10 +303,7 @@ def _build_event(
     if recovery:
         confidence += 0.08
         reasons.append("breath_recovery")
-    if median_breath is None:
-        confidence += 0.04
-        reasons.append("breath_signal_lost")
-    elif median_breath < APNEA_LOW_BREATH_RPM:
+    if median_breath is not None and median_breath < APNEA_LOW_BREATH_RPM:
         confidence += 0.04
         reasons.append("low_median_breath")
     if baseline_breath is not None and baseline_breath >= APNEA_NORMAL_BREATH_RPM:
@@ -261,6 +337,10 @@ def _build_event(
             "min_breath_rate": round(min_breath, 2) if min_breath is not None else None,
             "median_breath_rate": round(median_breath, 2) if median_breath is not None else None,
             "baseline_breath_rate": round(baseline_breath, 2) if baseline_breath is not None else None,
+            "breath_periodicity_max": round(periodicity_max, 3) if periodicity_max is not None else None,
+            "breath_periodicity_median": round(periodicity_median, 3) if periodicity_median is not None else None,
+            "breath_periodicity_stable_count": periodicity["stable_count"],
+            "presence_below_threshold_ratio": round(below_threshold_count / max(1, len(during_rows)), 2),
             "max_snore_level": round(max_snore, 3),
             "max_snore_dbfs": round(max_dbfs, 2) if max_dbfs is not None else None,
             "heart_delta": round(heart_delta, 2) if heart_delta is not None else None,
@@ -298,10 +378,9 @@ def detect_suspected_apnea_events(rows: list[dict[str, Any]]) -> list[dict[str, 
     for ts, row in parsed_rows:
         if run and ts - run[-1][0] > APNEA_MAX_ROW_GAP_SECONDS:
             flush_run()
-        radar_usable = _radar_usable(row)
-        breath_rate = row.get("breath_rate")
-        weak_breath = breath_rate is None or (_is_number(breath_rate) and float(breath_rate) < APNEA_LOW_BREATH_RPM)
-        if radar_usable and weak_breath:
+        radar_usable = _radar_context_usable_for_apnea(row)
+        breath_signal_below_threshold = _presence_signal_below_threshold(row)
+        if radar_usable and breath_signal_below_threshold:
             run.append((ts, row))
         else:
             flush_run()

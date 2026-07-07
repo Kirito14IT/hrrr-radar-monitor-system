@@ -34,9 +34,9 @@
 * Macros
 ********************************************************************************/
 /* SSID of the Wi-Fi Access Point to which the MQTT client connects. */
-#define WIFI_SSID                         "TP-LINK_3C45"
+#define WIFI_SSID                         "B502"
 
-#define WIFI_PASSWORD                     "2025609zz"
+#define WIFI_PASSWORD                     "b5026666"
 
 /* Security type of the Wi-Fi access point. See 'cy_wcm_security_t' structure
  * in "cy_wcm.h" for more details.
@@ -48,5 +48,21 @@
 
 /* Wi-Fi re-connection time interval in milliseconds. */
 #define WIFI_CONN_RETRY_INTERVAL_MS       (5000)
+
+/* Backend UDP target for radar frames.
+ * Keep radar network settings in this config file so every radar board can use
+ * the same source code and only this config needs to be changed before build.
+ */
+#define MAKE_IPV4_ADDRESS(a, b, c, d)     ((((uint32_t) d) << 24) | \
+                                          (((uint32_t) c) << 16) | \
+                                          (((uint32_t) b) << 8) |\
+                                          ((uint32_t) a))
+
+#define RADAR_UDP_SERVER_IP_ADDRESS       MAKE_IPV4_ADDRESS(192, 168, 31, 236)
+#define RADAR_UDP_SERVER_PORT             (9988)
+
+/* Backward-compatible names for older code snippets/documentation. */
+#define UDP_SERVER_IP_ADDRESS             RADAR_UDP_SERVER_IP_ADDRESS
+#define UDP_SERVER_PORT                   RADAR_UDP_SERVER_PORT
 
 #endif /* WIFI_CONFIG_H_ */

@@ -1,110 +1,105 @@
 <template>
-  <div class="auth-container">
-    <button
-      class="theme-toggle"
-      :class="{ dark: theme.isDark }"
-      :title="theme.isDark ? '切换为浅色' : '切换为深色'"
-      @click="theme.toggle()"
-      aria-label="切换主题"
-    >
-      <span class="toggle-track">
-        <span class="toggle-thumb">
-          <svg v-if="theme.isDark" class="toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path fill="currentColor" d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z" />
-          </svg>
-          <svg v-else class="toggle-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              fill="currentColor"
-              d="M12 4V2m0 20v-2m8-8h2M2 12h2m13.66-5.66l1.42-1.42M4.92 19.08l1.42-1.42m0-11.32L4.92 4.92m14.16 14.16l-1.42-1.42M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linecap="round"
-            />
-          </svg>
-        </span>
-      </span>
-    </button>
+  <div class="auth-page">
+    <section class="auth-shell" aria-label="护理监护系统登录">
+      <div class="auth-intro">
+        <div class="brand-mark">
+          <img src="@/assets/logo.svg" alt="Radar Care" />
+          <span>Radar Care</span>
+        </div>
+        <h1>智慧床位护理监护平台</h1>
+        <p>
+          面向医院与疗养院护理人员，统一查看床位状态、生命体征、呼噜风险和紧急事件。
+        </p>
 
-    <!-- Tab 切换：登录 / 注册 -->
-    <div class="tab-container">
-      <button
-          :class="['tab-btn', { active: isLoginMode }]"
-          @click="isLoginMode = true"
-      >
-        登录
-      </button>
-      <button
-          :class="['tab-btn', { active: !isLoginMode }]"
-          @click="isLoginMode = false"
-      >
-        注册
-      </button>
-      <div class="tab-indicator" :class="{ login: isLoginMode, register: !isLoginMode }"></div>
-    </div>
+        <div class="intro-grid">
+          <div class="intro-card care-icon-card" data-icon="BED">
+            <strong>多床位</strong>
+            <span>集中监视床位状态</span>
+          </div>
+          <div class="intro-card care-icon-card" data-icon="SOS">
+            <strong>实时告警</strong>
+            <span>异常事件及时提醒</span>
+          </div>
+          <div class="intro-card care-icon-card" data-icon="HR">
+            <strong>生命体征</strong>
+            <span>心率 / 呼吸 / 环境联动</span>
+          </div>
+        </div>
+      </div>
 
-    <!-- ========== 登录表单 ========== -->
-    <div v-if="isLoginMode" class="form-container">
-      <h2 class="form-title">欢迎回来</h2>
-      <form @submit.prevent="handleLogin">
-        <input
-            v-model="loginForm.userName"
-            type="text"
-            placeholder="账号"
-            class="input-field"
-            required
-        />
-        <input
-            v-model="loginForm.passWord"
-            type="passWord"
-            placeholder="密码"
-            class="input-field"
-            required
-        />
-        <button type="submit" class="submit-btn">登录</button>
-      </form>
-    </div>
+      <div class="auth-card care-icon-card" data-icon="ID">
+        <div class="auth-card-header">
+          <span class="eyebrow">NURSE STATION</span>
+          <h2>{{ isLoginMode ? '护理人员登录' : '创建护理账号' }}</h2>
+          <p>{{ isLoginMode ? '登录后进入床位监视台' : '注册后即可加入护理监护平台' }}</p>
+        </div>
 
-    <!-- ========== 注册表单 ========== -->
-    <div v-else class="form-container">
-      <h2 class="form-title">创建账户</h2>
-      <form @submit.prevent="handleRegister">
-        <input
-            v-model="registerForm.userName"
-            type="text"
-            placeholder="账号"
-            class="input-field"
-            required
-        />
-        <input
-            v-model="registerForm.passWord"
-            type="passWord"
-            placeholder="密码"
-            class="input-field"
-            required
-        />
-        <input
-            v-model="registerForm.email"
-            type="email"
-            placeholder="邮箱"
-            class="input-field"
-            required
-        />
-        <button type="submit" class="submit-btn">注册</button>
-      </form>
-    </div>
+        <div class="tab-container" role="tablist" aria-label="登录注册切换">
+          <button
+            type="button"
+            :class="['tab-btn', { active: isLoginMode }]"
+            role="tab"
+            :aria-selected="isLoginMode"
+            @click="isLoginMode = true"
+          >
+            登录
+          </button>
+          <button
+            type="button"
+            :class="['tab-btn', { active: !isLoginMode }]"
+            role="tab"
+            :aria-selected="!isLoginMode"
+            @click="isLoginMode = false"
+          >
+            注册
+          </button>
+        </div>
+
+        <form v-if="isLoginMode" class="auth-form" @submit.prevent="handleLogin">
+          <label>
+            <span>账号</span>
+            <input v-model.trim="loginForm.userName" type="text" placeholder="请输入账号" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input v-model="loginForm.passWord" type="password" placeholder="请输入密码" required />
+          </label>
+          <button type="submit" class="submit-btn" :disabled="loading">
+            {{ loading ? '正在登录...' : '进入护理监视台' }}
+          </button>
+        </form>
+
+        <form v-else class="auth-form" @submit.prevent="handleRegister">
+          <label>
+            <span>账号</span>
+            <input v-model.trim="registerForm.userName" type="text" placeholder="设置登录账号" required />
+          </label>
+          <label>
+            <span>密码</span>
+            <input v-model="registerForm.passWord" type="password" placeholder="设置登录密码" required />
+          </label>
+          <label>
+            <span>邮箱</span>
+            <input v-model.trim="registerForm.email" type="email" placeholder="用于接收系统通知" required />
+          </label>
+          <button type="submit" class="submit-btn" :disabled="loading">
+            {{ loading ? '正在注册...' : '创建账号' }}
+          </button>
+        </form>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useUserStore } from '@/stores/userStore' // 路径根据你项目调整
-import { useThemeStore } from '@/stores/themeStore'
+import { ElMessage } from 'element-plus'
+import { useUserStore } from '@/stores/userStore'
 import request from '@/utils/request'
 
 const router = useRouter()
 const userStore = useUserStore()
-const theme = useThemeStore()
 const isLoginMode = ref(true)
 const loading = ref(false)
 
@@ -131,51 +126,45 @@ const handleLogin = async () => {
     if (res.status === 'success' || res.code === 200) {
       const user = {
         userID: res.user_id,
-        userName: res.userName,
+        userName: res.userName || loginForm.userName,
         email: res.email
       }
-
-      // ✅ 存入 Pinia 全局状态
       userStore.setUserInfo(user)
-
-      alert(`登录成功！欢迎回来，${user.userName}`)
-      router.replace('/manage/project_intro') // 跳转后，Auth 页面自然不再显示
+      ElMessage.success(`登录成功，欢迎回来，${user.userName}`)
+      router.replace('/manage/project_intro')
     } else {
-      alert(res.message || '登录失败')
+      ElMessage.error(res.message || '登录失败')
     }
   } catch (err) {
     console.error('登录失败:', err)
-    alert(err.response?.data?.message || '网络错误，请稍后再试')
+    ElMessage.error(err.response?.data?.message || '无法连接后端服务，请确认 8081 端口已启动')
   } finally {
     loading.value = false
   }
 }
 
-// 注册逻辑保持不变（可选：注册成功后不清空 store）
 const handleRegister = async () => {
   if (loading.value) return
   loading.value = true
   try {
-    const userData = {
+    const res = await request.post('/register', {
       userName: registerForm.userName,
       passWord: registerForm.passWord,
       email: registerForm.email
-    }
-    const res = await request.post('/register', userData)
-    const { code, status, message } = res
+    })
 
-    if (code === 200 || status === 'success') {
-      alert('注册成功！请登录')
+    if (res.code === 200 || res.status === 'success') {
+      ElMessage.success('注册成功，请登录')
       Object.keys(registerForm).forEach(key => {
         registerForm[key] = ''
       })
       isLoginMode.value = true
     } else {
-      alert(message || '注册失败')
+      ElMessage.error(res.message || '注册失败')
     }
   } catch (err) {
     console.error('注册失败:', err)
-    alert(err.response?.data?.message || '注册失败，请稍后再试')
+    ElMessage.error(err.response?.data?.message || '注册失败，请稍后再试')
   } finally {
     loading.value = false
   }
@@ -183,203 +172,253 @@ const handleRegister = async () => {
 </script>
 
 <style scoped>
-.auth-container {
-  position: relative;
+.auth-page {
   min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: var(--care-page-gradient);
-  color: var(--care-text);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
-  padding: 20px;
-  box-sizing: border-box;
-  transition: background 0.35s ease, color 0.35s ease;
-}
-
-.theme-toggle {
-  position: absolute;
-  top: 24px;
-  right: 24px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 60px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid var(--care-border);
-  border-radius: 999px;
-  background: var(--care-surface-strong);
-  cursor: pointer;
-  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
-}
-
-.theme-toggle:hover {
-  border-color: var(--care-primary-border);
-  box-shadow: 0 0 12px var(--care-primary-soft);
-}
-
-.theme-toggle .toggle-track {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.theme-toggle .toggle-thumb {
-  position: absolute;
-  top: 50%;
-  left: 4px;
-  transform: translateY(-50%);
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, var(--care-primary), var(--care-accent));
-  color: var(--care-text-on-primary);
-  box-shadow: 0 2px 8px var(--care-primary-soft);
-  transition: left 0.3s ease, background 0.3s ease, color 0.3s ease;
+  padding: 32px;
+  color: var(--care-text);
+  background:
+    radial-gradient(circle at 12% 12%, rgba(26, 188, 156, 0.14), transparent 30%),
+    radial-gradient(circle at 88% 18%, rgba(96, 165, 250, 0.16), transparent 32%),
+    linear-gradient(135deg, #f7fbfb 0%, #eef8f7 54%, #f3f7ff 100%);
+  box-sizing: border-box;
 }
 
-.theme-toggle.dark .toggle-thumb {
-  left: 32px;
-  background: linear-gradient(135deg, var(--care-warning), var(--care-accent));
+.auth-shell {
+  width: min(1080px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(360px, 0.82fr);
+  gap: 28px;
+  align-items: stretch;
 }
 
-.toggle-icon {
-  width: 14px;
-  height: 14px;
+.auth-intro,
+.auth-card {
+  border: 1px solid rgba(172, 196, 205, 0.72);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 24px 60px rgba(58, 94, 112, 0.14);
+  backdrop-filter: blur(14px);
+}
+
+.auth-intro {
+  position: relative;
+  overflow: hidden;
+  padding: 42px;
+  min-height: 520px;
+}
+
+.auth-intro::after {
+  content: '';
+  position: absolute;
+  right: -90px;
+  bottom: -120px;
+  width: 360px;
+  height: 360px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(26, 188, 156, 0.2), rgba(96, 165, 250, 0.06) 58%, transparent 70%);
+}
+
+.brand-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: #f3fbfa;
+  border: 1px solid #d9eeea;
+  color: #0f766e;
+  font-weight: 800;
+}
+
+.brand-mark img {
+  width: 30px;
+  height: 30px;
+}
+
+.auth-intro h1 {
+  max-width: 520px;
+  margin: 58px 0 18px;
+  font-size: clamp(36px, 5vw, 58px);
+  line-height: 1.06;
+  color: #0f2537;
+  letter-spacing: -0.04em;
+}
+
+.auth-intro p {
+  max-width: 520px;
+  margin: 0;
+  color: #557084;
+  font-size: 18px;
+  line-height: 1.8;
+}
+
+.intro-grid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 58px;
+}
+
+.intro-card {
+  min-height: 96px;
+  padding: 18px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6fbfb 100%);
+  border: 1px solid #dfecef;
+  box-shadow: 0 12px 28px rgba(31, 78, 101, 0.08);
+}
+
+.intro-card strong {
+  display: block;
+  color: #123047;
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.intro-card span {
+  color: #64798a;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.auth-card {
+  padding: 36px;
+}
+
+.auth-card-header {
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  display: inline-flex;
+  color: #0f9488;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.auth-card h2 {
+  margin: 12px 0 8px;
+  color: #10283c;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.auth-card p {
+  margin: 0;
+  color: #6a7f90;
 }
 
 .tab-container {
-  position: relative;
-  display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: flex-start;
-  margin-bottom: 32px;
-  background: transparent;
-  border-radius: 24px;
-  overflow: hidden;
-  padding: 4px;
-  background-color: var(--care-surface-muted);
-  width: fit-content;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  padding: 6px;
+  margin-bottom: 24px;
+  border-radius: 18px;
+  background: #eef7f7;
 }
 
 .tab-btn {
-  position: relative;
-  padding: 10px 24px;
-  border: none;
+  height: 44px;
+  border: 0;
+  border-radius: 14px;
+  color: #60778a;
   background: transparent;
-  color: var(--care-muted);
-  cursor: pointer;
   font-size: 16px;
-  font-weight: 500;
-  transition: color 0.2s ease;
-  z-index: 1;
-  min-width: 80px;
-  height: 36px;
-  line-height: 36px;
-  text-align: center;
-  box-sizing: border-box;
-  display: inline-block;
-  writing-mode: horizontal-tb !important;
-  -webkit-writing-mode: horizontal-tb !important;
-  -moz-writing-mode: horizontal-tb !important;
-  direction: ltr !important;
-  unicode-bidi: normal;
-  white-space: nowrap;
-  transform: rotate(0deg) !important;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 .tab-btn.active {
-  color: var(--care-primary);
+  color: #0f766e;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(31, 78, 101, 0.1);
 }
 
-/* 底部滑动指示条 */
-.tab-indicator {
-  position: absolute;
-  bottom: 4px;
-  left: 4px;
-  height: calc(100% - 8px);
-  border-radius: 20px;
-  background: var(--care-surface-strong);
-  box-shadow: var(--care-shadow-soft);
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease;
-  width: 80px;
-  z-index: 0;
+.auth-form {
+  display: grid;
+  gap: 18px;
 }
 
-.tab-indicator.login {
-  transform: translateX(0);
+.auth-form label {
+  display: grid;
+  gap: 8px;
+  color: #425c70;
+  font-size: 14px;
+  font-weight: 800;
 }
 
-.tab-indicator.register {
-  transform: translateX(80px);
-}
-
-.form-container {
-  width: 100%;
-  max-width: 400px;
-  padding: 32px;
-  background: var(--care-surface-strong);
-  color: var(--care-text);
-  border: 1px solid var(--care-border-soft);
-  border-radius: 16px;
-  box-shadow: var(--care-shadow);
-  box-sizing: border-box;
-  transition: background 0.35s ease, color 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
-}
-
-.form-title {
-  text-align: center;
-  margin-bottom: 28px;
-  color: var(--care-text-strong);
-  font-size: 24px;
-  font-weight: 600;
-}
-
-.input-field {
-  width: 100%;
-  padding: 12px 16px;
-  margin-bottom: 18px;
-  border: 1px solid var(--care-border);
-  border-radius: 10px;
-  font-size: 16px;
-  background-color: var(--care-surface-muted);
-  color: var(--care-text);
-  transition: all 0.25s ease;
-  box-sizing: border-box;
-}
-
-.input-field:focus {
+.auth-form input {
+  height: 48px;
+  padding: 0 15px;
+  border: 1px solid #d6e5e9;
+  border-radius: 14px;
   outline: none;
-  border-color: var(--care-primary);
-  background-color: var(--care-surface-strong);
-  box-shadow: 0 0 0 2px var(--care-primary-soft);
+  background: #fbfefe;
+  color: #0f2537;
+  font-size: 15px;
+  transition: all 0.2s ease;
+}
+
+.auth-form input:focus {
+  border-color: #1abc9c;
+  box-shadow: 0 0 0 4px rgba(26, 188, 156, 0.14);
 }
 
 .submit-btn {
-  width: 100%;
-  padding: 12px;
-  background-color: var(--care-primary);
-  color: var(--care-text-on-primary);
-  border: none;
-  border-radius: 10px;
+  height: 50px;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 16px;
+  color: #ffffff;
+  background: linear-gradient(135deg, #17b69f, #2b8ee8);
+  box-shadow: 0 16px 32px rgba(26, 188, 156, 0.22);
   font-size: 16px;
-  font-weight: 500;
+  font-weight: 900;
   cursor: pointer;
-  transition: background-color 0.2s ease, transform 0.1s ease;
-  margin-top: 8px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
-.submit-btn:hover {
-  background-color: var(--care-primary-strong);
+.submit-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 20px 38px rgba(26, 188, 156, 0.28);
 }
 
-.submit-btn:active {
-  transform: scale(0.98);
+.submit-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+@media (max-width: 900px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-intro {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .auth-page {
+    padding: 18px;
+  }
+
+  .auth-intro,
+  .auth-card {
+    padding: 24px;
+    border-radius: 24px;
+  }
+
+  .intro-grid {
+    grid-template-columns: 1fr;
+    margin-top: 32px;
+  }
 }
 </style>

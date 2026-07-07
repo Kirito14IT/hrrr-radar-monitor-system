@@ -1,0 +1,63 @@
+{
+  "model_bytes": 68032,
+  "input_shape": [
+    1,
+    60,
+    20
+  ],
+  "input_scale": 0.052244335412979126,
+  "input_zero_point": 26,
+  "output_shape": [
+    1,
+    2
+  ],
+  "output_scale": 0.00390625,
+  "output_zero_point": -128,
+  "operators": [
+    "SHAPE",
+    "STRIDED_SLICE",
+    "PACK",
+    "RESHAPE",
+    "CONV_2D",
+    "CONV_2D",
+    "CONV_2D",
+    "CONV_2D",
+    "CONV_2D",
+    "MEAN",
+    "FULLY_CONNECTED",
+    "SOFTMAX"
+  ],
+  "mean_absolute_error": 0.003994138911366463,
+  "max_absolute_error": 0.1392924189567566,
+  "class_agreement": 0.998046875,
+  "source_model": "models\\conv2d-medium-balanced-2.h5",
+  "source_sha256": "12d95b4f8bdeb879d0d3b6623d3f1784d5415f6b850977d40768089bfc00ad55",
+  "calibration": {
+    "mode": "wav",
+    "data_dir": "D:\\STUDY\\Snore_detection_first\\Data",
+    "wav_files_total": 145,
+    "candidate_windows": 4813,
+    "selected_windows": 512,
+    "selected_files": 70,
+    "window_hop_seconds": 1.0,
+    "feature_min": -8.05904769897461,
+    "feature_max": 5.2632575035095215,
+    "feature_mean": -0.2037876695394516,
+    "feature_std": 1.7616232633590698
+  },
+  "validation": {
+    "mode": "wav",
+    "data_dir": "D:\\STUDY\\Snore_detection_first\\Data",
+    "wav_files_total": 145,
+    "candidate_windows": 4813,
+    "selected_windows": 512,
+    "selected_files": 70,
+    "window_hop_seconds": 1.0,
+    "feature_min": -8.05904769897461,
+    "feature_max": 5.363728046417236,
+    "feature_mean": -0.2207464873790741,
+    "feature_std": 1.7023751735687256
+  },
+  "runtime_acceleration": "CMSIS-NN/Helium on Cortex-M55",
+  "nnlite_status": "not applicable: NNLite is only available on Cortex-M33"
+}

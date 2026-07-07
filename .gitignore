@@ -92,7 +92,8 @@ out/
 Output/
 .cache/
 .settings/
-tools/
+tools/*
+!tools/simulated_bed_board.py
 .sconsign.dblite
 .config.old
 *.elf

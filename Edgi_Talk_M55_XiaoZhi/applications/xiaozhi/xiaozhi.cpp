@@ -40,21 +40,23 @@
 #define EMERGENCY_REPORT_THREAD_STACK 4096
 #define EMERGENCY_REPORT_THREAD_PRIORITY 18
 #define EMERGENCY_SOURCE_DEFAULT "xiaozhi_voice_board"
+#define EMERGENCY_SYNC_GET_TIMEOUT_MS 3000
+#define EMERGENCY_SYNC_RESPONSE_BYTES 1024
 #define EDGI_HEARTBEAT_INTERVAL_MS 5000
 #define EDGI_HEARTBEAT_THREAD_STACK 4096
 #define EDGI_HEARTBEAT_THREAD_PRIORITY 20
 
 #ifndef DB_SEND_TARGET_IP
-#define DB_SEND_TARGET_IP "192.168.0.102"
+#define DB_SEND_TARGET_IP BOARD_BACKEND_HOST
 #endif
 
 #ifndef DB_SEND_TARGET_PORT
-#define DB_SEND_TARGET_PORT 8081
+#define DB_SEND_TARGET_PORT BOARD_BACKEND_PORT
 #endif
 
 typedef struct
 {
-    char body[640];
+    char body[704];
 } emergency_report_msg_t;
 
 /* Global application state */
@@ -738,6 +740,8 @@ static rt_tick_t g_emergency_alarm_last_tick = 0;
 static volatile rt_bool_t g_emergency_alarm_cancelled = RT_FALSE;
 static volatile rt_bool_t g_emergency_resolve_in_progress = RT_FALSE;
 static char g_active_emergency_source[64] = EMERGENCY_SOURCE_DEFAULT;
+static volatile rt_bool_t g_backend_emergency_active = RT_FALSE;
+static int g_backend_emergency_event_id = -1;
 static rt_thread_t g_care_alarm_tid = RT_NULL;
 static rt_tick_t g_care_alarm_last_tick = 0;
 static rt_thread_t g_alarm_clock_tid = RT_NULL;
@@ -1065,6 +1069,176 @@ static int xz_post_json_to_backend(const char *path, const char *json_body)
     return 0;
 }
 
+static int xz_get_json_from_backend(const char *path, char *response, size_t response_size)
+{
+    if (!path || !response || response_size == 0)
+    {
+        return -1;
+    }
+
+    response[0] = '\0';
+
+    char backend_host[BACKEND_TARGET_HOST_LEN] = {0};
+    int backend_port = DB_SEND_TARGET_PORT;
+    backend_target_get(DB_SEND_TARGET_IP, DB_SEND_TARGET_PORT,
+                       backend_host, sizeof(backend_host), &backend_port);
+
+    char url[160];
+    int url_len = snprintf(url, sizeof(url), "http://%s:%d%s", backend_host, backend_port, path);
+    if (url_len <= 0 || url_len >= (int)sizeof(url))
+    {
+        LOG_W("backend: sync url too long for %s:%d path=%s",
+              backend_host,
+              backend_port,
+              path);
+        return -2;
+    }
+
+    struct webclient_session *session = webclient_session_create(512);
+    if (!session)
+    {
+        return -3;
+    }
+
+    webclient_set_timeout(session, EMERGENCY_SYNC_GET_TIMEOUT_MS);
+    int status = webclient_get(session, url);
+    if (status < 200 || status >= 300)
+    {
+        webclient_close(session);
+        LOG_W("backend: get %s failed, status=%d", url, status);
+        return -4;
+    }
+
+    int content_length = webclient_content_length_get(session);
+    int total_read = 0;
+    while (total_read < (int)response_size - 1)
+    {
+        int want = (int)response_size - 1 - total_read;
+        if (content_length > 0 && content_length - total_read < want)
+        {
+            want = content_length - total_read;
+        }
+        if (want <= 0)
+        {
+            break;
+        }
+
+        int bytes_read = webclient_read(session, response + total_read, want);
+        if (bytes_read <= 0)
+        {
+            break;
+        }
+        total_read += bytes_read;
+
+        if (content_length > 0 && total_read >= content_length)
+        {
+            break;
+        }
+    }
+    response[total_read] = '\0';
+    webclient_close(session);
+
+    return total_read > 0 ? 0 : -5;
+}
+
+static const char *xz_json_string_or_empty(cJSON *object, const char *key)
+{
+    cJSON *item = cJSON_GetObjectItem(object, key);
+    return cJSON_IsString(item) && item->valuestring ? item->valuestring : "";
+}
+
+static int xz_json_int_or_default(cJSON *object, const char *key, int default_value)
+{
+    cJSON *item = cJSON_GetObjectItem(object, key);
+    if (cJSON_IsNumber(item))
+    {
+        return item->valueint;
+    }
+    return default_value;
+}
+
+static rt_bool_t xz_json_bool(cJSON *object, const char *key)
+{
+    cJSON *item = cJSON_GetObjectItem(object, key);
+    return cJSON_IsTrue(item) ? RT_TRUE : RT_FALSE;
+}
+
+static void xz_handle_backend_emergency_sync(const char *json_text)
+{
+    if (!json_text || json_text[0] == '\0')
+    {
+        return;
+    }
+
+    cJSON *root = cJSON_Parse(json_text);
+    if (!root)
+    {
+        LOG_W("emergency sync: invalid json");
+        return;
+    }
+
+    const rt_bool_t active = xz_json_bool(root, "emergency_active");
+    cJSON *event = cJSON_GetObjectItem(root, "active_emergency");
+    if (active && cJSON_IsObject(event))
+    {
+        int event_id = xz_json_int_or_default(event, "eventID", -1);
+        const char *source = xz_json_string_or_empty(event, "source");
+        const char *title = xz_json_string_or_empty(event, "title");
+        const char *message = xz_json_string_or_empty(event, "message");
+        const char *display_text = title[0] ? title : (message[0] ? message : "紧急事件");
+
+        if (!g_backend_emergency_active || event_id != g_backend_emergency_event_id)
+        {
+            LOG_W("emergency sync: active event from backend id=%d source=%s",
+                  event_id,
+                  source);
+            xz_set_active_emergency_source(source[0] ? source : EMERGENCY_SOURCE_DEFAULT);
+            g_backend_emergency_event_id = event_id;
+            g_backend_emergency_active = RT_TRUE;
+            g_emergency_resolve_in_progress = RT_FALSE;
+            g_emergency_alarm_cancelled = RT_FALSE;
+            xiaozhi_ui_show_emergency(display_text);
+            xz_trigger_emergency_alarm();
+        }
+    }
+    else if (g_backend_emergency_active)
+    {
+        LOG_I("emergency sync: backend has no active event, clear local alarm");
+        g_backend_emergency_active = RT_FALSE;
+        g_backend_emergency_event_id = -1;
+        g_emergency_alarm_cancelled = RT_TRUE;
+        if (g_emergency_alarm_tid != RT_NULL || wavplayer_state_get() != PLAYER_STATE_STOPED)
+        {
+            wavplayer_stop();
+        }
+        xiaozhi_ui_set_emergency_resolution(true);
+    }
+
+    cJSON_Delete(root);
+}
+
+static void xz_poll_backend_emergency_sync(void)
+{
+    char response[EMERGENCY_SYNC_RESPONSE_BYTES];
+    char bed_id[DEVICE_CONFIG_BED_ID_LEN] = {0};
+    char device_id[DEVICE_CONFIG_ID_LEN] = {0};
+    char source[DEVICE_CONFIG_SOURCE_LEN] = {0};
+    char path[192];
+
+    device_identity_get(BOARD_BED_ID, BOARD_DEVICE_ID, BOARD_EDGI_SOURCE,
+                        bed_id, sizeof(bed_id),
+                        device_id, sizeof(device_id),
+                        source, sizeof(source));
+    snprintf(path, sizeof(path),
+             "/hardware/emergency-sync?bed_id=%s&device_id=%s&source=%s",
+             bed_id, device_id, source);
+
+    if (xz_get_json_from_backend(path, response, sizeof(response)) == 0)
+    {
+        xz_handle_backend_emergency_sync(response);
+    }
+}
+
 static void xz_edgi_heartbeat_thread(void *parameter)
 {
     (void)parameter;
@@ -1078,13 +1252,26 @@ static void xz_edgi_heartbeat_thread(void *parameter)
             (g_app.ws.is_connected && g_app.ws.session_id[0] != '\0') ? RT_TRUE : RT_FALSE;
         const char *mode = guard_mode ? "guard" : "dialogue";
 
-        char body[192];
+        char bed_id[DEVICE_CONFIG_BED_ID_LEN] = {0};
+        char device_id[DEVICE_CONFIG_ID_LEN] = {0};
+        char source[DEVICE_CONFIG_SOURCE_LEN] = {0};
+        device_identity_get(BOARD_BED_ID, BOARD_DEVICE_ID, BOARD_EDGI_SOURCE,
+                            bed_id, sizeof(bed_id),
+                            device_id, sizeof(device_id),
+                            source, sizeof(source));
+
+        char body[320];
         int body_len = snprintf(body,
                                 sizeof(body),
-                                "{\"source\":\"xiaozhi_board\","
+                                "{\"source\":\"%s\","
+                                "\"bed_id\":\"%s\","
+                                "\"device_id\":\"%s\","
                                 "\"mode\":\"%s\","
                                 "\"keyword_online\":%s,"
                                 "\"snore_guard_enabled\":%s}",
+                                source,
+                                bed_id,
+                                device_id,
                                 mode,
                                 keyword_online ? "true" : "false",
                                 g_snore_guard_enabled ? "true" : "false");
@@ -1095,6 +1282,8 @@ static void xz_edgi_heartbeat_thread(void *parameter)
                 LOG_W("edgi heartbeat: post failed");
             }
         }
+
+        xz_poll_backend_emergency_sync();
 
         rt_thread_mdelay(EDGI_HEARTBEAT_INTERVAL_MS);
     }
@@ -1152,19 +1341,28 @@ static void xz_report_emergency_event(const char *source,
     char escaped_phrase[96];
     char escaped_transcript[384];
     char escaped_device[64];
+    char bed_id[DEVICE_CONFIG_BED_ID_LEN] = {0};
+    char configured_device_id[DEVICE_CONFIG_ID_LEN] = {0};
+    char configured_source[DEVICE_CONFIG_SOURCE_LEN] = {0};
     xz_json_escape(escaped_source, sizeof(escaped_source),
                    source ? source : EMERGENCY_SOURCE_DEFAULT);
     xz_json_escape(escaped_phrase, sizeof(escaped_phrase), phrase);
     xz_json_escape(escaped_transcript, sizeof(escaped_transcript), transcript);
-    xz_json_escape(escaped_device, sizeof(escaped_device), get_client_id());
+    device_identity_get(BOARD_BED_ID, BOARD_DEVICE_ID, BOARD_EDGI_SOURCE,
+                        bed_id, sizeof(bed_id),
+                        configured_device_id, sizeof(configured_device_id),
+                        configured_source, sizeof(configured_source));
+    xz_json_escape(escaped_device, sizeof(escaped_device), configured_device_id);
 
-    char body[640];
+    char body[704];
     int body_len = snprintf(body, sizeof(body),
                             "{\"source\":\"%s\","
+                            "\"bed_id\":\"%s\","
                             "\"phrase\":\"%s\","
                             "\"transcript\":\"%s\","
                             "\"device_id\":\"%s\"}",
                             escaped_source,
+                            bed_id,
                             escaped_phrase,
                             escaped_transcript,
                             escaped_device);
@@ -1212,7 +1410,7 @@ void xz_trigger_emergency_event(const char *source,
     const char *event_transcript = transcript ? transcript : display_phrase;
     if (is_imu_emergency)
     {
-        display_phrase = "设备跌落";
+        display_phrase = "设备摇晃";
         event_transcript = "IMU检测到开发板低重力或撞击，疑似设备被打翻";
     }
 

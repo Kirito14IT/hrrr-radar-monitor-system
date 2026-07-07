@@ -6,7 +6,7 @@ object GuardianPrefs {
     private const val PREFS = "guardian_prefs"
     private const val KEY_BACKEND_URL = "backend_url"
     private const val KEY_NOTIFIED_EVENTS = "notified_events"
-    private const val DEFAULT_BACKEND_URL = "http://192.168.0.102:8081"
+    private const val DEFAULT_BACKEND_URL = "http://192.168.31.236:8081"
 
     fun getBackendUrl(context: Context): String {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
